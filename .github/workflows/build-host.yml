@@ -1,0 +1,46 @@
+name: host
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: build & test (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: host
+
+      - name: Build (release)
+        run: cargo build --release --manifest-path host/Cargo.toml
+
+      - name: Clippy
+        run: cargo clippy --all-targets --manifest-path host/Cargo.toml -- -D warnings
+
+      - name: Test
+        run: cargo test --manifest-path host/Cargo.toml
+
+      - name: Shellcheck scripts
+        if: runner.os == 'Linux'
+        run: shellcheck host/scripts/*.sh || true
+
+      - name: Upload binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: zuko-host-${{ runner.os }}
+          path: host/target/release/zuko-host
+          if-no-files-found: error

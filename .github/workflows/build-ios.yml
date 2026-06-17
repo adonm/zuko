@@ -1,0 +1,57 @@
+name: ios
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build iOS app (simulator)
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Select Xcode
+        run: sudo xcode-select -s /Applications/Xcode_16.app || sudo xcode-select -s "$(ls -d /Applications/Xcode*.app | sort -V | tail -1)"
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Generate Xcode project
+        working-directory: ios/Zuko
+        run: xcodegen generate
+
+      - name: Resolve Swift packages
+        working-directory: ios/Zuko
+        run: |
+          xcodebuild -resolvePackageDependencies \
+            -project Zuko.xcodeproj \
+            -scheme Zuko
+
+      - name: Build (iOS Simulator)
+        working-directory: ios/Zuko
+        run: |
+          xcodebuild build \
+            -project Zuko.xcodeproj \
+            -scheme Zuko \
+            -destination 'generic/platform=iOS Simulator' \
+            -derivedDataPath build \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO
+
+      - name: Locate .app
+        id: app
+        working-directory: ios/Zuko
+        run: |
+          app="$(find build/Build/Products -name 'Zuko.app' -type d | head -1)"
+          echo "path=$app" >> "$GITHUB_OUTPUT"
+          echo "Found $app"
+
+      - name: Upload app
+        uses: actions/upload-artifact@v4
+        with:
+          name: Zuko-app
+          path: ${{ steps.app.outputs.path }}
+          if-no-files-found: error

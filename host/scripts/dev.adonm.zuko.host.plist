@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- Reference launchd agent for zuko-host on macOS.
+     install.sh writes a copy here with your paths filled in:
+       ~/Library/LaunchAgents/dev.adonm.zuko.host.plist
+     Usage:
+       cp host/scripts/dev.adonm.zuko.host.plist ~/Library/LaunchAgents/
+       # edit ProgramArguments / paths
+       launchctl load ~/Library/LaunchAgents/dev.adonm.zuko.host.plist
+       tail -f ~/.config/zuko/zuko-host.out.log
+-->
+<plist version="1.0">
+<dict>
+    <key>Label</key><string>dev.adonm.zuko.host</string>
+    <key>RunAtLoad</key><true/>
+    <key>KeepAlive</key><dict><key>SuccessfulExit</key><false/></dict>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Users/CHANGEME/.local/bin/zuko-host-run</string>
+    </array>
+    <key>StandardOutPath</key><string>/Users/CHANGEME/.config/zuko/zuko-host.out.log</string>
+    <key>StandardErrorPath</key><string>/Users/CHANGEME/.config/zuko/zuko-host.err.log</string>
+</dict>
+</plist>
