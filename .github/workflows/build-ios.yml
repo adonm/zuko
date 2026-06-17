@@ -13,8 +13,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Select Xcode
-        run: sudo xcode-select -s /Applications/Xcode_16.app || sudo xcode-select -s "$(ls -d /Applications/Xcode*.app | sort -V | tail -1)"
+      - name: Select newest Xcode
+        run: |
+          set -e
+          xcode=$(ls -d /Applications/Xcode*.app | sort -V | tail -1)
+          echo "Selecting $xcode"
+          sudo xcode-select -s "$xcode"
+          xcodebuild -version
+          xcrun simctl list runtimes available || true
 
       - name: Install XcodeGen
         run: brew install xcodegen
@@ -30,13 +36,31 @@ jobs:
             -project Zuko.xcodeproj \
             -scheme Zuko
 
+      - name: Pick an available iPhone simulator
+        id: sim
+        run: |
+          dest="$(xcrun simctl list devices available -j | python3 -c '
+          import json, sys
+          data = json.load(sys.stdin)["devices"]
+          for runtime, devs in data.items():
+              if "iOS" not in runtime:
+                  continue
+              for dev in devs:
+                  if dev.get("isAvailable") and "iPhone" in dev.get("name", ""):
+                      print("platform=iOS Simulator,id=" + dev["udid"])
+                      sys.exit(0)
+          sys.exit(1)
+          ')"
+          echo "destination=$dest" >> "$GITHUB_OUTPUT"
+          echo "Picked destination: $dest"
+
       - name: Build (iOS Simulator)
         working-directory: ios/Zuko
         run: |
           xcodebuild build \
             -project Zuko.xcodeproj \
             -scheme Zuko \
-            -destination 'generic/platform=iOS Simulator' \
+            -destination '${{ steps.sim.outputs.destination }}' \
             -derivedDataPath build \
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO
