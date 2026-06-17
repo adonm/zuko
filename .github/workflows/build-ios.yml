@@ -69,7 +69,8 @@ jobs:
         id: app
         working-directory: ios/Zuko
         run: |
-          app="$(find build/Build/Products -name 'Zuko.app' -type d | head -1)"
+          # Absolute path — upload-artifact resolves `path` from the repo root.
+          app="$(find "$(pwd)/build/Build/Products" -name 'Zuko.app' -type d | head -1)"
           echo "path=$app" >> "$GITHUB_OUTPUT"
           echo "Found $app"
 
