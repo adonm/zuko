@@ -27,7 +27,7 @@ struct OnboardingView: View {
                 Text("Add a host").font(.headline)
             } icon: {
                 Image(systemName: "terminal")
-                    .foregroundStyle(.accent)
+                    .foregroundStyle(Color.accentColor)
             }
 
             Text("Run this once on the Mac/Linux box you want to shell into. It installs a small daemon that keeps a persistent, end-to-end-encrypted Iroh session and prints a ticket.")
@@ -79,7 +79,7 @@ struct CopyableCommand: View {
                     .frame(width: 28, height: 28)
             }
             .buttonStyle(.bordered)
-            .tint(copied ? .green : .accent)
+            .tint(copied ? Color.green : Color.accentColor)
         }
         .padding(10)
         .background(Color.black.opacity(0.35), in: RoundedRectangle(cornerRadius: 10))

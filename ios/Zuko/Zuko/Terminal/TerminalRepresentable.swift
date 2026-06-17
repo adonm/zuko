@@ -15,9 +15,11 @@ struct TerminalRepresentable: UIViewRepresentable {
         let view = TerminalView(frame: .zero, font: font)
         view.backgroundColor = .black
         view.terminalDelegate = context.coordinator
-        context.coordinator.terminal = view
+        let coordinator = context.coordinator
+        coordinator.terminal = view
 
-        // Route host output back into the terminal. Called on the main actor.
+        // Route host output back into the terminal. The session calls this on
+        // the main actor (the read loop runs there).
         session.onTerminalOutput = { [weak coordinator] data in
             coordinator?.feed(data)
         }
@@ -47,15 +49,21 @@ struct TerminalRepresentable: UIViewRepresentable {
         // MARK: - TerminalViewDelegate
 
         func send(source: TerminalView, data: ArraySlice<UInt8>) {
-            // Keystroke / paste from the user -> host.
-            session?.enqueueData(Data(data))
+            // SwiftTerm invokes delegate methods on the main thread; the session
+            // is MainActor-isolated, so assert the actor and forward synchronously.
+            MainActor.assumeIsolated {
+                // Keystroke / paste from the user -> host.
+                session?.enqueueData(Data(data))
+            }
         }
 
         func sizeChanged(source: TerminalView, newCols: Int, newRows: Int) {
-            session?.enqueueResize(
-                cols: UInt16(clamping: newCols),
-                rows: UInt16(clamping: newRows)
-            )
+            MainActor.assumeIsolated {
+                session?.enqueueResize(
+                    cols: UInt16(clamping: newCols),
+                    rows: UInt16(clamping: newRows)
+                )
+            }
         }
 
         func setTerminalTitle(source: TerminalView, title: String) {}
