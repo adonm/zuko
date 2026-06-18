@@ -1,6 +1,7 @@
 # Extra tools for iOS app development/CI, layered on top of mise.toml.
 # Activate with:  MISE_ENV=ios mise install
-# (the ios CI workflow sets MISE_ENV=ios, so it picks these up automatically.)
+# (the ios CI workflows set MISE_ENV=ios, so they pick these up automatically.)
 [tools]
 ruby = "3.3"
 "gem:xcodegen" = "latest"
+"gem:fastlane" = "latest"

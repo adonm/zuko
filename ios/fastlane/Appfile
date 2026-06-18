@@ -1,0 +1,3 @@
+app_identifier("dev.adonm.zuko")
+# Set APPLE_ID in your env (or here) if you ever run lanes that need login auth;
+# the CI lanes use an App Store Connect API key instead.

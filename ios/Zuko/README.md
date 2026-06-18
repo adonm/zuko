@@ -46,10 +46,10 @@ Zuko/
 
 ## CI
 
-`.github/workflows/build-ios.yml` runs `xcodegen generate` + an unsigned
-simulator build and uploads `Zuko.app`. For a real device you must sign the
-build with your own Apple developer account (set `DEVELOPMENT_TEAM` and a
-signing certificate) — the CI build is verification only.
+`.github/workflows/build-ios.yml` runs `mise run build-ios` (an unsigned
+simulator build) and uploads `Zuko.app`. For a real device you must sign the
+build — see [`../DISTRIBUTION.md`](../DISTRIBUTION.md) for signed builds +
+TestFlight from GitHub Actions (no Mac needed).
 
 ## Notes
 

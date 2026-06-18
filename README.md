@@ -120,6 +120,19 @@ mise run run-host         # run the daemon in the foreground
 CI uses the same tasks via [`jdx/mise-action`](https://github.com/jdx/mise-action),
 so local and CI stay in lockstep.
 
+## Releases & distribution
+
+- **Host binaries** — tagging `v*` (or running the `release-host` workflow)
+  cross-compiles `zuko-host` for `linux/{x86_64,aarch64}` and
+  `macos/{x86_64,aarch64}` and attaches tarballs to a GitHub Release. The
+  install script pulls these via mise's `github:` backend. The release binary is
+  ~7–8 MB (panic=abort, fat LTO, trimmed `tokio`/`clippy`/`clap`).
+- **iOS app** — [`ios/DISTRIBUTION.md`](ios/DISTRIBUTION.md) covers building a
+  **signed** `.ipa` and pushing to **TestFlight entirely from GitHub Actions,
+  no Mac required** (fastlane `match` provisions the certificate via the App
+  Store Connect API). The default `ios`/`build-ios` workflows produce an
+  *unsigned simulator* build for verification.
+
 ## License
 
 Apache-2.0. See [`LICENSE`](LICENSE).

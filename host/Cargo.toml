@@ -14,15 +14,24 @@ path = "src/main.rs"
 [dependencies]
 iroh = "1.0"
 iroh-tickets = "1.0"
-tokio = { version = "1", features = ["full"] }
+# Only rt-multi-thread (multi-thread runtime), macros (#[tokio::main]/select!),
+# and sync (mpsc) are used — dropping "full" cuts a chunk of dead code.
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync"] }
 portable-pty = "0.8"
 anyhow = "1"
-clap = { version = "4", features = ["derive"] }
+# Disable clap's default (color, env, suggestions) to shrink the binary; keep
+# the bits the CLI actually uses.
+clap = { version = "4", default-features = false, features = ["std", "derive", "help", "usage", "error-context", "cargo"] }
 tracing = "0.1"
-tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+tracing-subscriber = { version = "0.3", default-features = false, features = ["fmt", "env-filter"] }
 
 [profile.release]
+# Optimized for size. The daemon is I/O-bound (shuttling bytes between an Iroh
+# stream and a PTY), so aggressive runtime opt-level buys nothing. panic=abort
+# drops unwinding tables; fat LTO removes the most cross-crate dead code (this
+# runs only on release tags, so the slower link is worth the smaller binary).
 opt-level = "z"
 lto = true
 codegen-units = 1
-strip = true
+panic = "abort"
+strip = "symbols"

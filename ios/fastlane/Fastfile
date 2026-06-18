@@ -1,0 +1,83 @@
+# frozen_string_literal: true
+#
+# fastlane lanes for Zuko. Run from the `ios/` directory:
+#
+#   fastlane build   # generate project + build a signed .ipa (App Store method)
+#   fastlane beta    # match (sign) + build + upload to TestFlight
+#
+# Signing is provisioned by `match`, which creates the distribution certificate
+# and provisioning profile via the App Store Connect API — no Mac, no Keychain
+# Access, no manual CSR. See ios/DISTRIBUTION.md for the required secrets.
+
+APP_IDENTIFIER = "dev.adonm.zuko"
+XCODEPROJ = "Zuko/Zuko.xcodeproj"
+
+default_platform(:ios)
+
+# App Store Connect API key assembled from individual secrets (no JSON blob).
+def asc_api_key
+  app_store_connect_api_key(
+    key_id: ENV.fetch("ASC_KEY_ID"),
+    issuer_id: ENV.fetch("ASC_ISSUER_ID"),
+    key_content: ENV.fetch("ASC_KEY_CONTENT"),
+    in_house: false,
+    duration: 1_200
+  )
+end
+
+platform :ios do
+  # ----- signing ---------------------------------------------------------------
+  desc "Create/fetch signing cert + provisioning profile via match (no Mac needed)"
+  private_lane :sign do
+    match(
+      type: "appstore",
+      # First run (cert not yet created): set MATCH_READONLY=false so match can
+      # generate + commit the cert to the match repo. Subsequent CI runs should
+      # set MATCH_READONLY=true.
+      readonly: ENV.fetch("MATCH_READONLY", "false") == "true",
+      app_identifier: APP_IDENTIFIER,
+      git_url: ENV.fetch("MATCH_GIT_URL"),
+      git_private_key: ENV["MATCH_GIT_PRIVATE_KEY"],
+      username: nil, # API key auth, no Apple ID login
+      api_key: asc_api_key
+    )
+  end
+
+  # ----- build -----------------------------------------------------------------
+  desc "Generate the Xcode project and build a signed .ipa (App Store method)"
+  private_lane :archive do
+    sh("xcodegen --spec Zuko/project.yml generate")
+    gym(
+      project: XCODEPROJ,
+      scheme: "Zuko",
+      clean: true,
+      export_method: "app-store",
+      include_bitcode: false,
+      # The team id is injected via env so automatic signing resolves against
+      # the match-provided certificate.
+      xcargs: "DEVELOPMENT_TEAM=#{ENV.fetch('TEAM_ID', '')} CODE_SIGNING_REQUIRED=YES"
+    )
+  end
+
+  # ----- ship ------------------------------------------------------------------
+  desc "Sign + build; publish the signed .ipa as an artifact (no TestFlight upload)"
+  lane :build do
+    sign
+    archive
+  end
+
+  desc "Sign + build + upload to TestFlight"
+  lane :beta do
+    sign
+    archive
+    upload_to_testflight(
+      api_key: asc_api_key,
+      skip_waiting_for_build_processing: true
+    )
+  end
+
+  desc "Sign only (useful to bootstrap the match repo on first run)"
+  lane :signonly do
+    sign
+  end
+end

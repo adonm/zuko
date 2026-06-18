@@ -1,0 +1,78 @@
+name: release-ios
+
+# Build a SIGNED iOS app and (optionally) upload to TestFlight — entirely in CI,
+# no Mac required. Signing is provisioned by fastlane `match` using an App
+# Store Connect API key (see ios/DISTRIBUTION.md for the one-time setup).
+#
+# Tools come from mise (mise.toml + mise.ios.toml under MISE_ENV=ios):
+# rust + xcodegen + fastlane.
+
+on:
+  workflow_dispatch:
+    inputs:
+      lane:
+        description: "fastlane lane to run"
+        type: choice
+        default: beta
+        options:
+          - beta       # sign + build + upload to TestFlight
+          - build      # sign + build, publish .ipa as an artifact only
+          - signonly   # just provision certs (first-run bootstrap)
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: signed build (${{ inputs.lane }})
+    runs-on: macos-15
+    env:
+      MISE_ENV: ios
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Select newest Xcode
+        run: |
+          xcode="$(ls -d /Applications/Xcode*.app | sort -V | tail -1)"
+          echo "Selecting $xcode"
+          sudo xcode-select -s "$xcode"
+          xcodebuild -version
+
+      - name: mise install (rust + xcodegen + fastlane)
+        uses: jdx/mise-action@v2
+        with:
+          cache: true
+
+      - name: fastlane ${{ inputs.lane }}
+        working-directory: ios
+        env:
+          # App Store Connect API key (cert creation + TestFlight upload).
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          ASC_KEY_CONTENT: ${{ secrets.ASC_KEY_CONTENT }}
+          # fastlane match storage (private git repo holding encrypted certs).
+          MATCH_GIT_URL: ${{ secrets.MATCH_GIT_URL }}
+          MATCH_PASSWORD: ${{ secrets.MATCH_PASSWORD }}
+          MATCH_GIT_PRIVATE_KEY: ${{ secrets.MATCH_GIT_PRIVATE_KEY }}
+          MATCH_READONLY: ${{ vars.MATCH_READONLY || 'false' }}
+          # Apple team id (for DEVELOPMENT_TEAM build setting).
+          TEAM_ID: ${{ secrets.TEAM_ID }}
+          LANG: en_US.UTF-8
+          LC_ALL: en_US.UTF-8
+        run: fastlane ${{ inputs.lane }}
+
+      - name: Locate .ipa
+        id: ipa
+        if: ${{ inputs.lane != 'signonly' }}
+        run: |
+          ipa="$(find "$(pwd)" -name 'Zuko.ipa' -type f | head -1)"
+          echo "path=$ipa" >> "$GITHUB_OUTPUT"
+          echo "Found $ipa"
+
+      - name: Upload .ipa
+        if: ${{ inputs.lane != 'signonly' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: Zuko-ipa
+          path: ${{ steps.ipa.outputs.path }}
+          if-no-files-found: error
