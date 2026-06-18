@@ -1,0 +1,44 @@
+[package]
+name = "zuko"
+version = "0.1.0"
+edition = "2021"
+license = "Apache-2.0"
+description = "Reach your machines over Iroh: serve a shell (`zuko host`) or attach a terminal to one (`zuko connect`)."
+repository = "https://github.com/adonm/zuko"
+publish = false
+
+[[bin]]
+name = "zuko"
+path = "src/main.rs"
+
+[dependencies]
+iroh = "1.0"
+iroh-tickets = "1.0"
+# Just the tokio features we actually use.
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "io-util", "signal", "time"] }
+portable-pty = "0.8"
+crossterm = "0.28"
+anyhow = "1"
+clap = { version = "4", features = ["derive"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+# Derives the throwaway handoff key from a memorable code (`zuko share`/`claim`).
+sha2 = "0.10"
+# Retry/backoff for `zuko claim`'s dial (N0 DNS lookup lags `zuko share` online).
+backon = "1"
+
+[dev-dependencies]
+tempfile = "3"
+
+[profile.release]
+# Size-conscious defaults for a release CLI: no bespoke code, just standard
+# cargo hygiene. The binary is I/O-bound (shuttling bytes between an Iroh
+# stream and a PTY / the local terminal), so size-opt + fat LTO is the right
+# trade and costs only a slower release link (fine — it runs on tags only).
+#
+# No panic=abort: the client puts the terminal into raw mode and relies on a
+# Drop guard to restore it; unwinding makes that guard run even on a panic.
+opt-level = "z"
+lto = true
+codegen-units = 1
+strip = "symbols"

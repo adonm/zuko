@@ -11,7 +11,7 @@ enum HostSetup {
     static let branch = "main"
 
     static let installCommand =
-        "curl -fsSL https://raw.githubusercontent.com/\(repoOwner)/\(repoName)/\(branch)/host/scripts/install.sh | sh"
+        "curl -fsSL https://raw.githubusercontent.com/\(repoOwner)/\(repoName)/\(branch)/zuko/scripts/install.sh | sh"
 
     /// Where the ticket the host prints should be pasted back (user-facing hint).
     static let ticketPrefix = "endpointa"

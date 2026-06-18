@@ -1,10 +1,10 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<!-- Reference launchd agent for zuko-host on macOS.
+<!-- Reference launchd agent for `zuko host` on macOS.
      install.sh writes a copy here with your paths filled in:
        ~/Library/LaunchAgents/dev.adonm.zuko.host.plist
      Usage:
-       cp host/scripts/dev.adonm.zuko.host.plist ~/Library/LaunchAgents/
+       cp zuko/scripts/dev.adonm.zuko.host.plist ~/Library/LaunchAgents/
        # edit ProgramArguments / paths
        launchctl load ~/Library/LaunchAgents/dev.adonm.zuko.host.plist
        tail -f ~/.config/zuko/zuko-host.out.log

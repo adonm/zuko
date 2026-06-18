@@ -28,16 +28,21 @@ CARGO_TERM_COLOR = "always"
 
 # --- tasks (shared by local dev and CI) ---
 
-[tasks.build-host]
-description = "Build the zuko-host release binary (native target)"
-run = "cargo build --release --manifest-path host/Cargo.toml"
+[tasks.build]
+description = "Build the zuko release binary (native target)"
+run = "cargo build --release --manifest-path zuko/Cargo.toml"
 
-[tasks.test-host]
-description = "Clippy + unit tests for zuko-host"
+[tasks.test]
+description = "Clippy + unit tests for zuko (host + client + share/claim)"
 run = [
-    "cargo clippy --all-targets --manifest-path host/Cargo.toml -- -D warnings",
-    "cargo test --manifest-path host/Cargo.toml",
+    "cargo clippy --all-targets --manifest-path zuko/Cargo.toml -- -D warnings",
+    "cargo test --manifest-path zuko/Cargo.toml",
 ]
+
+[tasks.test-e2e]
+description = "End-to-end PTY harness (host<->connect + share<->claim) against the live Iroh network. Needs network."
+depends = ["build"]
+run = "python3 zuko/scripts/e2e_test.py"
 
 [tasks.build-ios]
 description = "Generate the Xcode project and build the iOS app (iOS Simulator, unsigned). macOS only. Run `setup-ios` first."
@@ -53,5 +58,5 @@ description = "Install iOS tooling (xcodegen, fastlane) via Homebrew. macOS only
 run = "brew install xcodegen fastlane"
 
 [tasks.run-host]
-description = "Run zuko-host in the foreground (mise shim or local debug build)"
-run = "sh host/scripts/zuko-host.sh"
+description = "Run `zuko host` in the foreground (mise shim or local debug build)"
+run = "sh zuko/scripts/zuko-host.sh"

@@ -1,53 +1,23 @@
-//! Zuko host daemon.
+//! `zuko host` — serve this machine's shell over Iroh.
 //!
-//! Exposes an interactive shell (over a real PTY) through an Iroh connection.
-//!
-//! ## Wire protocol (single bidirectional Iroh stream, ALPN `zuko/1`)
-//!
-//! Every message is length-prefixed:
-//! ```text
-//!   [type: u8][len: u16 big-endian][payload: `len` bytes]
-//! ```
-//! - `0x00` DATA   — payload is raw terminal bytes.
-//!   client -> host: keystrokes. host -> client: PTY output.
-//! - `0x01` RESIZE — payload is `[cols: u16 BE][rows: u16 BE]`. client → host only.
-//!
-//! Keeping the same framing on both ends means resize + data stay ordered and
-//! nothing leaks into the terminal as in-band escape sequences.
+//! Binds an Iroh endpoint with a persistent secret key, prints a copy-pasteable
+//! ticket, and for each incoming connection spawns the user's shell on a PTY
+//! and bridges it over a single bidirectional Iroh stream.
 
-use anyhow::{Context, Result, bail};
-use clap::Parser;
-use iroh::{Endpoint, SecretKey, endpoint::presets};
+use anyhow::{Context, Result};
+use iroh::{endpoint::presets, Endpoint, SecretKey};
 use iroh_tickets::endpoint::EndpointTicket;
-use portable_pty::{CommandBuilder, PtySize, native_pty_system};
+use portable_pty::{native_pty_system, CommandBuilder, PtySize};
 use std::io::{Read, Write};
 use std::path::PathBuf;
 use tracing::{info, warn};
 
-const ALPN: &[u8] = b"zuko/1";
+use crate::config_dir;
+use crate::wire::{try_parse_frame, ALPN, TYPE_DATA, TYPE_RESIZE};
+use crate::HostArgs;
+
 const DEFAULT_COLS: u16 = 80;
 const DEFAULT_ROWS: u16 = 24;
-
-#[derive(Parser)]
-#[command(name = "zuko-host", version, about = "Expose a shell over Iroh for the Zuko iOS app")]
-struct Cli {
-    /// Path to the persistent secret key file. A stable key keeps your node id
-    /// stable across restarts so saved connections keep working.
-    #[arg(long)]
-    key: Option<PathBuf>,
-
-    /// Shell to launch for new connections.
-    #[arg(long, default_value = "$SHELL")]
-    shell: String,
-
-    /// Extra args passed to the shell.
-    #[arg(long, num_args = 0.., default_values_t = Vec::<String>::new())]
-    shell_args: Vec<String>,
-
-    /// Directory to start the shell in.
-    #[arg(long)]
-    cwd: Option<PathBuf>,
-}
 
 #[derive(Debug)]
 enum PtyCmd {
@@ -55,27 +25,34 @@ enum PtyCmd {
     Resize(u16, u16),
 }
 
-#[tokio::main]
-async fn main() -> Result<()> {
+/// Run the host: bind, print a ticket, accept connections forever.
+pub async fn run(args: HostArgs) -> Result<()> {
+    // The host logs to stderr (journald / launchd capture); stdout carries only
+    // the bare ticket so `... | grep endpointa` and piping work cleanly.
     tracing_subscriber::fmt()
+        .with_writer(std::io::stderr)
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "zuko_host=info,iroh=warn".into()),
+                .unwrap_or_else(|_| "zuko=info,iroh=warn".into()),
         )
         .init();
 
-    let cli = Cli::parse();
-    let key_path = cli.key.unwrap_or_else(default_key_path);
+    let key_path = args.key.unwrap_or_else(default_key_path);
     let secret = load_or_create_key(&key_path)?;
 
-    let shell = if cli.shell == "$SHELL" {
+    let shell = if args.shell == "$SHELL" {
         std::env::var("SHELL").unwrap_or_else(|_| "/bin/bash".to_string())
     } else {
-        cli.shell
+        args.shell
     };
 
     let endpoint = Endpoint::builder(presets::N0)
         .secret_key(secret)
+        // Advertise our ALPN so the endpoint accepts (and the QUIC handshake's
+        // ALPN negotiation succeeds). Without this, `Endpoint::accept` filters
+        // out every connection and clients fail with "peer doesn't support any
+        // known protocol".
+        .alpns(vec![ALPN.to_vec()])
         .bind()
         .await
         .context("bind endpoint")?;
@@ -85,22 +62,45 @@ async fn main() -> Result<()> {
     let node_id = endpoint.id();
     let ticket_str = EndpointTicket::new(endpoint.addr()).to_string();
 
-    // User-facing banner: this is exactly what gets pasted into the app.
+    // User-facing banner: this is exactly what gets pasted into the app / `zuko connect`.
     eprintln!();
     eprintln!("zuko host ready");
     eprintln!("  node id: {node_id}");
-    eprintln!("  on your iPhone, add a new connection and paste this ticket:");
+    eprintln!("  to connect, paste this ticket into the iOS app or run:");
+    eprintln!("    zuko connect \"{ticket_str}\"");
     println!("{ticket_str}");
     eprintln!();
     info!(%node_id, "listening on alpn {:?}", String::from_utf8_lossy(ALPN));
+
+    // Publish the live ticket so `zuko share` can hand it off without an IPC
+    // channel to this daemon. The ticket encodes current addresses, which can
+    // drift (relay re-home), so refresh it periodically from `endpoint.addr()`.
+    // Best-effort: a failed write is logged but never fatal — shells still work.
+    if let Err(e) = crate::share::write_current_ticket(&ticket_str) {
+        warn!("could not write current ticket: {e:#}");
+    }
+    let ep = endpoint.clone();
+    tokio::spawn(async move {
+        let mut tick = tokio::time::interval(std::time::Duration::from_secs(30));
+        // The first tick() fires immediately; we already wrote once above, so
+        // drain it and then rewrite on each subsequent tick.
+        tick.tick().await;
+        loop {
+            tick.tick().await;
+            let t = EndpointTicket::new(ep.addr()).to_string();
+            if let Err(e) = crate::share::write_current_ticket(&t) {
+                warn!("could not refresh current ticket: {e:#}");
+            }
+        }
+    });
 
     // Accept connections forever. Each connection gets its own PTY + shell.
     loop {
         match endpoint.accept().await {
             Some(incoming) => {
                 let shell = shell.clone();
-                let shell_args = cli.shell_args.clone();
-                let cwd = cli.cwd.clone();
+                let shell_args = args.shell_args.clone();
+                let cwd = args.cwd.clone();
                 tokio::spawn(async move {
                     if let Err(e) = serve(incoming, shell, shell_args, cwd).await {
                         warn!("connection ended: {e:#}");
@@ -197,10 +197,8 @@ async fn serve(
     });
     let pty_to_net = tokio::spawn(async move {
         while let Some(bytes) = out_rx.recv().await {
-            let mut frame = Vec::with_capacity(3 + bytes.len());
-            frame.push(0x00); // DATA
-            frame.extend_from_slice(&(bytes.len() as u16).to_be_bytes());
-            frame.extend_from_slice(&bytes);
+            // The frame type lives in the shared wire module so both sides agree.
+            let frame = crate::wire::data_frame(&bytes);
             if send.write_all(&frame).await.is_err() {
                 break;
             }
@@ -218,12 +216,12 @@ async fn serve(
                     acc.extend_from_slice(&tmp[..n]);
                     while let Some(frame) = try_parse_frame(&mut acc) {
                         match frame.typ {
-                            0x00 => {
+                            TYPE_DATA => {
                                 if pty_tx.send(PtyCmd::Data(frame.payload)).is_err() {
                                     return;
                                 }
                             }
-                            0x01 if frame.payload.len() == 4 => {
+                            TYPE_RESIZE if frame.payload.len() == 4 => {
                                 let cols = u16::from_be_bytes([frame.payload[0], frame.payload[1]]);
                                 let rows = u16::from_be_bytes([frame.payload[2], frame.payload[3]]);
                                 let _ = pty_tx.send(PtyCmd::Resize(cols, rows));
@@ -247,49 +245,18 @@ async fn serve(
     Ok(())
 }
 
-struct ParsedFrame {
-    typ: u8,
-    payload: Vec<u8>,
-}
-
-/// Pull one complete length-prefixed frame off the front of `buf`, draining it.
-fn try_parse_frame(buf: &mut Vec<u8>) -> Option<ParsedFrame> {
-    if buf.len() < 3 {
-        return None;
-    }
-    let typ = buf[0];
-    let len = u16::from_be_bytes([buf[1], buf[2]]) as usize;
-    if buf.len() < 3 + len {
-        return None;
-    }
-    let payload = buf[3..3 + len].to_vec();
-    buf.drain(..3 + len);
-    Some(ParsedFrame { typ, payload })
-}
-
 fn default_key_path() -> PathBuf {
-    let mut p = dirs_or_home();
+    let mut p = config_dir();
     p.push("zuko");
     p.push("key");
     p
-}
-
-fn dirs_or_home() -> PathBuf {
-    if let Some(xdg) = std::env::var_os("XDG_CONFIG_HOME") {
-        return PathBuf::from(xdg);
-    }
-    let mut h = std::env::var_os("HOME")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("."));
-    h.push(".config");
-    h
 }
 
 fn load_or_create_key(path: &PathBuf) -> Result<SecretKey> {
     if path.exists() {
         let bytes = std::fs::read(path).with_context(|| format!("read key {}", path.display()))?;
         if bytes.len() != 32 {
-            bail!("key file {} is not 32 bytes", path.display());
+            anyhow::bail!("key file {} is not 32 bytes", path.display());
         }
         let mut arr = [0u8; 32];
         arr.copy_from_slice(&bytes);
@@ -300,7 +267,6 @@ fn load_or_create_key(path: &PathBuf) -> Result<SecretKey> {
         }
         let secret = SecretKey::generate();
         let bytes = secret.to_bytes();
-        // Create with 0600 perms where possible.
         write_secret(path, &bytes)?;
         Ok(secret)
     }
@@ -316,7 +282,6 @@ fn write_secret(path: &PathBuf, bytes: &[u8]) -> Result<()> {
             .truncate(true)
             .mode(0o600)
             .open(path)?;
-        use std::io::Write;
         f.write_all(bytes)?;
     }
     #[cfg(not(unix))]
@@ -324,69 +289,4 @@ fn write_secret(path: &PathBuf, bytes: &[u8]) -> Result<()> {
         std::fs::write(path, bytes)?;
     }
     Ok(())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    /// Mirror of the iOS `Wire.encode` for the DATA frame, used to check the
-    /// host parser against the exact bytes a client sends.
-    fn client_data_frame(payload: &[u8]) -> Vec<u8> {
-        let mut f = Vec::with_capacity(3 + payload.len());
-        f.push(0x00);
-        f.extend_from_slice(&(payload.len() as u16).to_be_bytes());
-        f.extend_from_slice(payload);
-        f
-    }
-
-    fn resize_frame(cols: u16, rows: u16) -> Vec<u8> {
-        let payload = [cols.to_be_bytes(), rows.to_be_bytes()].concat();
-        let mut framed = Vec::with_capacity(3 + payload.len());
-        framed.push(0x01);
-        framed.extend_from_slice(&(payload.len() as u16).to_be_bytes());
-        framed.extend_from_slice(&payload);
-        framed
-    }
-
-    #[test]
-    fn parses_single_data_frame() {
-        let mut buf = client_data_frame(b"ls -la\r\n");
-        let frame = try_parse_frame(&mut buf).expect("frame");
-        assert_eq!(frame.typ, 0x00);
-        assert_eq!(frame.payload, b"ls -la\r\n");
-        assert!(buf.is_empty(), "buffer drained");
-    }
-
-    #[test]
-    fn parses_back_to_back_frames_and_resumes_partial() {
-        let mut buf = Vec::new();
-        buf.extend(client_data_frame(b"hi"));
-        buf.extend(resize_frame(120, 40));
-        // A deliberately truncated third frame (header claims 5 bytes, only 2 present).
-        buf.extend_from_slice(&[0x00, 0x00, 0x05, b'x', b'y']);
-
-        let f1 = try_parse_frame(&mut buf).unwrap();
-        assert_eq!(f1.typ, 0x00);
-        assert_eq!(f1.payload, b"hi");
-
-        let f2 = try_parse_frame(&mut buf).unwrap();
-        assert_eq!(f2.typ, 0x01);
-        assert_eq!(f2.payload.len(), 4);
-        let cols = u16::from_be_bytes([f2.payload[0], f2.payload[1]]);
-        let rows = u16::from_be_bytes([f2.payload[2], f2.payload[3]]);
-        assert_eq!((cols, rows), (120, 40));
-
-        // Partial frame: parser must wait for more bytes, leaving the remainder intact.
-        assert!(try_parse_frame(&mut buf).is_none());
-        assert_eq!(buf, vec![0x00, 0x00, 0x05, b'x', b'y']);
-    }
-
-    #[test]
-    fn ignores_unknown_frame_type() {
-        let mut buf = vec![0x42, 0x00, 0x01, 0xFF];
-        let frame = try_parse_frame(&mut buf).unwrap();
-        assert_eq!(frame.typ, 0x42);
-        assert_eq!(frame.payload, vec![0xFF]);
-    }
 }

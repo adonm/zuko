@@ -1,9 +1,9 @@
-# Reference systemd *user* unit for zuko-host.
+# Reference systemd *user* unit for `zuko host`.
 # install.sh writes a copy here with your paths filled in:
 #   ~/.config/systemd/user/zuko-host.service
 #
 # Usage:
-#   cp host/scripts/zuko-host.service ~/.config/systemd/user/
+#   cp zuko/scripts/zuko-host.service ~/.config/systemd/user/
 #   # edit ExecStart to point at your zuko-host-run wrapper
 #   systemctl --user daemon-reload
 #   systemctl --user enable --now zuko-host

@@ -1,7 +1,8 @@
-name: release-host
+name: release
 
-# Builds release binaries for zuko-host and publishes them to GitHub Releases.
-# The install script consumes these via mise's `github:` backend.
+# Builds release binaries for `zuko` and publishes them to GitHub Releases.
+# The install script consumes these via mise's `github:` backend (one binary,
+# both `zuko host` and `zuko connect`).
 #
 # Tools come from mise (mise.toml); the aarch64-linux cross-compiler comes from
 # mise [bootstrap.packages]. CI just sets the matrix + target.
@@ -32,7 +33,7 @@ jobs:
     runs-on: ${{ matrix.runner }}
     env:
       ZUKO_TARGET: ${{ matrix.target }}
-      ARTIFACT: zuko-host-${{ matrix.target }}.tar.gz
+      ARTIFACT: zuko-${{ matrix.target }}.tar.gz
     steps:
       - uses: actions/checkout@v4
 
@@ -43,7 +44,7 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
         with:
-          workspaces: host
+          workspaces: zuko
           key: ${{ matrix.target }}
 
       - name: Add rust target
@@ -56,14 +57,14 @@ jobs:
           echo "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc" >> "$GITHUB_ENV"
 
       - name: Build release (target = ${{ matrix.target }})
-        run: cargo build --release --manifest-path host/Cargo.toml --target "${ZUKO_TARGET}"
+        run: cargo build --release --manifest-path zuko/Cargo.toml --target "${ZUKO_TARGET}"
 
       - name: Package
         run: |
           mkdir -p dist
-          cp "host/target/${ZUKO_TARGET}/release/zuko-host" dist/zuko-host
-          chmod +x dist/zuko-host
-          tar -C dist -czf "$ARTIFACT" zuko-host
+          cp "zuko/target/${ZUKO_TARGET}/release/zuko" dist/zuko
+          chmod +x dist/zuko
+          tar -C dist -czf "$ARTIFACT" zuko
           sha256sum "$ARTIFACT" > "$ARTIFACT.sha256"
           echo "--- archive ---"
           tar -tzf "$ARTIFACT"

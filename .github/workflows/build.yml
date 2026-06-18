@@ -1,4 +1,4 @@
-name: host
+name: build
 
 on:
   push:
@@ -27,17 +27,23 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
         with:
-          workspaces: host
+          workspaces: zuko
 
       - name: Clippy + tests
-        run: mise run test-host
+        run: mise run test
 
       - name: Build (release)
-        run: mise run build-host
+        run: mise run build
+
+      - name: End-to-end (host<->connect, share<->claim)
+        # Spawns `zuko host`, drives `zuko connect` under a PTY, and exercises
+        # `zuko share`/`zuko claim` against the real Iroh network. Needs python3
+        # (stdlib only) and network access to Iroh's public relays.
+        run: mise run test-e2e
 
       - name: Upload binary
         uses: actions/upload-artifact@v4
         with:
-          name: zuko-host-${{ runner.os }}
-          path: host/target/release/zuko-host
+          name: zuko-${{ runner.os }}
+          path: zuko/target/release/zuko
           if-no-files-found: error
