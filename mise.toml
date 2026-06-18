@@ -7,7 +7,8 @@
 
 [tools]
 # iroh 1.0's dependency tree needs edition2024 (Rust 1.85+); track latest stable.
-rust = "latest"
+# `profile = "default"` guarantees clippy + rustfmt (CI runners default to minimal).
+rust = { version = "latest", profile = "default" }
 
 # System-level deps needed for builds. `mise bootstrap packages install`
 # installs only the ones applicable to the current OS/package manager.
