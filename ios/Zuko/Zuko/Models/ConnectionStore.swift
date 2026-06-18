@@ -1,15 +1,25 @@
 import Foundation
 import IrohLib
+import os
 
-/// Persists the user's saved connections in UserDefaults. Keeps the most recent
-/// `maxConnections` so the list stays tidy.
+/// Persists the user's saved connections in the iOS Keychain (see
+/// [`ConnectionKeychain`]). Keeps the most recent `maxConnections` so the list
+/// stays tidy.
+///
+/// On first launch after the Keychain migration, any connections previously
+/// stored in `UserDefaults` (under the v1 key) are moved into the Keychain and
+/// the legacy entry is deleted — so a user upgrading from an earlier build
+/// keeps their saved hosts without re-pasting tickets.
 @MainActor
 final class ConnectionStore: ObservableObject {
     @Published private(set) var connections: [Connection] = []
 
-    private static let storageKey = "dev.adonm.zuko.connections.v1"
+    /// Legacy `UserDefaults` key from before the Keychain migration. Kept only
+    /// long enough to migrate existing users; new writes never touch it.
+    private static let legacyStorageKey = "dev.adonm.zuko.connections.v1"
     private static let maxConnections = 12
     private let defaults: UserDefaults
+    private let logger = Logger(subsystem: "dev.adonm.zuko", category: "ConnectionStore")
 
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
@@ -67,16 +77,51 @@ final class ConnectionStore: ObservableObject {
 
     // MARK: - Persistence
 
+    /// Load connections from the Keychain, migrating from `UserDefaults` on the
+    /// first launch after upgrade. Returns `[]` only when there is genuinely
+    /// nothing stored — a decode failure is logged (not silently dropped) and
+    /// also returns `[]`, but the corrupted blob stays on disk so the user (or
+    /// a future versioned migration) can recover it; we deliberately do not
+    /// call `save()` on an empty result of a failed decode, so the next
+    /// user-initiated add/remove is what eventually replaces the bad blob.
     private func load() -> [Connection] {
-        guard let data = defaults.data(forKey: Self.storageKey),
-              let decoded = try? JSONDecoder().decode([Connection].self, from: data)
-        else { return [] }
-        return decoded
+        // Primary path: read from the Keychain.
+        do {
+            if let decoded = try ConnectionKeychain.load() {
+                return decoded
+            }
+        } catch {
+            // Distinguish decode failures (Actionable: schema changed, data
+            // rotted) from Keychain I/O failures so the user can debug via
+            // Console.app.
+            logger.error("Keychain load failed; keeping on-disk blob for recovery: \(String(describing: error))")
+        }
+
+        // Migration path: an earlier build wrote to UserDefaults. If the
+        // Keychain is empty but a legacy blob exists, move it over and clear
+        // the legacy entry. A failed decode here is also logged, not silent.
+        guard let data = defaults.data(forKey: Self.legacyStorageKey) else {
+            return []
+        }
+        do {
+            let decoded = try JSONDecoder().decode([Connection].self, from: data)
+            try? ConnectionKeychain.save(decoded)
+            defaults.removeObject(forKey: Self.legacyStorageKey)
+            return decoded
+        } catch {
+            logger.error("Legacy UserDefaults blob failed to decode; leaving it in place for recovery: \(String(describing: error))")
+            return []
+        }
     }
 
     private func save() {
-        if let data = try? JSONEncoder().encode(connections) {
-            defaults.set(data, forKey: Self.storageKey)
+        do {
+            try ConnectionKeychain.save(connections)
+        } catch {
+            // The Keychain write failed (disk full, item locked, etc.). Surface
+            // it via os_log so the user has a chance to notice; the in-memory
+            // list still reflects their intent for this session.
+            logger.error("Failed to persist connections to Keychain: \(String(describing: error))")
         }
     }
 }

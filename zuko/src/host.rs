@@ -13,6 +13,8 @@ use std::path::PathBuf;
 use tracing::{info, warn};
 
 use crate::config_dir;
+use crate::secret::write_secret_0600;
+use crate::ticket_file::write_current_ticket;
 use crate::wire::{try_parse_frame, ALPN, TYPE_DATA, TYPE_RESIZE};
 use crate::HostArgs;
 
@@ -76,7 +78,7 @@ pub async fn run(args: HostArgs) -> Result<()> {
     // channel to this daemon. The ticket encodes current addresses, which can
     // drift (relay re-home), so refresh it periodically from `endpoint.addr()`.
     // Best-effort: a failed write is logged but never fatal — shells still work.
-    if let Err(e) = crate::share::write_current_ticket(&ticket_str) {
+    if let Err(e) = write_current_ticket(&ticket_str) {
         warn!("could not write current ticket: {e:#}");
     }
     let ep = endpoint.clone();
@@ -88,7 +90,7 @@ pub async fn run(args: HostArgs) -> Result<()> {
         loop {
             tick.tick().await;
             let t = EndpointTicket::new(ep.addr()).to_string();
-            if let Err(e) = crate::share::write_current_ticket(&t) {
+            if let Err(e) = write_current_ticket(&t) {
                 warn!("could not refresh current ticket: {e:#}");
             }
         }
@@ -241,7 +243,14 @@ async fn serve(
         _ = net_to_pty => {}
         _ = pty_to_net => {}
     }
+    // Reap the child explicitly: SIGKILL is asynchronous, and `portable_pty`'s
+    // `Child` Drop isn't guaranteed to wait across every backend — so on a
+    // long-running host with many sessions a backend that doesn't reap in Drop
+    // would otherwise leak zombies. Both calls are best-effort: the shell may
+    // already be gone (ESRCH from `kill`) and `wait` then just returns the
+    // exit status that the PTY reader already observed.
     let _ = child.kill();
+    let _ = child.wait();
     Ok(())
 }
 
@@ -262,31 +271,13 @@ fn load_or_create_key(path: &PathBuf) -> Result<SecretKey> {
         arr.copy_from_slice(&bytes);
         Ok(SecretKey::from_bytes(&arr))
     } else {
-        if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent).ok();
-        }
         let secret = SecretKey::generate();
         let bytes = secret.to_bytes();
-        write_secret(path, &bytes)?;
+        // The key is the host's persistent identity: write it through the shared
+        // atomic 0600 writer so a crash mid-write can never leave a truncated
+        // file that load_or_create_key would then reject (silently invalidating
+        // every saved connection on the next start).
+        write_secret_0600(path, &bytes)?;
         Ok(secret)
     }
-}
-
-fn write_secret(path: &PathBuf, bytes: &[u8]) -> Result<()> {
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt;
-        let mut f = std::fs::OpenOptions::new()
-            .write(true)
-            .create(true)
-            .truncate(true)
-            .mode(0o600)
-            .open(path)?;
-        f.write_all(bytes)?;
-    }
-    #[cfg(not(unix))]
-    {
-        std::fs::write(path, bytes)?;
-    }
-    Ok(())
 }

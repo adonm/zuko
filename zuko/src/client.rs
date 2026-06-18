@@ -7,7 +7,7 @@
 
 use anyhow::{Context, Result};
 use iroh::endpoint::{RecvStream, SendStream};
-use iroh::{Endpoint, EndpointAddr, endpoint::presets};
+use iroh::{endpoint::presets, Endpoint, EndpointAddr};
 use iroh_tickets::endpoint::EndpointTicket;
 use tokio::io::AsyncWriteExt as _;
 use tokio::sync::mpsc;

@@ -22,10 +22,14 @@ anyhow = "1"
 clap = { version = "4", features = ["derive"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-# Derives the throwaway handoff key from a memorable code (`zuko share`/`claim`).
-sha2 = "0.10"
+# Memory-hard KDF for deriving the throwaway handoff key from a memorable code
+# (`zuko share`/`claim`). Replaces a single unsalted SHA-256 so the ~52-bit
+# code resists offline brute-force if the ephemeral NodeId leaks.
+argon2 = "0.5"
 # Retry/backoff for `zuko claim`'s dial (N0 DNS lookup lags `zuko share` online).
 backon = "1"
+# Cross-process advisory locking for the saved-hosts file (`zuko add`/`rm`).
+fs4 = "0.12"
 
 [dev-dependencies]
 tempfile = "3"

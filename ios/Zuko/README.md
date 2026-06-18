@@ -33,7 +33,8 @@ Zuko/
   ZukoApp.swift             @main entry
   Models/
     Connection.swift        saved host (label + ticket)
-    ConnectionStore.swift   persisted list (UserDefaults)
+    ConnectionStore.swift   persisted list (Keychain-backed, observable)
+    ConnectionKeychain.swift  Keychain wrapper for the bearer-token tickets
   Net/
     Wire.swift              length-prefixed framing (shared with host)
     IrohSession.swift       Iroh connect + framed read loop + serial write pump

@@ -60,3 +60,7 @@ run = "brew install xcodegen fastlane"
 [tasks.run-host]
 description = "Run `zuko host` in the foreground (mise shim or local debug build)"
 run = "sh zuko/scripts/zuko-host.sh"
+
+[tasks.release]
+description = "Cut a release: commit pending work, push, tag vX.Y.Z, push tag (triggers release.yml). Pass the version, e.g. `mise run release v0.1.0`."
+run = "sh zuko/scripts/release.sh ${@}"

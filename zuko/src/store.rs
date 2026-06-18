@@ -9,12 +9,18 @@
 //! Tickets contain no whitespace, and names are validated to contain none, so a
 //! plain whitespace split round-trips reliably. Lines starting with `#` are
 //! comments.
+//!
+//! The file holds dialing-secret tickets (each one grants shell access on the
+//! named host), so it's written through the shared atomic `0600` writer — see
+//! [`crate::secret`] — and every `add`/`rm` takes an exclusive `flock` on a
+//! sibling `.lock` file so two concurrent `zuko` processes can't silently
+//! overwrite each other's update.
 
 use anyhow::{bail, Result};
 use std::fs;
-use std::io::Write;
 
 use crate::config_dir;
+use crate::secret::write_secret_0600;
 
 /// Resolve a `zuko connect` target to a raw ticket string.
 ///
@@ -62,6 +68,9 @@ pub fn add(name: &str, ticket: &str) -> Result<()> {
         bail!("ticket contains whitespace");
     }
 
+    // Hold the cross-process lock across read-modify-write so a concurrent
+    // `zuko add` / `zuko rm` can't drop our update (or vice versa).
+    let _guard = HostsLock::acquire()?;
     let mut entries = load();
     if let Some(existing) = entries.iter_mut().find(|(n, _)| n == name) {
         // Overwrite an existing entry under the same name in place.
@@ -81,6 +90,8 @@ pub fn list() {
 
 /// Remove a saved host by name. Succeeds whether or not it existed.
 pub fn remove(name: &str) -> Result<()> {
+    // Hold the cross-process lock across read-modify-write.
+    let _guard = HostsLock::acquire()?;
     let before = load();
     let after: Vec<_> = before.into_iter().filter(|(n, _)| n != name).collect();
     store(&after)
@@ -117,12 +128,11 @@ fn load() -> Vec<(String, String)> {
         .collect()
 }
 
-/// Write entries back atomically (temp + rename), creating the config dir.
+/// Write entries back through the shared atomic `0600` writer. The temp +
+/// rename inside [`write_secret_0600`] guarantees a crash can never leave a
+/// truncated hosts file; the `0600` perms keep every saved ticket private.
 fn store(entries: &[(String, String)]) -> Result<()> {
     let path = hosts_path();
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)?;
-    }
     let mut body = String::new();
     body.push_str("# zuko saved hosts — do not edit by hand if a `zuko add` is running\n");
     body.push_str("# format: name<TAB>ticket\n");
@@ -132,17 +142,7 @@ fn store(entries: &[(String, String)]) -> Result<()> {
         body.push_str(ticket);
         body.push('\n');
     }
-    let tmp = path.with_extension("tmp");
-    let mut f = fs::OpenOptions::new()
-        .write(true)
-        .create(true)
-        .truncate(true)
-        .open(&tmp)?;
-    f.write_all(body.as_bytes())?;
-    f.sync_all()?;
-    drop(f);
-    fs::rename(tmp, &path)?;
-    Ok(())
+    write_secret_0600(&path, body.as_bytes())
 }
 
 fn hosts_path() -> std::path::PathBuf {
@@ -150,6 +150,41 @@ fn hosts_path() -> std::path::PathBuf {
     p.push("zuko");
     p.push("hosts");
     p
+}
+
+/// Cross-process advisory lock guarding the read-modify-write transaction in
+/// `add`/`remove`. Lives at `~/.config/zuko/hosts.lock` (a separate path so
+/// the atomic `hosts` rename never orphans the lock inode), held until the
+/// guard is dropped.
+struct HostsLock(std::fs::File);
+
+impl HostsLock {
+    fn acquire() -> Result<Self> {
+        let lock_path = hosts_path().with_extension("lock");
+        if let Some(parent) = lock_path.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        // Open (or create) the lock file without truncating — its contents are
+        // irrelevant; only the flock on the inode matters.
+        let f = fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(false)
+            .open(&lock_path)?;
+        // Block until we hold the exclusive lock. fs4 releases on drop; we
+        // stash the file in the guard so its lifetime ties to the transaction.
+        fs4::fs_std::FileExt::lock_exclusive(&f)?;
+        Ok(Self(f))
+    }
+}
+
+impl Drop for HostsLock {
+    fn drop(&mut self) {
+        // Best-effort unlock; the OS releases the lock when the fd closes
+        // anyway, but explicit is clearer and frees it immediately.
+        let _ = fs4::fs_std::FileExt::unlock(&self.0);
+    }
 }
 
 #[cfg(test)]
@@ -235,5 +270,42 @@ mod tests {
         drop(f);
         assert_eq!(lookup("home").as_deref(), Some("endpointaAAAA"));
         assert_eq!(lookup("server").as_deref(), Some("endpointaBBBB"));
+    }
+
+    // The hosts file is a dialing-secret (one ticket per line = one shell each),
+    // so it must be 0600 — readable only by the owner.
+    #[cfg(unix)]
+    #[test]
+    fn hosts_file_is_0600() {
+        use std::os::unix::fs::PermissionsExt;
+        let _g = lock();
+        let _dir = isolated();
+        add("home", "endpointaAAAA").unwrap();
+        let perms = std::fs::metadata(hosts_path())
+            .unwrap()
+            .permissions()
+            .mode();
+        assert_eq!(
+            perms & 0o777,
+            0o600,
+            "hosts file must be 0600, got {:o}",
+            perms
+        );
+    }
+
+    // The cross-process lock must be released when add() returns, so a
+    // subsequent operation in the same process doesn't deadlock against a
+    // held-open lock. (Tests the HostsLock acquire/drop path end-to-end.)
+    #[test]
+    fn lock_is_released_after_add_and_remove() {
+        let _g = lock();
+        let _dir = isolated();
+        add("a", "endpointaAAAA").unwrap();
+        add("b", "endpointaBBBB").unwrap(); // would deadlock if the first held the lock
+        remove("a").unwrap();
+        add("c", "endpointaCCCC").unwrap();
+        // The lock file itself sticks around (we never unlink it) — that's
+        // fine, it carries no data.
+        assert!(hosts_path().with_extension("lock").exists());
     }
 }

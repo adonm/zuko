@@ -21,8 +21,9 @@
 //!   reads the ticket off a single unidirectional stream.
 //!
 //! Whoever has the code can claim — that's the point. The code has ~52 bits of
-//! entropy, which is far beyond reach for online guessing during the
-//! minutes-long window before `zuko share` exits after the first claim.
+//! entropy, memory-hardened through Argon2id (see [`crate::code`]), which is
+//! far beyond reach for online guessing during the minutes-long window before
+//! `zuko share` exits after the first claim.
 //!
 //! ## Wire (ALPN `zuko/handoff/1`, one uni stream host -> client)
 //!
@@ -36,28 +37,18 @@
 //! `label` has no newlines (sanitised), and tickets never contain whitespace,
 //! so splitting on the first `\n` is unambiguous.
 
-use anyhow::{Context, Result, bail};
+use anyhow::{bail, Context, Result};
 use backon::{ConstantBuilder, Retryable};
-use iroh::{Endpoint, SecretKey, endpoint::presets};
-use sha2::{Digest, Sha256};
+use iroh::{endpoint::presets, Endpoint};
 use std::time::Duration;
 use tracing::{info, warn};
 
+use crate::code::{default_label, derive_key, generate_code, sanitize_label};
+use crate::ticket_file::read_current_ticket;
 use crate::ShareArgs;
 
 /// ALPN for the throwaway handoff endpoint (distinct from the terminal `zuko/1`).
 const HANDOFF_ALPN: &[u8] = b"zuko/handoff/1";
-
-/// Letters used to build pronounceable code words. Dropped: q/x/y (ambiguous
-/// and rarely useful), and the CVCV shape structurally avoids the common
-/// 4-letter offensive words (which are CVCC/CCVC, not CVCV).
-const CONSONANTS: &[u8] = b"bcdfghjklmnprstvwz";
-const VOWELS: &[u8] = b"aeiou";
-
-/// Number of CVCV words in a code. 4 words × ~13 bits = ~52 bits of entropy —
-/// vast overkill for a one-time, minutes-long handoff, and short enough to
-/// read aloud or type once.
-const WORDS_IN_CODE: usize = 4;
 
 /// Cap a handoff payload so a misbehaving peer can't make us allocate forever.
 const MAX_HANDOFF_PAYLOAD: usize = 8 * 1024;
@@ -86,7 +77,7 @@ pub async fn share(args: &ShareArgs) -> Result<()> {
     let label = sanitize_label(&label_owned);
 
     let code = generate_code();
-    let secret = derive_key(&code);
+    let secret = derive_key(&code)?;
     let node_id = secret.public();
 
     let endpoint = Endpoint::builder(presets::N0)
@@ -156,10 +147,7 @@ enum AcceptOutcome {
 
 /// Wrap `endpoint.accept()` in an optional overall timeout. `timeout_secs == 0`
 /// means wait forever (until the endpoint closes or Ctrl-C).
-async fn accept_with_timeout(
-    endpoint: &Endpoint,
-    timeout_secs: u64,
-) -> Result<AcceptOutcome> {
+async fn accept_with_timeout(endpoint: &Endpoint, timeout_secs: u64) -> Result<AcceptOutcome> {
     if timeout_secs == 0 {
         return Ok(match endpoint.accept().await {
             Some(i) => AcceptOutcome::Incoming(Box::new(i)),
@@ -215,7 +203,7 @@ pub async fn claim(
 ) -> Result<()> {
     // No tracing subscriber here: if we connect, the terminal goes raw and any
     // log output would corrupt it. Status goes to stderr; the ticket to stdout.
-    let secret = derive_key(code);
+    let secret = derive_key(code)?;
     let node_id = secret.public();
 
     let endpoint = Endpoint::builder(presets::N0)
@@ -230,7 +218,9 @@ pub async fn claim(
     // propagation delay instead of failing immediately.
     let conn = dial_throwaway(&endpoint, node_id, timeout_secs)
         .await
-        .context("couldn't reach the sharing host — is `zuko share` still running and the code correct?")?;
+        .context(
+            "couldn't reach the sharing host — is `zuko share` still running and the code correct?",
+        )?;
 
     let mut recv = conn.accept_uni().await.context("accept handoff stream")?;
     let payload = read_to_end(&mut recv, MAX_HANDOFF_PAYLOAD).await?;
@@ -278,7 +268,11 @@ async fn dial_throwaway(
     const MAX_TIMES: usize = 30;
 
     let retry = (|| async { endpoint.connect(node_id, HANDOFF_ALPN).await })
-        .retry(ConstantBuilder::default().with_delay(DELAY).with_max_times(MAX_TIMES))
+        .retry(
+            ConstantBuilder::default()
+                .with_delay(DELAY)
+                .with_max_times(MAX_TIMES),
+        )
         .notify(|err: &iroh::endpoint::ConnectError, dur: Duration| {
             warn!("claim dial failed, retrying in {dur:?}: {err}");
         });
@@ -307,222 +301,5 @@ async fn read_to_end(recv: &mut iroh::endpoint::RecvStream, max: usize) -> Resul
             Ok(None) => return Ok(buf),
             Err(e) => return Err(e).context("read handoff payload"),
         }
-    }
-}
-
-// ─────────────────── code generation + key derivation ──────────────────────
-
-/// Normalise a typed code into its canonical letter sequence: lowercased, with
-/// everything except a–z stripped. Separators are only for readability, so
-/// `Tofa-Mive`, `tofa mive`, and `tofamive` all derive the same key.
-fn normalize_code(code: &str) -> String {
-    code.trim()
-        .to_lowercase()
-        .chars()
-        .filter(|c| c.is_ascii_lowercase())
-        .collect()
-}
-
-/// Derive the throwaway [`SecretKey`] deterministically from a code. Both sides
-/// run exactly this, so they converge on the same key (and thus the same node
-/// id) without ever exchanging secret material.
-fn derive_key(code: &str) -> SecretKey {
-    let material = normalize_code(code);
-    let mut hasher = Sha256::new();
-    hasher.update(material.as_bytes());
-    let digest = hasher.finalize();
-    let mut seed = [0u8; 32];
-    seed.copy_from_slice(&digest);
-    SecretKey::from_bytes(&seed)
-}
-
-/// Generate a fresh, memorable code: `WORD-WORD-WORD-WORD`, each word a
-/// pronounceable CVCV (e.g. `tofa-mive-laru-bedo`). Entropy comes from
-/// [`SecretKey::generate`] (OsRng).
-fn generate_code() -> String {
-    let rand = SecretKey::generate().to_bytes();
-    let mut idx = 0usize;
-    let mut out = Vec::with_capacity(WORDS_IN_CODE * 5 - 1);
-    for w in 0..WORDS_IN_CODE {
-        if w > 0 {
-            out.push(b'-');
-        }
-        out.push(pick(CONSONANTS, rand[idx]));
-        idx += 1;
-        out.push(pick(VOWELS, rand[idx]));
-        idx += 1;
-        out.push(pick(CONSONANTS, rand[idx]));
-        idx += 1;
-        out.push(pick(VOWELS, rand[idx]));
-        idx += 1;
-    }
-    // idx == 4*WORDS_IN_CODE == 16 <= 32 bytes available; no wraparound.
-    String::from_utf8(out).expect("code is ascii-only")
-}
-
-fn pick(alphabet: &[u8], byte: u8) -> u8 {
-    alphabet[(byte as usize) % alphabet.len()]
-}
-
-/// Default handoff label: the system hostname if we can find it cheaply,
-/// otherwise the boring-but-honest `"host"`.
-fn default_label() -> String {
-    if let Ok(h) = std::env::var("HOSTNAME") {
-        let h = h.trim().to_string();
-        if !h.is_empty() {
-            return h;
-        }
-    }
-    if let Ok(h) = std::fs::read_to_string("/etc/hostname") {
-        let h = h.trim().to_string();
-        if !h.is_empty() {
-            return h;
-        }
-    }
-    "host".to_string()
-}
-
-/// Collapse a user-supplied label to a single safe line: trim, turn whitespace
-/// into `-` (so it round-trips through the newline-delimited payload and the
-/// saved-hosts file). Falls back to `"host"` if empty or comment-like.
-fn sanitize_label(s: &str) -> String {
-    let cleaned: String = s
-        .trim()
-        .chars()
-        .map(|c| if c.is_whitespace() { '-' } else { c })
-        .collect();
-    let cleaned = cleaned.trim_matches('-');
-    if cleaned.is_empty() || cleaned.starts_with('#') {
-        "host".to_string()
-    } else {
-        cleaned.to_string()
-    }
-}
-
-// ─────────────────────── current_ticket file helpers ───────────────────────
-//
-// `zuko host` writes its live, dialable ticket here; `zuko share` reads it so
-// the handoff never needs an IPC channel to the running daemon. The file is a
-// dialing secret (anyone holding it can connect), so it's written 0600 like
-// the key.
-
-/// `~/.config/zuko/current_ticket` (follows `XDG_CONFIG_HOME`).
-pub fn current_ticket_path() -> std::path::PathBuf {
-    let mut p = crate::config_dir();
-    p.push("zuko");
-    p.push("current_ticket");
-    p
-}
-
-/// Write the live ticket atomically with 0600 perms (best-effort; errors
-/// logged but not fatal — the host keeps serving shells even if this write
-/// fails). Called by `zuko host` on startup and periodically.
-pub fn write_current_ticket(ticket: &str) -> Result<()> {
-    write_secret_0600(&current_ticket_path(), ticket.trim().as_bytes())
-}
-
-fn read_current_ticket() -> Result<String> {
-    let path = current_ticket_path();
-    let ticket = std::fs::read_to_string(&path).with_context(|| {
-        format!(
-            "read {} (is `zuko host` running? it writes the current ticket there)",
-            path.display()
-        )
-    })?;
-    let ticket = ticket.trim().to_string();
-    if ticket.is_empty() {
-        bail!("{} is empty (is `zuko host` running?)", path.display());
-    }
-    Ok(ticket)
-}
-
-fn write_secret_0600(path: &std::path::Path, bytes: &[u8]) -> Result<()> {
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent).ok();
-    }
-    let tmp = path.with_extension("tmp");
-    #[cfg(unix)]
-    {
-        use std::io::Write;
-        use std::os::unix::fs::OpenOptionsExt;
-        let mut f = std::fs::OpenOptions::new()
-            .write(true)
-            .create(true)
-            .truncate(true)
-            .mode(0o600)
-            .open(&tmp)?;
-        f.write_all(bytes)?;
-        f.sync_all()?;
-    }
-    #[cfg(not(unix))]
-    {
-        std::fs::write(&tmp, bytes)?;
-    }
-    std::fs::rename(&tmp, path)?;
-    Ok(())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn normalize_is_separator_and_case_agnostic() {
-        assert_eq!(normalize_code("tofa-mive-laru-bedo"), "tofamivelarubedo");
-        assert_eq!(normalize_code("Tofa Mive LarU beDo"), "tofamivelarubedo");
-        assert_eq!(normalize_code("  tofa_mive.laru+bedo  "), "tofamivelarubedo");
-        assert_eq!(normalize_code("TOFAMIVELARUBEDO"), "tofamivelarubedo");
-        // Non-letters are dropped entirely.
-        assert_eq!(normalize_code("t0f4-m!v3"), "tfmv");
-    }
-
-    #[test]
-    fn derive_key_is_deterministic_and_input_sensitive() {
-        // Same logical code -> same key, regardless of formatting.
-        let a = derive_key("tofa-mive-laru-bedo");
-        let b = derive_key("TOFA MIVE LARU BEDO");
-        assert_eq!(a.to_bytes(), b.to_bytes());
-
-        // Different code -> different key.
-        let c = derive_key("tofa-mive-laru-beee");
-        assert_ne!(a.to_bytes(), c.to_bytes());
-
-        // public() is a stable function of the key, so both sides also agree
-        // on the node id they're dialing / serving as.
-        assert_eq!(a.public(), b.public());
-    }
-
-    #[test]
-    fn generate_code_is_well_formed() {
-        for _ in 0..256 {
-            let code = generate_code();
-            let words: Vec<&str> = code.split('-').collect();
-            assert_eq!(words.len(), WORDS_IN_CODE, "code: {code}");
-            for w in &words {
-                assert_eq!(w.len(), 4, "word must be CVCV: {w} in {code}");
-                assert!(
-                    w.bytes().all(|b| b.is_ascii_lowercase()),
-                    "code must be lowercase: {w}"
-                );
-                let b = w.as_bytes();
-                assert!(CONSONANTS.contains(&b[0]), "pos0 consonant: {w}");
-                assert!(VOWELS.contains(&b[1]), "pos1 vowel: {w}");
-                assert!(CONSONANTS.contains(&b[2]), "pos2 consonant: {w}");
-                assert!(VOWELS.contains(&b[3]), "pos3 vowel: {w}");
-            }
-            // A generated code must round-trip through derive_key without panic.
-            let _ = derive_key(&code).public();
-        }
-    }
-
-    #[test]
-    fn sanitize_label_collapses_whitespace_and_falls_back() {
-        assert_eq!(sanitize_label("my server"), "my-server");
-        assert_eq!(sanitize_label("  spaced  "), "spaced");
-        assert_eq!(sanitize_label("a\tb\nc"), "a-b-c");
-        assert_eq!(sanitize_label(""), "host");
-        assert_eq!(sanitize_label("   "), "host");
-        assert_eq!(sanitize_label("#comment"), "host");
-        assert_eq!(sanitize_label("plain"), "plain");
     }
 }

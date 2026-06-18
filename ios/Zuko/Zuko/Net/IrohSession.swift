@@ -33,8 +33,21 @@ final class IrohSession: ObservableObject {
     private var writeTask: Task<Void, Never>?
     private var writeContinuation: AsyncStream<Data>.Continuation?
 
+    /// Tracks whether `disconnect()` was called for this session, so the
+    /// `CancellationError` handler can tell an intentional disconnect (we set
+    /// this, then cancel the task) apart from an external cancellation (the
+    /// task was cancelled some other way). Replaces a fragile string-equality
+    /// check on `status == .disconnected("disconnected")` that silently broke
+    /// whenever the associated-value literal changed.
+    private var disconnectRequested = false
+
     func connect(ticket: String) {
         guard status != .connecting, status != .connected else { return }
+        // A new connection attempt means any prior disconnect intent is no
+        // longer current — reset so the cancellation handler below reports
+        // "cancelled" rather than "disconnected" if this attempt is torn down
+        // before completion.
+        disconnectRequested = false
         status = .connecting
         connectTask?.cancel()
         let cleaned = ticket.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -45,6 +58,10 @@ final class IrohSession: ObservableObject {
     }
 
     func disconnect() {
+        // Record intent *before* cancelling, so the cancellation handler that
+        // fires asynchronously sees it and keeps the "disconnected" status we
+        // set here (rather than overwriting it with "cancelled").
+        disconnectRequested = true
         connectTask?.cancel()
         writeContinuation?.finish()
         writeTask?.cancel()
@@ -92,7 +109,11 @@ final class IrohSession: ObservableObject {
 
             await readLoop()
         } catch is CancellationError {
-            if status != .disconnected("disconnected") {
+            // `disconnect()` flips `disconnectRequested` before cancelling, so
+            // we keep its "disconnected" status. Any other cancellation
+            // (parent Task cancelled, view dismissed, etc.) is reported as
+            // "cancelled".
+            if !disconnectRequested {
                 status = .disconnected("cancelled")
             }
         } catch {

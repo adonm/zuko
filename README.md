@@ -121,7 +121,7 @@ The full spec (lifecycle, semantics, the optional ticket-handoff ALPN) is in
 
 | Path | What |
 |------|------|
-| `zuko/` | The `zuko` binary (Rust): the **host** (`zuko host`) + the **CLI client** (`zuko connect`/`share`/`claim`). Wire framing in [`zuko/src/wire.rs`](zuko/src/wire.rs), handoff in [`zuko/src/share.rs`](zuko/src/share.rs). |
+| `zuko/` | The `zuko` binary (Rust): the **host** (`zuko host`) + the **CLI client** (`zuko connect`/`share`/`claim`). Wire framing in [`zuko/src/wire.rs`](zuko/src/wire.rs), handoff in [`zuko/src/handoff.rs`](zuko/src/handoff.rs). |
 | `zuko/scripts/` | mise-based install + run scripts, systemd/launchd units, and [`e2e_test.py`](zuko/scripts/e2e_test.py) (the end-to-end PTY harness). |
 | `ios/Zuko/` | The **iOS client** (XcodeGen `project.yml` + Swift sources). |
 | `docs/` | [`PROTOCOL.md`](docs/PROTOCOL.md) (wire spec for client authors) and [`CLIENTS.md`](docs/CLIENTS.md) (client registry). |
@@ -173,6 +173,20 @@ so local and CI stay in lockstep.
   mise's `github:` backend. The release binary is ~9.5 MB — built with boring
   dependencies and standard size-conscious cargo flags (`opt-level="z"`, fat
   LTO, stripped symbols); no bespoke trimming, on purpose.
+
+  **Cutting a release** is one command — it commits any pending work, pushes
+  the branch, creates an annotated `v*` tag, and pushes the tag (which fires
+  [`release.yml`](.github/workflows/release.yml)):
+
+  ```sh
+  mise run release v0.1.0   # = sh zuko/scripts/release.sh v0.1.0
+  ```
+
+  The script refuses to tag a version that doesn't match `zuko/Cargo.toml`'s
+  `version`, and refuses to clobber an existing tag. Until a `v*` tag exists,
+  `mise use --global github:adonm/zuko` will fail with "no releases found" —
+  that's expected for a brand-new checkout.
+
 - **iOS app** — [`ios/DISTRIBUTION.md`](ios/DISTRIBUTION.md) covers building a
   **signed** `.ipa` and pushing to **TestFlight entirely from GitHub Actions,
   no Mac required**. Signing material (`.p12` cert + `.mobileprovision`) lives

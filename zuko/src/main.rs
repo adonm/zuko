@@ -21,12 +21,15 @@
 //!   0x01 RESIZE payload = [cols: u16 BE][rows: u16 BE]   (client -> host)
 //! ```
 //!
-//! See [`wire`], [`host`], and [`client`] for the implementations.
+//! See [`wire`], [`host`], [`client`], and [`handoff`] for the implementations.
 
 mod client;
+mod code;
+mod handoff;
 mod host;
-mod share;
+mod secret;
 mod store;
+mod ticket_file;
 mod wire;
 
 use anyhow::Result;
@@ -159,14 +162,14 @@ async fn main() -> Result<()> {
             println!("removed {name}");
             Ok(())
         }
-        Some(Command::Share(args)) => share::share(&args).await,
+        Some(Command::Share(args)) => handoff::share(&args).await,
         Some(Command::Claim {
             code,
             r#as,
             no_connect,
             no_save,
             timeout,
-        }) => share::claim(&code, r#as, no_connect, no_save, timeout).await,
+        }) => handoff::claim(&code, r#as, no_connect, no_save, timeout).await,
         None => {
             // Bare `zuko` (no subcommand): treat any positional target as a
             // connect shortcut, or read the ticket from stdin if piped.

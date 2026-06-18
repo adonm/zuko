@@ -144,7 +144,10 @@ rm ~/.config/zuko/key
 
 See the root [`README.md`](../README.md#wire-protocol). ALPN is `zuko/1`. The
 framing code is shared by host and client in [`src/wire.rs`](src/wire.rs). The
-ticket handoff uses a separate ALPN `zuko/handoff/1` — see [`src/share.rs`](src/share.rs).
+ticket handoff uses a separate ALPN `zuko/handoff/1` — see
+[`src/handoff.rs`](src/handoff.rs) (with code derivation in
+[`src/code.rs`](src/code.rs) and ticket-file I/O in
+[`src/ticket_file.rs`](src/ticket_file.rs)).
 
 ## Testing
 

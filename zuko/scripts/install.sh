@@ -40,7 +40,17 @@ mkdir -p "$(dirname "$KEY")" "$PREFIX/bin"
 
 echo "==> installing zuko@$VERSION from github:adonm/zuko via mise"
 # `mise use --global` records the tool in the user config and installs it.
-mise use --global "github:adonm/zuko@${VERSION}"
+# Capture mise's exit code so we can print a targeted hint when the install
+# fails — most often that's "no release exists yet" on a brand-new repo, which
+# mise/ubi otherwise report as an opaque download error.
+if ! mise use --global "github:adonm/zuko@${VERSION}"; then
+    echo "mise failed to install zuko@$VERSION." >&2
+    echo "  most common cause: no GitHub Release matches that version." >&2
+    echo "    check available releases:" >&2
+    echo "      https://github.com/adonm/zuko/releases" >&2
+    echo "    or build from source:  cargo build --release --manifest-path zuko/Cargo.toml" >&2
+    exit 1
+fi
 
 # Resolve the installed binary (a mise shim, named after the binary).
 if ! BIN="$(command -v zuko 2>/dev/null || mise which zuko 2>/dev/null)"; then
