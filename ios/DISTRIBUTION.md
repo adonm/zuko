@@ -56,9 +56,10 @@ back. No CSR, no `.p12` wrangling, no Mac.
 4. **Build only**: choose `lane: build` — same but skips the TestFlight upload;
    the `.ipa` is published as a workflow artifact.
 
-The iOS tools (rust + xcodegen + fastlane) are installed by mise via
-`MISE_ENV=ios`, so this workflow uses exactly the same toolchain as local dev
-and the unsigned simulator build.
+The iOS tools (xcodegen + fastlane, both Homebrew formulae) are installed by
+`mise run setup-ios` (declared in `mise.ios.toml`, layered in via `MISE_ENV=ios`),
+so this workflow uses the same toolchain as local dev and the unsigned simulator
+build.
 
 ## Going further (full App Store release)
 

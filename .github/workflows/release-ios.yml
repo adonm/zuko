@@ -38,10 +38,13 @@ jobs:
           sudo xcode-select -s "$xcode"
           xcodebuild -version
 
-      - name: mise install (rust + xcodegen + fastlane)
+      - name: mise install (rust)
         uses: jdx/mise-action@v2
         with:
           cache: true
+
+      - name: Install iOS tooling (xcodegen + fastlane via mise/brew)
+        run: mise run setup-ios
 
       - name: fastlane ${{ inputs.lane }}
         working-directory: ios

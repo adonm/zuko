@@ -2,8 +2,8 @@
 # Local dev:   `mise install`  then  `mise run <task>`
 # CI:          `jdx/mise-action` (runs `mise install`) then `mise run <task>`
 #
-# iOS app builds additionally need xcodegen — see `mise.ios.toml`, activated
-# with `MISE_ENV=ios mise install` (the ios CI job sets MISE_ENV=ios).
+# iOS-only tooling (xcodegen, fastlane) lives in mise.ios.toml and is activated
+# with MISE_ENV=ios (the ios CI jobs set this).
 
 [tools]
 # iroh 1.0's dependency tree needs edition2024 (Rust 1.85+); track latest stable.
@@ -11,12 +11,11 @@
 rust = { version = "latest", profile = "default" }
 
 # System-level deps needed for builds. `mise bootstrap packages install`
-# installs only the ones applicable to the current OS/package manager.
-# Used by the release workflow to cross-compile the linux/arm64 binary.
+# installs only the ones applicable to the current OS/package manager, so it's
+# safe to list macOS- and Linux-only packages together. (The linux/arm64
+# cross-compiler is only used by the release workflow.)
 [bootstrap.packages]
 "apt:gcc-aarch64-linux-gnu" = "latest" # cross linker for aarch64-unknown-linux-gnu
-"apt:shellcheck" = "latest"
-"brew:shellcheck" = "latest"
 
 [env]
 CARGO_TERM_COLOR = "always"
@@ -35,12 +34,16 @@ run = [
 ]
 
 [tasks.build-ios]
-description = "Generate the Xcode project and build the iOS app (iOS Simulator, unsigned). macOS only."
+description = "Generate the Xcode project and build the iOS app (iOS Simulator, unsigned). macOS only. Run `setup-ios` first."
 run = [
     "xcodegen --spec ios/Zuko/project.yml generate",
     "xcodebuild -resolvePackageDependencies -project ios/Zuko/Zuko.xcodeproj -scheme Zuko",
     "xcodebuild build -project ios/Zuko/Zuko.xcodeproj -scheme Zuko -destination 'generic/platform=iOS Simulator' -derivedDataPath ios/Zuko/build CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO",
 ]
+
+[tasks.setup-ios]
+description = "Install iOS tooling (xcodegen, fastlane) via Homebrew. macOS only; run with MISE_ENV=ios."
+run = "mise bootstrap packages install --yes"
 
 [tasks.run-host]
 description = "Run zuko-host in the foreground (mise shim or local debug build)"

@@ -70,7 +70,8 @@ prints a ticket that starts with `endpointa…`.
 With [mise](https://mise.jdx.dev) installed:
 
 ```sh
-MISE_ENV=ios mise install   # rust + xcodegen (the ios env layer)
+MISE_ENV=ios mise install   # rust (xcodegen + fastlane come next via brew)
+mise run setup-ios          # brew install xcodegen fastlane (macOS)
 mise run build-ios          # generate project + build for the iOS Simulator
 open ios/Zuko/Zuko.xcodeproj
 ```
@@ -112,7 +113,8 @@ Tools, system deps, and tasks are defined in [`mise.toml`](mise.toml)
 mise install              # rust (+ system deps via mise bootstrap)
 mise run test-host        # clippy + unit tests
 mise run build-host       # release binary
-MISE_ENV=ios mise install # adds xcodegen (macOS)
+MISE_ENV=ios mise install # rust (ios layer)
+mise run setup-ios        # brew install xcodegen + fastlane (macOS)
 mise run build-ios        # generate + build the iOS app
 mise run run-host         # run the daemon in the foreground
 ```

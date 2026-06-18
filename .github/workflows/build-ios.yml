@@ -23,12 +23,13 @@ jobs:
           sudo xcode-select -s "$xcode"
           xcodebuild -version
 
-      - name: mise install (rust + xcodegen)
+      - name: mise install (rust)
         uses: jdx/mise-action@v2
         with:
           cache: true
-          # xcodegen ships in the ios env layer; ensure it's installed.
-          install: true
+
+      - name: Install iOS tooling (xcodegen via mise/brew)
+        run: mise run setup-ios
 
       - name: Generate + resolve + build
         run: mise run build-ios

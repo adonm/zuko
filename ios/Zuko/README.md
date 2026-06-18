@@ -9,7 +9,8 @@ generated `Zuko.xcodeproj` is gitignored.
 With [mise](https://mise.jdx.dev) installed:
 
 ```sh
-MISE_ENV=ios mise install   # rust + xcodegen (the ios env layer)
+MISE_ENV=ios mise install   # rust (ios layer)
+mise run setup-ios          # brew install xcodegen + fastlane
 mise run build-ios          # generate the project + build for the iOS Simulator
 open Zuko.xcodeproj
 ```
