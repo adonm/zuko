@@ -29,8 +29,8 @@ Home: <https://zuko.adonm.dev> · Source: <https://github.com/adonm/zuko>
 |------|------|
 | `ios/Zuko/` | The iOS app (XcodeGen `project.yml` + Swift sources). |
 | `host/` | The host daemon (`zuko-host`): Iroh + PTY bridge, written in Rust. |
-| `host/scripts/` | Install + run scripts, systemd/launchd units. |
-| `.github/workflows/` | CI: builds the iOS app (simulator) and the host (Linux + macOS). |
+| `host/scripts/` | mise-based install + run scripts, systemd/launchd units. |
+| `.github/workflows/` | CI: builds the iOS app (simulator), builds+tests the host, and publishes host release binaries to GitHub Releases. |
 
 ## Wire protocol
 
@@ -50,33 +50,34 @@ See [`host/src/main.rs`](host/src/main.rs) and
 
 ### 1. Set up a host
 
+Prerequisite: [mise](https://mise.jdx.dev) on the host (`curl https://mise.run | sh`). The installer pulls a prebuilt `zuko-host` binary from GitHub Releases via mise's `github:` backend.
+
 On the machine you want to shell into:
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/adonm/zuko/main/host/scripts/install.sh | sh
 ```
 
-This builds `zuko-host`, writes a persistent secret key to `~/.config/zuko/key`,
+This installs `zuko-host`, writes a persistent secret key to `~/.config/zuko/key`,
 starts a background service (systemd user unit on Linux, launchd on macOS), and
 prints a ticket that starts with `endpointa…`.
 
 > Manual / no service manager? See [`host/README.md`](host/README.md) and
-> `host/scripts/zuko-host.sh`.
+> `host/scripts/zuko-host.sh`. To pin a version: `ZUKO_VERSION=v0.1.0 sh install.sh`.
 
 ### 2. Build the app
 
-The Xcode project is generated from [`ios/Zuko/project.yml`](ios/Zuko/project.yml)
-with [XcodeGen](https://github.com/yonaskolb/XcodeGen):
+With [mise](https://mise.jdx.dev) installed:
 
 ```sh
-brew install xcodegen
-cd ios/Zuko && xcodegen generate
-open Zuko.xcodeproj
+MISE_ENV=ios mise install   # rust + xcodegen (the ios env layer)
+mise run build-ios          # generate project + build for the iOS Simulator
+open ios/Zuko/Zuko.xcodeproj
 ```
 
-Pick your iPhone and hit Run. (CI also builds it — grab the `Zuko-app` artifact
-from the [ios workflow](../../actions/workflows/ios.yml); it's an unsigned
-simulator build, so for a real device you need to sign it with your own
+Pick your iPhone and hit Run. (CI builds the same way — grab the `Zuko-app`
+artifact from the [ios workflow](../../actions/workflows/ios.yml); it's an
+unsigned simulator build, so for a real device you need to sign it with your own
 developer account.)
 
 ### 3. Connect
@@ -87,9 +88,10 @@ Tap the host to open a terminal.
 ## Requirements
 
 - iOS 17.5+ (IrohLib requirement), Xcode 16+.
-- Host: any Linux/macOS box with `cargo`/`rustc` (the installer builds from
-  source). Iroh uses public relays + NAT traversal to reach hosts behind
-  firewalls — no port forwarding needed.
+- Host: any Linux/macOS box with [mise](https://mise.jdx.dev) (the installer
+  downloads a prebuilt binary from GitHub Releases; `cargo` is only needed if
+  you build from source). Iroh uses public relays + NAT traversal to reach hosts
+  behind firewalls — no port forwarding needed.
 
 ## Security notes
 
@@ -100,6 +102,23 @@ Tap the host to open a terminal.
   and all old tickets stop working.
 - The host runs your `$SHELL` per connection. If you want a specific command,
   pass `--shell` / `--shell-args` (see `zuko-host --help`).
+
+## Development
+
+Tools, system deps, and tasks are defined in [`mise.toml`](mise.toml)
+([`mise.ios.toml`](mise.ios.toml) adds xcodegen under `MISE_ENV=ios`):
+
+```sh
+mise install              # rust (+ system deps via mise bootstrap)
+mise run test-host        # clippy + unit tests
+mise run build-host       # release binary
+MISE_ENV=ios mise install # adds xcodegen (macOS)
+mise run build-ios        # generate + build the iOS app
+mise run run-host         # run the daemon in the foreground
+```
+
+CI uses the same tasks via [`jdx/mise-action`](https://github.com/jdx/mise-action),
+so local and CI stay in lockstep.
 
 ## License
 

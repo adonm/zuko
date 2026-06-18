@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
 
 jobs:
-  build:
+  test:
     name: build & test (${{ matrix.os }})
     strategy:
       fail-fast: false
@@ -17,26 +17,25 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: dtolnay/rust-toolchain@stable
+      - name: mise install
+        uses: jdx/mise-action@v2
         with:
-          components: clippy
+          cache: true
 
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: host
 
+      - name: Clippy + tests
+        run: mise run test-host
+
       - name: Build (release)
-        run: cargo build --release --manifest-path host/Cargo.toml
-
-      - name: Clippy
-        run: cargo clippy --all-targets --manifest-path host/Cargo.toml -- -D warnings
-
-      - name: Test
-        run: cargo test --manifest-path host/Cargo.toml
+        run: mise run build-host
 
       - name: Shellcheck scripts
-        if: runner.os == 'Linux'
-        run: shellcheck host/scripts/*.sh || true
+        run: |
+          mise bootstrap packages install --yes || true
+          shellcheck host/scripts/*.sh || true
 
       - name: Upload binary
         uses: actions/upload-artifact@v4

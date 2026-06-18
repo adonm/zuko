@@ -10,66 +10,34 @@ jobs:
   build:
     name: Build iOS app (simulator)
     runs-on: macos-15
+    env:
+      # Layers in mise.ios.toml (ruby + gem:xcodegen).
+      MISE_ENV: ios
     steps:
       - uses: actions/checkout@v4
 
-      - name: Select newest Xcode
+      - name: Select newest Xcode (full iOS platform)
         run: |
-          set -e
-          xcode=$(ls -d /Applications/Xcode*.app | sort -V | tail -1)
+          xcode="$(ls -d /Applications/Xcode*.app | sort -V | tail -1)"
           echo "Selecting $xcode"
           sudo xcode-select -s "$xcode"
           xcodebuild -version
-          xcrun simctl list runtimes available || true
 
-      - name: Install XcodeGen
-        run: brew install xcodegen
+      - name: mise install (rust + xcodegen)
+        uses: jdx/mise-action@v2
+        with:
+          cache: true
+          # xcodegen ships in the ios env layer; ensure it's installed.
+          install: true
 
-      - name: Generate Xcode project
-        working-directory: ios/Zuko
-        run: xcodegen generate
-
-      - name: Resolve Swift packages
-        working-directory: ios/Zuko
-        run: |
-          xcodebuild -resolvePackageDependencies \
-            -project Zuko.xcodeproj \
-            -scheme Zuko
-
-      - name: Pick an available iPhone simulator
-        id: sim
-        run: |
-          dest="$(xcrun simctl list devices available -j | python3 -c '
-          import json, sys
-          data = json.load(sys.stdin)["devices"]
-          for runtime, devs in data.items():
-              if "iOS" not in runtime:
-                  continue
-              for dev in devs:
-                  if dev.get("isAvailable") and "iPhone" in dev.get("name", ""):
-                      print("platform=iOS Simulator,id=" + dev["udid"])
-                      sys.exit(0)
-          sys.exit(1)
-          ')"
-          echo "destination=$dest" >> "$GITHUB_OUTPUT"
-          echo "Picked destination: $dest"
-
-      - name: Build (iOS Simulator)
-        working-directory: ios/Zuko
-        run: |
-          xcodebuild build \
-            -project Zuko.xcodeproj \
-            -scheme Zuko \
-            -destination '${{ steps.sim.outputs.destination }}' \
-            -derivedDataPath build \
-            CODE_SIGNING_ALLOWED=NO \
-            CODE_SIGNING_REQUIRED=NO
+      - name: Generate + resolve + build
+        run: mise run build-ios
 
       - name: Locate .app
         id: app
         working-directory: ios/Zuko
         run: |
-          # Absolute path — upload-artifact resolves `path` from the repo root.
+          # Absolute path — upload-artifact resolves paths from the repo root.
           app="$(find "$(pwd)/build/Build/Products" -name 'Zuko.app' -type d | head -1)"
           echo "path=$app" >> "$GITHUB_OUTPUT"
           echo "Found $app"

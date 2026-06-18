@@ -1,0 +1,116 @@
+name: release-host
+
+# Builds release binaries for zuko-host and publishes them to GitHub Releases.
+# The install script consumes these via mise's `github:` backend.
+#
+# Tools come from mise (mise.toml); the aarch64-linux cross-compiler comes from
+# mise [bootstrap.packages]. CI just sets the matrix + target.
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag to publish (e.g. v0.1.0)'
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: build ${{ matrix.target }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { runner: ubuntu-latest, target: x86_64-unknown-linux-gnu,  cross: false }
+          - { runner: ubuntu-latest, target: aarch64-unknown-linux-gnu, cross: true  }
+          - { runner: macos-13,       target: x86_64-apple-darwin,      cross: false }
+          - { runner: macos-14,       target: aarch64-apple-darwin,     cross: false }
+    runs-on: ${{ matrix.runner }}
+    env:
+      ZUKO_TARGET: ${{ matrix.target }}
+      ARTIFACT: zuko-host-${{ matrix.target }}.tar.gz
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: mise install (rust)
+        uses: jdx/mise-action@v2
+        with:
+          cache: true
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: host
+          key: ${{ matrix.target }}
+
+      - name: Add rust target
+        run: rustup target add "${ZUKO_TARGET}"
+
+      - name: Install cross toolchain (linux aarch64)
+        if: ${{ matrix.cross }}
+        run: |
+          mise bootstrap packages install --yes
+          echo "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc" >> "$GITHUB_ENV"
+
+      - name: Build release (target = ${{ matrix.target }})
+        run: cargo build --release --manifest-path host/Cargo.toml --target "${ZUKO_TARGET}"
+
+      - name: Package
+        run: |
+          mkdir -p dist
+          cp "host/target/${ZUKO_TARGET}/release/zuko-host" dist/zuko-host
+          chmod +x dist/zuko-host
+          tar -C dist -czf "$ARTIFACT" zuko-host
+          sha256sum "$ARTIFACT" > "$ARTIFACT.sha256"
+          echo "--- archive ---"
+          tar -tzf "$ARTIFACT"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.ARTIFACT }}
+          path: |
+            ${{ env.ARTIFACT }}
+            ${{ env.ARTIFACT }}.sha256
+          if-no-files-found: error
+
+  release:
+    name: publish GitHub Release
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: assets
+          merge-multiple: true
+
+      - name: Resolve tag
+        id: tag
+        run: |
+          if [ -n "${{ inputs.tag }}" ]; then
+            echo "tag=${{ inputs.tag }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "tag=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Create / update release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -e
+          tag="${{ steps.tag.outputs.tag }}"
+          echo "Publishing $tag with:"
+          ls -1 assets
+          if gh release view "$tag" >/dev/null 2>&1; then
+            echo "release exists; uploading assets"
+            gh release upload "$tag" assets/* --clobber
+          else
+            gh release create "$tag" assets/* \
+              --title "$tag" \
+              --generate-notes \
+              --target main
+          fi
