@@ -8,8 +8,10 @@
 
 [tools]
 # iroh 1.0's dependency tree needs edition2024 (Rust 1.85+); track latest stable.
-# `profile = "default"` guarantees clippy + rustfmt (CI runners default to minimal).
-rust = { version = "latest", profile = "default" }
+# `components` explicitly pins clippy + rustfmt (CI runners default to the
+# 'minimal' profile, and `Swatinem/rust-cache` can restore a toolchain without
+# them — see the matching `rustup component add` step in the workflows).
+rust = { version = "latest", components = "clippy,rustfmt" }
 
 # System-level deps used by builds. `mise bootstrap packages install` installs
 # only the ones for the current OS/package manager. Just the linux/arm64
