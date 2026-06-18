@@ -32,11 +32,6 @@ jobs:
       - name: Build (release)
         run: mise run build-host
 
-      - name: Shellcheck scripts
-        run: |
-          mise bootstrap packages install --yes || true
-          shellcheck host/scripts/*.sh || true
-
       - name: Upload binary
         uses: actions/upload-artifact@v4
         with:

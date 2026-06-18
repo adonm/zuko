@@ -26,8 +26,6 @@ jobs:
   build:
     name: signed build (${{ inputs.lane }})
     runs-on: macos-15
-    env:
-      MISE_ENV: ios
     steps:
       - uses: actions/checkout@v4
 

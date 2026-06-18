@@ -57,9 +57,8 @@ back. No CSR, no `.p12` wrangling, no Mac.
    the `.ipa` is published as a workflow artifact.
 
 The iOS tools (xcodegen + fastlane, both Homebrew formulae) are installed by
-`mise run setup-ios` (declared in `mise.ios.toml`, layered in via `MISE_ENV=ios`),
-so this workflow uses the same toolchain as local dev and the unsigned simulator
-build.
+`mise run setup-ios`, so this workflow uses the same toolchain as local dev and
+the unsigned simulator build.
 
 ## Going further (full App Store release)
 

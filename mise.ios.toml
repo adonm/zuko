@@ -1,7 +1,0 @@
-# iOS-only tooling, layered on top of mise.toml when MISE_ENV=ios.
-# Activate with:  MISE_ENV=ios mise install && MISE_ENV=ios mise run setup-ios
-# XcodeGen and fastlane are Homebrew formulae (not gems), so they're declared
-# as bootstrap packages rather than [tools]. `mise run setup-ios` installs them.
-[bootstrap.packages]
-"brew:xcodegen" = "latest"
-"brew:fastlane" = "latest"

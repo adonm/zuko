@@ -10,9 +10,6 @@ jobs:
   build:
     name: Build iOS app (simulator)
     runs-on: macos-15
-    env:
-      # Layers in mise.ios.toml (ruby + gem:xcodegen).
-      MISE_ENV: ios
     steps:
       - uses: actions/checkout@v4
 

@@ -2,25 +2,23 @@
 # Local dev:   `mise install`  then  `mise run <task>`
 # CI:          `jdx/mise-action` (runs `mise install`) then `mise run <task>`
 #
-# iOS-only tooling (xcodegen, fastlane) lives in mise.ios.toml and is activated
-# with MISE_ENV=ios (the ios CI jobs set this).
+# iOS tooling (xcodegen, fastlane) is installed via system Homebrew by the
+# `setup-ios` task — mise's own brew backend conflicts with the system Homebrew
+# on runners/dev Macs, and these are exactly the system tools Homebrew is for.
 
 [tools]
 # iroh 1.0's dependency tree needs edition2024 (Rust 1.85+); track latest stable.
 # `profile = "default"` guarantees clippy + rustfmt (CI runners default to minimal).
 rust = { version = "latest", profile = "default" }
 
-# System-level deps needed for builds. `mise bootstrap packages install`
-# installs only the ones applicable to the current OS/package manager, so it's
-# safe to list macOS- and Linux-only packages together. (The linux/arm64
-# cross-compiler is only used by the release workflow.)
+# System-level deps used by builds. `mise bootstrap packages install` installs
+# only the ones for the current OS/package manager. Just the linux/arm64
+# cross-compiler here (used by the release workflow).
 [bootstrap.packages]
 "apt:gcc-aarch64-linux-gnu" = "latest" # cross linker for aarch64-unknown-linux-gnu
-"apt:shellcheck" = "latest"
-"brew:shellcheck" = "latest"
 
 [settings]
-# `mise bootstrap` (used to install [bootstrap.packages]) is still experimental.
+# `mise bootstrap` (used for [bootstrap.packages]) is still experimental.
 experimental = true
 
 [env]
@@ -48,8 +46,8 @@ run = [
 ]
 
 [tasks.setup-ios]
-description = "Install iOS tooling (xcodegen, fastlane) via Homebrew. macOS only; run with MISE_ENV=ios."
-run = "mise bootstrap packages install --yes"
+description = "Install iOS tooling (xcodegen, fastlane) via Homebrew. macOS only."
+run = "brew install xcodegen fastlane"
 
 [tasks.run-host]
 description = "Run zuko-host in the foreground (mise shim or local debug build)"
