@@ -1,11 +1,11 @@
 name: release-ios
 
 # Build a SIGNED iOS app and (optionally) upload to TestFlight — entirely in CI,
-# no Mac required. Signing is provisioned by fastlane `match` using an App
-# Store Connect API key (see ios/DISTRIBUTION.md for the one-time setup).
+# no Mac required. Signing material lives in GitHub secrets on THIS repo (the
+# .p12 cert + .mobileprovision profile). See ios/DISTRIBUTION.md for the
+# one-time setup to obtain them.
 #
-# Tools come from mise (mise.toml + mise.ios.toml under MISE_ENV=ios):
-# rust + xcodegen + fastlane.
+# Tools come from mise (rust) + `mise run setup-ios` (brew: xcodegen, fastlane).
 
 on:
   workflow_dispatch:
@@ -15,9 +15,8 @@ on:
         type: choice
         default: beta
         options:
-          - beta       # sign + build + upload to TestFlight
-          - build      # sign + build, publish .ipa as an artifact only
-          - signonly   # just provision certs (first-run bootstrap)
+          - beta    # build a signed .ipa + upload to TestFlight
+          - build   # build a signed .ipa, publish it as an artifact only
 
 permissions:
   contents: read
@@ -44,19 +43,27 @@ jobs:
       - name: Install iOS tooling (xcodegen + fastlane via mise/brew)
         run: mise run setup-ios
 
+      - name: Import distribution certificate (.p12 from secret)
+        uses: apple-actions/import-codesign-certs@v3
+        with:
+          p12-file-base64: ${{ secrets.BUILD_CERTIFICATE_BASE64 }}
+          p12-password: ${{ secrets.P12_PASSWORD }}
+
+      - name: Install provisioning profile (.mobileprovision from secret)
+        run: |
+          set -e
+          dest_dir="$HOME/Library/MobileDevice/Provisioning Profiles"
+          mkdir -p "$dest_dir"
+          printf '%s' "${{ secrets.PROVISIONING_PROFILE_BASE64 }}" | base64 -d > "$dest_dir/dev.adonm.zuko.mobileprovision"
+          echo "Installed profile:"
+          /usr/libexec/PlistBuddy -c "Print :Name" /dev/stdin <<< "$(security cms -D -d "$dest_dir/dev.adonm.zuko.mobileprovision")" || true
+
       - name: fastlane ${{ inputs.lane }}
         working-directory: ios
         env:
-          # App Store Connect API key (cert creation + TestFlight upload).
           ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
           ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
           ASC_KEY_CONTENT: ${{ secrets.ASC_KEY_CONTENT }}
-          # fastlane match storage (private git repo holding encrypted certs).
-          MATCH_GIT_URL: ${{ secrets.MATCH_GIT_URL }}
-          MATCH_PASSWORD: ${{ secrets.MATCH_PASSWORD }}
-          MATCH_GIT_PRIVATE_KEY: ${{ secrets.MATCH_GIT_PRIVATE_KEY }}
-          MATCH_READONLY: ${{ vars.MATCH_READONLY || 'false' }}
-          # Apple team id (for DEVELOPMENT_TEAM build setting).
           TEAM_ID: ${{ secrets.TEAM_ID }}
           LANG: en_US.UTF-8
           LC_ALL: en_US.UTF-8
@@ -64,14 +71,12 @@ jobs:
 
       - name: Locate .ipa
         id: ipa
-        if: ${{ inputs.lane != 'signonly' }}
         run: |
           ipa="$(find "$(pwd)" -name 'Zuko.ipa' -type f | head -1)"
           echo "path=$ipa" >> "$GITHUB_OUTPUT"
           echo "Found $ipa"
 
       - name: Upload .ipa
-        if: ${{ inputs.lane != 'signonly' }}
         uses: actions/upload-artifact@v4
         with:
           name: Zuko-ipa

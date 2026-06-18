@@ -129,9 +129,9 @@ so local and CI stay in lockstep.
   ~7–8 MB (panic=abort, fat LTO, trimmed `tokio`/`clippy`/`clap`).
 - **iOS app** — [`ios/DISTRIBUTION.md`](ios/DISTRIBUTION.md) covers building a
   **signed** `.ipa` and pushing to **TestFlight entirely from GitHub Actions,
-  no Mac required** (fastlane `match` provisions the certificate via the App
-  Store Connect API). The default `ios`/`build-ios` workflows produce an
-  *unsigned simulator* build for verification.
+  no Mac required**. Signing material (`.p12` cert + `.mobileprovision`) lives
+  in GitHub secrets on this repo. The default `ios`/`build-ios` workflows
+  produce an *unsigned simulator* build for verification.
 
 ## License
 
