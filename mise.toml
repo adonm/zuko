@@ -1,0 +1,66 @@
+# Single source of truth for tools, system deps, and tasks.
+# Local dev:   `mise install`  then  `mise run <task>`
+# CI:          `jdx/mise-action` (runs `mise install`) then `mise run <task>`
+#
+# iOS tooling (xcodegen, fastlane) is installed via system Homebrew by the
+# `setup-ios` task — mise's own brew backend conflicts with the system Homebrew
+# on runners/dev Macs, and these are exactly the system tools Homebrew is for.
+
+[tools]
+# iroh 1.0's dependency tree needs edition2024 (Rust 1.85+); track latest stable.
+# `components` explicitly pins clippy + rustfmt (CI runners default to the
+# 'minimal' profile, and `Swatinem/rust-cache` can restore a toolchain without
+# them — see the matching `rustup component add` step in the workflows).
+rust = { version = "latest", components = "clippy,rustfmt" }
+
+# System-level deps used by builds. `mise bootstrap packages install` installs
+# only the ones for the current OS/package manager. Just the linux/arm64
+# cross-compiler here (used by the release workflow).
+[bootstrap.packages]
+"apt:gcc-aarch64-linux-gnu" = "latest" # cross linker for aarch64-unknown-linux-gnu
+
+[settings]
+# `mise bootstrap` (used for [bootstrap.packages]) is still experimental.
+experimental = true
+
+[env]
+CARGO_TERM_COLOR = "always"
+
+# --- tasks (shared by local dev and CI) ---
+
+[tasks.build]
+description = "Build the zuko release binary (native target)"
+run = "cargo build --release --manifest-path zuko/Cargo.toml"
+
+[tasks.test]
+description = "Clippy + unit tests for zuko (host + client + share/claim)"
+run = [
+    "cargo clippy --all-targets --manifest-path zuko/Cargo.toml -- -D warnings",
+    "cargo test --manifest-path zuko/Cargo.toml",
+]
+
+[tasks.test-e2e]
+description = "End-to-end PTY harness (host<->connect + share<->claim) against the live Iroh network. Needs network."
+depends = ["build"]
+run = "python3 zuko/scripts/e2e_test.py"
+
+[tasks.build-ios]
+description = "Generate the Xcode project and build the iOS app (iOS Simulator, unsigned). macOS only. Run `setup-ios` first."
+dir = "ios/Zuko"
+run = [
+    "xcodegen generate",
+    "xcodebuild -resolvePackageDependencies -project Zuko.xcodeproj -scheme Zuko",
+    "xcodebuild build -project Zuko.xcodeproj -scheme Zuko -destination 'generic/platform=iOS Simulator' -derivedDataPath build CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO",
+]
+
+[tasks.setup-ios]
+description = "Install iOS tooling (xcodegen, fastlane) via Homebrew. macOS only."
+run = "brew install xcodegen fastlane"
+
+[tasks.run-host]
+description = "Run `zuko host` in the foreground (mise shim or local debug build)"
+run = "sh zuko/scripts/zuko-host.sh"
+
+[tasks.release]
+description = "Cut a release: commit pending work, push, tag vX.Y.Z, push tag (triggers release.yml). Pass the version, e.g. `mise run release v0.1.0`."
+run = "sh zuko/scripts/release.sh ${@}"

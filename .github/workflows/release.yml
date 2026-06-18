@@ -1,0 +1,136 @@
+name: release
+
+# Builds release binaries for `zuko` and publishes them to GitHub Releases.
+# The install script consumes these via mise's `github:` backend (one binary,
+# both `zuko host` and `zuko connect`).
+#
+# Tools come from mise (mise.toml); the aarch64-linux cross-compiler comes from
+# mise [bootstrap.packages]. CI just sets the matrix + target.
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag to publish (e.g. v0.1.0)'
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: build ${{ matrix.target }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Linux: native on ubuntu (x86_64), cross on ubuntu (aarch64).
+          # macOS: both targets build on Apple Silicon hardware (macos-14) —
+          # Rust + Apple's `clang` cross-compile x86_64-apple-darwin natively,
+          # so there's no need to wait on the scarce (and shrinking) Intel
+          # macos-13 runner pool. Apple stopped selling Intel Macs in 2020;
+          # building Intel binaries on Apple Silicon is well-supported.
+          - { runner: ubuntu-latest, target: x86_64-unknown-linux-gnu,  cross: false }
+          - { runner: ubuntu-latest, target: aarch64-unknown-linux-gnu, cross: true  }
+          - { runner: macos-14,      target: x86_64-apple-darwin,       cross: false }
+          - { runner: macos-14,      target: aarch64-apple-darwin,      cross: false }
+    runs-on: ${{ matrix.runner }}
+    env:
+      ZUKO_TARGET: ${{ matrix.target }}
+      ARTIFACT: zuko-${{ matrix.target }}.tar.gz
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: mise install (rust)
+        uses: jdx/mise-action@v2
+        with:
+          cache: true
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: zuko
+          key: ${{ matrix.target }}
+
+      - name: Add rust target
+        run: rustup target add "${ZUKO_TARGET}"
+
+      - name: Install cross toolchain (linux aarch64)
+        if: ${{ matrix.cross }}
+        run: |
+          mise bootstrap packages install --yes
+          echo "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc" >> "$GITHUB_ENV"
+
+      - name: Build release (target = ${{ matrix.target }})
+        run: cargo build --release --manifest-path zuko/Cargo.toml --target "${ZUKO_TARGET}"
+
+      - name: Package
+        run: |
+          mkdir -p dist
+          cp "zuko/target/${ZUKO_TARGET}/release/zuko" dist/zuko
+          chmod +x dist/zuko
+          tar -C dist -czf "$ARTIFACT" zuko
+          # `sha256sum` is Linux-only; macOS ships `shasum -a 256` (Perl). The
+          # two produce byte-identical output (<hash>  <filename>), so consumers
+          # don't care which one wrote the .sha256 sidecar.
+          if command -v sha256sum >/dev/null 2>&1; then
+            sha256sum "$ARTIFACT" > "$ARTIFACT.sha256"
+          else
+            shasum -a 256 "$ARTIFACT" > "$ARTIFACT.sha256"
+          fi
+          echo "--- archive ---"
+          tar -tzf "$ARTIFACT"
+          echo "--- checksum ---"
+          cat "$ARTIFACT.sha256"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.ARTIFACT }}
+          path: |
+            ${{ env.ARTIFACT }}
+            ${{ env.ARTIFACT }}.sha256
+          if-no-files-found: error
+
+  release:
+    name: publish GitHub Release
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: assets
+          merge-multiple: true
+
+      - name: Resolve tag
+        id: tag
+        run: |
+          if [ -n "${{ inputs.tag }}" ]; then
+            echo "tag=${{ inputs.tag }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "tag=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Create / update release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # `gh release create` reads the repo from a git remote by default;
+          # this job doesn't checkout the repo (it only needs the downloaded
+          # artifacts), so point gh at the repo explicitly via GH_REPO.
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -e
+          tag="${{ steps.tag.outputs.tag }}"
+          echo "Publishing $tag with:"
+          ls -1 assets
+          if gh release view "$tag" >/dev/null 2>&1; then
+            echo "release exists; uploading assets"
+            gh release upload "$tag" assets/* --clobber
+          else
+            gh release create "$tag" assets/* \
+              --title "$tag" \
+              --generate-notes \
+              --target main
+          fi

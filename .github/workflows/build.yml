@@ -1,0 +1,49 @@
+name: build
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    name: build & test (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: mise install
+        uses: jdx/mise-action@v2
+        with:
+          cache: true
+
+      - name: Ensure clippy/rustfmt (reliable across cached toolchains)
+        run: rustup component add clippy rustfmt
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: zuko
+
+      - name: Clippy + tests
+        run: mise run test
+
+      - name: Build (release)
+        run: mise run build
+
+      - name: End-to-end (host<->connect, share<->claim)
+        # Spawns `zuko host`, drives `zuko connect` under a PTY, and exercises
+        # `zuko share`/`zuko claim` against the real Iroh network. Needs python3
+        # (stdlib only) and network access to Iroh's public relays.
+        run: mise run test-e2e
+
+      - name: Upload binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: zuko-${{ runner.os }}
+          path: zuko/target/release/zuko
+          if-no-files-found: error

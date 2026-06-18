@@ -1,0 +1,305 @@
+//! `zuko share` / `zuko claim` — croc-style ticket handoff over Iroh.
+//!
+//! Pasting the long `endpointa…` ticket into a brand-new device is the one
+//! rough edge left in the flow. These two commands remove it: the host operator
+//! runs `zuko share`, reads off a short memorable code, and the new device runs
+//! `zuko claim <code>` to fetch the real ticket over an end-to-end encrypted
+//! Iroh connection — then saves it and connects, all in one command.
+//!
+//! ## How it stays safe
+//!
+//! The memorable code is a **one-time symmetric secret** for the handoff (the
+//! croc model), never the host's identity. `zuko share` derives a *throwaway*
+//! Iroh [`SecretKey`] from the code, binds a *second*, ephemeral endpoint with
+//! that key, and uses it solely to deliver the host's real ticket. The real
+//! host key (at `~/.config/zuko/key`) is unrelated and stays strong.
+//!
+//! Both sides derive the same key from the code, so:
+//! - the host's throwaway endpoint proves ownership of the derived private key
+//!   via the QUIC/TLS handshake;
+//! - the claimer dials the throwaway node id (= the derived public key) and
+//!   reads the ticket off a single unidirectional stream.
+//!
+//! Whoever has the code can claim — that's the point. The code has ~52 bits of
+//! entropy, memory-hardened through Argon2id (see [`crate::code`]), which is
+//! far beyond reach for online guessing during the minutes-long window before
+//! `zuko share` exits after the first claim.
+//!
+//! ## Wire (ALPN `zuko/handoff/1`, one uni stream host -> client)
+//!
+//! The host opens a unidirectional stream and writes a tiny UTF-8 payload,
+//! then closes the send side:
+//!
+//! ```text
+//! <label>\n<ticket>
+//! ```
+//!
+//! `label` has no newlines (sanitised), and tickets never contain whitespace,
+//! so splitting on the first `\n` is unambiguous.
+
+use anyhow::{bail, Context, Result};
+use backon::{ConstantBuilder, Retryable};
+use iroh::{endpoint::presets, Endpoint};
+use std::time::Duration;
+use tracing::{info, warn};
+
+use crate::code::{default_label, derive_key, generate_code, sanitize_label};
+use crate::ticket_file::read_current_ticket;
+use crate::ShareArgs;
+
+/// ALPN for the throwaway handoff endpoint (distinct from the terminal `zuko/1`).
+const HANDOFF_ALPN: &[u8] = b"zuko/handoff/1";
+
+/// Cap a handoff payload so a misbehaving peer can't make us allocate forever.
+const MAX_HANDOFF_PAYLOAD: usize = 8 * 1024;
+
+// ────────────────────────── share (host side) ──────────────────────────────
+
+/// Serve this host's ticket to the first claimer (or `--count` claimers) over
+/// a throwaway, code-derived endpoint. Reads the live ticket from
+/// `~/.config/zuko/current_ticket` unless `--ticket` is given.
+pub async fn share(args: &ShareArgs) -> Result<()> {
+    // `zuko share` is a foreground server; logs go to stderr so the code on
+    // stdout stays clean for piping/copying.
+    tracing_subscriber::fmt()
+        .with_writer(std::io::stderr)
+        .with_env_filter(
+            tracing_subscriber::EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| "zuko=info,iroh=warn".into()),
+        )
+        .init();
+
+    let ticket = match &args.ticket {
+        Some(t) => t.trim().to_string(),
+        None => read_current_ticket()?,
+    };
+    let label_owned = args.label.clone().unwrap_or_else(default_label);
+    let label = sanitize_label(&label_owned);
+
+    let code = generate_code();
+    let secret = derive_key(&code)?;
+    let node_id = secret.public();
+
+    let endpoint = Endpoint::builder(presets::N0)
+        .secret_key(secret)
+        .alpns(vec![HANDOFF_ALPN.to_vec()])
+        .bind()
+        .await
+        .context("bind handoff endpoint")?;
+    endpoint.online().await;
+
+    // The claimer dials this throwaway endpoint by node id alone, resolved
+    // through the N0 DNS address-lookup. iroh publishes the endpoint's address
+    // to that lookup shortly after coming online; give it a short head start so
+    // a fast claimer doesn't lose a race with propagation.
+    tokio::time::sleep(Duration::from_secs(2)).await;
+
+    eprintln!();
+    eprintln!("share this code (serves {n}, then exits):", n = args.count);
+    println!("{code}");
+    eprintln!("  on the other machine:");
+    eprintln!("    zuko claim {code}");
+    let timeout_hint = if args.timeout > 0 {
+        format!(", or wait {}s", args.timeout)
+    } else {
+        String::new()
+    };
+    eprintln!("  (waiting — ctrl-c to cancel{timeout_hint})");
+    eprintln!();
+    info!(%node_id, "serving handoff on alpn {:?}", String::from_utf8_lossy(HANDOFF_ALPN));
+
+    let max = args.count.max(1);
+    let mut claims = 0usize;
+    loop {
+        let incoming = match accept_with_timeout(&endpoint, args.timeout).await? {
+            AcceptOutcome::Incoming(i) => i,
+            AcceptOutcome::Closed => break,
+            AcceptOutcome::TimedOut => {
+                eprintln!("share: timed out after {}s", args.timeout);
+                break;
+            }
+        };
+        match serve_handoff(*incoming, &label, &ticket).await {
+            Ok(()) => {
+                claims += 1;
+                eprintln!("claim {claims}/{max} served");
+                if claims >= max {
+                    break;
+                }
+            }
+            Err(e) => {
+                // One bad peer shouldn't kill a multi-claim share; keep waiting.
+                warn!("handoff to peer failed: {e:#}");
+            }
+        }
+    }
+    eprintln!("share: done");
+    Ok(())
+}
+
+enum AcceptOutcome {
+    // `iroh::endpoint::Incoming` is ~392 bytes; box it so the two tiny
+    // sentinel variants don't balloon the enum's footprint.
+    Incoming(Box<iroh::endpoint::Incoming>),
+    Closed,
+    TimedOut,
+}
+
+/// Wrap `endpoint.accept()` in an optional overall timeout. `timeout_secs == 0`
+/// means wait forever (until the endpoint closes or Ctrl-C).
+async fn accept_with_timeout(endpoint: &Endpoint, timeout_secs: u64) -> Result<AcceptOutcome> {
+    if timeout_secs == 0 {
+        return Ok(match endpoint.accept().await {
+            Some(i) => AcceptOutcome::Incoming(Box::new(i)),
+            None => AcceptOutcome::Closed,
+        });
+    }
+    match tokio::time::timeout(Duration::from_secs(timeout_secs), endpoint.accept()).await {
+        Ok(Some(i)) => Ok(AcceptOutcome::Incoming(Box::new(i))),
+        Ok(None) => Ok(AcceptOutcome::Closed),
+        Err(_) => Ok(AcceptOutcome::TimedOut),
+    }
+}
+
+async fn serve_handoff(
+    incoming: iroh::endpoint::Incoming,
+    label: &str,
+    ticket: &str,
+) -> Result<()> {
+    let conn = incoming
+        .accept()
+        .context("accept handoff connection")?
+        .await
+        .context("complete handoff connection")?;
+    // Host is the initiator: open_uni + write makes the client's accept_uni
+    // resolve (a stream is only "accepted" once the initiator sends data).
+    let mut send = conn.open_uni().await.context("open handoff stream")?;
+    let payload = format!("{label}\n{ticket}");
+    send.write_all(payload.as_bytes())
+        .await
+        .context("send handoff payload")?;
+    send.finish()?;
+    drop(send);
+
+    // Hold the connection open until the client disconnects (or QUIC's idle
+    // timeout fires). Returning here immediately would tear down the endpoint
+    // and race the client's `accept_uni`, sometimes aborting the stream before
+    // the payload is read — manifesting as a spurious "timed out".
+    let _ = conn.closed().await;
+    Ok(())
+}
+
+// ────────────────────────── claim (client side) ────────────────────────────
+
+/// Resolve a `zuko share` code to the host's real ticket, save it, and (by
+/// default) connect immediately. `no_save` just prints the ticket; `no_connect`
+/// skips the terminal session.
+pub async fn claim(
+    code: &str,
+    name: Option<String>,
+    no_connect: bool,
+    no_save: bool,
+    timeout_secs: u64,
+) -> Result<()> {
+    // No tracing subscriber here: if we connect, the terminal goes raw and any
+    // log output would corrupt it. Status goes to stderr; the ticket to stdout.
+    let secret = derive_key(code)?;
+    let node_id = secret.public();
+
+    let endpoint = Endpoint::builder(presets::N0)
+        .bind()
+        .await
+        .context("bind local endpoint")?;
+    endpoint.online().await;
+
+    // The throwaway endpoint is dialed by node id and resolved via the N0 DNS
+    // address-lookup, which can lag a few seconds behind `zuko share` coming
+    // online. Retry the dial with backoff so a fast claimer rides out the
+    // propagation delay instead of failing immediately.
+    let conn = dial_throwaway(&endpoint, node_id, timeout_secs)
+        .await
+        .context(
+            "couldn't reach the sharing host — is `zuko share` still running and the code correct?",
+        )?;
+
+    let mut recv = conn.accept_uni().await.context("accept handoff stream")?;
+    let payload = read_to_end(&mut recv, MAX_HANDOFF_PAYLOAD).await?;
+    let payload = String::from_utf8(payload).context("handoff payload wasn't utf-8")?;
+
+    let (label, ticket) = payload
+        .split_once('\n')
+        .unwrap_or(("host", payload.as_str()));
+    let label = label.trim();
+    let ticket = ticket.trim();
+    if ticket.is_empty() {
+        bail!("received an empty ticket");
+    }
+
+    eprintln!("claimed host: {label}");
+    if no_save {
+        // Raw ticket to stdout so it can be piped into `zuko add` etc.
+        println!("{ticket}");
+    } else {
+        let save_name = name.unwrap_or_else(|| label.to_string());
+        crate::store::add(&save_name, ticket)?;
+        eprintln!("saved as {save_name}  (run `zuko {save_name}` to reconnect)");
+    }
+
+    if !no_connect {
+        crate::client::connect(ticket).await?;
+    }
+    Ok(())
+}
+
+/// Dial the throwaway host, retrying with constant backoff. The throwaway
+/// endpoint is resolved via the N0 DNS address-lookup, which can lag a couple
+/// seconds behind `zuko share` coming online; backon handles the tenacity.
+///
+/// `timeout_secs > 0` bounds the *total* wall time (across all attempts) via an
+/// outer deadline; `timeout_secs == 0` tries up to a fixed number of attempts.
+async fn dial_throwaway(
+    endpoint: &Endpoint,
+    node_id: iroh::PublicKey,
+    timeout_secs: u64,
+) -> Result<iroh::endpoint::Connection> {
+    // Constant 2s between attempts: long enough for DNS propagation, short
+    // enough that the outer deadline still allows many tries.
+    const DELAY: Duration = Duration::from_secs(2);
+    const MAX_TIMES: usize = 30;
+
+    let retry = (|| async { endpoint.connect(node_id, HANDOFF_ALPN).await })
+        .retry(
+            ConstantBuilder::default()
+                .with_delay(DELAY)
+                .with_max_times(MAX_TIMES),
+        )
+        .notify(|err: &iroh::endpoint::ConnectError, dur: Duration| {
+            warn!("claim dial failed, retrying in {dur:?}: {err}");
+        });
+
+    if timeout_secs == 0 {
+        return retry.await.context("dial throwaway endpoint");
+    }
+    tokio::time::timeout(Duration::from_secs(timeout_secs), retry)
+        .await
+        .map_err(|_| anyhow::anyhow!("timed out after {timeout_secs}s"))?
+        .context("dial throwaway endpoint")
+}
+
+/// Read a uni recv stream to end, bailing if it exceeds `max` bytes.
+async fn read_to_end(recv: &mut iroh::endpoint::RecvStream, max: usize) -> Result<Vec<u8>> {
+    let mut buf = Vec::new();
+    let mut tmp = [0u8; 4096];
+    loop {
+        match recv.read(&mut tmp).await {
+            Ok(Some(n)) => {
+                buf.extend_from_slice(&tmp[..n]);
+                if buf.len() > max {
+                    bail!("handoff payload exceeded {max} bytes");
+                }
+            }
+            Ok(None) => return Ok(buf),
+            Err(e) => return Err(e).context("read handoff payload"),
+        }
+    }
+}

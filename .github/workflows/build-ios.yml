@@ -1,0 +1,48 @@
+name: ios
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build iOS app (simulator)
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Select newest Xcode (full iOS platform)
+        run: |
+          xcode="$(ls -d /Applications/Xcode*.app | sort -V | tail -1)"
+          echo "Selecting $xcode"
+          sudo xcode-select -s "$xcode"
+          xcodebuild -version
+
+      - name: mise install (rust)
+        uses: jdx/mise-action@v2
+        with:
+          cache: true
+
+      - name: Install iOS tooling (xcodegen via mise/brew)
+        run: mise run setup-ios
+
+      - name: Generate + resolve + build
+        run: mise run build-ios
+
+      - name: Locate .app
+        id: app
+        working-directory: ios/Zuko
+        run: |
+          # Absolute path — upload-artifact resolves paths from the repo root.
+          app="$(find "$(pwd)/build/Build/Products" -name 'Zuko.app' -type d | head -1)"
+          echo "path=$app" >> "$GITHUB_OUTPUT"
+          echo "Found $app"
+
+      - name: Upload app
+        uses: actions/upload-artifact@v4
+        with:
+          name: Zuko-app
+          path: ${{ steps.app.outputs.path }}
+          if-no-files-found: error

@@ -1,0 +1,84 @@
+name: release-ios
+
+# Build a SIGNED iOS app and (optionally) upload to TestFlight — entirely in CI,
+# no Mac required. Signing material lives in GitHub secrets on THIS repo (the
+# .p12 cert + .mobileprovision profile). See ios/DISTRIBUTION.md for the
+# one-time setup to obtain them.
+#
+# Tools come from mise (rust) + `mise run setup-ios` (brew: xcodegen, fastlane).
+
+on:
+  workflow_dispatch:
+    inputs:
+      lane:
+        description: "fastlane lane to run"
+        type: choice
+        default: beta
+        options:
+          - beta    # build a signed .ipa + upload to TestFlight
+          - build   # build a signed .ipa, publish it as an artifact only
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: signed build (${{ inputs.lane }})
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Select newest Xcode
+        run: |
+          xcode="$(ls -d /Applications/Xcode*.app | sort -V | tail -1)"
+          echo "Selecting $xcode"
+          sudo xcode-select -s "$xcode"
+          xcodebuild -version
+
+      - name: mise install (rust)
+        uses: jdx/mise-action@v2
+        with:
+          cache: true
+
+      - name: Install iOS tooling (xcodegen + fastlane via mise/brew)
+        run: mise run setup-ios
+
+      - name: Import distribution certificate (.p12 from secret)
+        uses: apple-actions/import-codesign-certs@v3
+        with:
+          p12-file-base64: ${{ secrets.BUILD_CERTIFICATE_BASE64 }}
+          p12-password: ${{ secrets.P12_PASSWORD }}
+
+      - name: Install provisioning profile (.mobileprovision from secret)
+        run: |
+          set -e
+          dest_dir="$HOME/Library/MobileDevice/Provisioning Profiles"
+          mkdir -p "$dest_dir"
+          printf '%s' "${{ secrets.PROVISIONING_PROFILE_BASE64 }}" | base64 -d > "$dest_dir/dev.adonm.zuko.mobileprovision"
+          echo "Installed profile:"
+          /usr/libexec/PlistBuddy -c "Print :Name" /dev/stdin <<< "$(security cms -D -d "$dest_dir/dev.adonm.zuko.mobileprovision")" || true
+
+      - name: fastlane ${{ inputs.lane }}
+        working-directory: ios
+        env:
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          ASC_KEY_CONTENT: ${{ secrets.ASC_KEY_CONTENT }}
+          TEAM_ID: ${{ secrets.TEAM_ID }}
+          LANG: en_US.UTF-8
+          LC_ALL: en_US.UTF-8
+        run: fastlane ${{ inputs.lane }}
+
+      - name: Locate .ipa
+        id: ipa
+        run: |
+          ipa="$(find "$(pwd)" -name 'Zuko.ipa' -type f | head -1)"
+          echo "path=$ipa" >> "$GITHUB_OUTPUT"
+          echo "Found $ipa"
+
+      - name: Upload .ipa
+        uses: actions/upload-artifact@v4
+        with:
+          name: Zuko-ipa
+          path: ${{ steps.ipa.outputs.path }}
+          if-no-files-found: error

@@ -1,0 +1,26 @@
+# Reference systemd *user* unit for `zuko host`.
+# install.sh writes a copy here with your paths filled in:
+#   ~/.config/systemd/user/zuko-host.service
+#
+# Usage:
+#   cp zuko/scripts/zuko-host.service ~/.config/systemd/user/
+#   # edit ExecStart to point at your zuko-host-run wrapper
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now zuko-host
+#   journalctl --user -u zuko-host -f
+[Unit]
+Description=Zuko host (interactive shell over Iroh)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+# Points at the wrapper that install.sh creates. Edit if you placed the
+# binary elsewhere.
+ExecStart=%h/.local/bin/zuko-host-run
+Restart=on-failure
+RestartSec=5
+
+# The wrapper passes --key ~/.config/zuko/key --shell $SHELL by default.
+
+[Install]
+WantedBy=default.target
