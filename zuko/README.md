@@ -1,8 +1,9 @@
-# zuko
+# zuko — host + CLI client
 
-The `zuko` binary: one tool that **serves** a shell over Iroh (`zuko host`) and
-**attaches** a terminal to one (`zuko connect`). Built on the same wire protocol
-as the [iOS app](../ios/Zuko).
+The `zuko` binary is the **host daemon** (the machine you shell into) **and**
+the **reference CLI client**, in a single install. zuko is remote terminals over
+Iroh; the [wire protocol](../docs/PROTOCOL.md) and the other clients (iOS,
+future Android/relm4) are documented in [`../docs/`](../docs).
 
 ```
 zuko host              serve this machine (prints a ticket)

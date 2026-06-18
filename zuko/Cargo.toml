@@ -3,7 +3,7 @@ name = "zuko"
 version = "0.1.0"
 edition = "2021"
 license = "Apache-2.0"
-description = "Reach your machines over Iroh: serve a shell (`zuko host`) or attach a terminal to one (`zuko connect`)."
+description = "Remote terminals over Iroh: the host daemon and reference CLI client."
 repository = "https://github.com/adonm/zuko"
 publish = false
 
