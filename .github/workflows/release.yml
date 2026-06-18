@@ -26,10 +26,16 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          # Linux: native on ubuntu (x86_64), cross on ubuntu (aarch64).
+          # macOS: both targets build on Apple Silicon hardware (macos-14) —
+          # Rust + Apple's `clang` cross-compile x86_64-apple-darwin natively,
+          # so there's no need to wait on the scarce (and shrinking) Intel
+          # macos-13 runner pool. Apple stopped selling Intel Macs in 2020;
+          # building Intel binaries on Apple Silicon is well-supported.
           - { runner: ubuntu-latest, target: x86_64-unknown-linux-gnu,  cross: false }
           - { runner: ubuntu-latest, target: aarch64-unknown-linux-gnu, cross: true  }
-          - { runner: macos-13,       target: x86_64-apple-darwin,      cross: false }
-          - { runner: macos-14,       target: aarch64-apple-darwin,     cross: false }
+          - { runner: macos-14,      target: x86_64-apple-darwin,       cross: false }
+          - { runner: macos-14,      target: aarch64-apple-darwin,      cross: false }
     runs-on: ${{ matrix.runner }}
     env:
       ZUKO_TARGET: ${{ matrix.target }}
