@@ -116,6 +116,10 @@ jobs:
       - name: Create / update release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # `gh release create` reads the repo from a git remote by default;
+          # this job doesn't checkout the repo (it only needs the downloaded
+          # artifacts), so point gh at the repo explicitly via GH_REPO.
+          GH_REPO: ${{ github.repository }}
         run: |
           set -e
           tag="${{ steps.tag.outputs.tag }}"
