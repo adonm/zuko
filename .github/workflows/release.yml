@@ -65,9 +65,18 @@ jobs:
           cp "zuko/target/${ZUKO_TARGET}/release/zuko" dist/zuko
           chmod +x dist/zuko
           tar -C dist -czf "$ARTIFACT" zuko
-          sha256sum "$ARTIFACT" > "$ARTIFACT.sha256"
+          # `sha256sum` is Linux-only; macOS ships `shasum -a 256` (Perl). The
+          # two produce byte-identical output (<hash>  <filename>), so consumers
+          # don't care which one wrote the .sha256 sidecar.
+          if command -v sha256sum >/dev/null 2>&1; then
+            sha256sum "$ARTIFACT" > "$ARTIFACT.sha256"
+          else
+            shasum -a 256 "$ARTIFACT" > "$ARTIFACT.sha256"
+          fi
           echo "--- archive ---"
           tar -tzf "$ARTIFACT"
+          echo "--- checksum ---"
+          cat "$ARTIFACT.sha256"
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
