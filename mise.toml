@@ -39,10 +39,11 @@ run = [
 
 [tasks.build-ios]
 description = "Generate the Xcode project and build the iOS app (iOS Simulator, unsigned). macOS only. Run `setup-ios` first."
+dir = "ios/Zuko"
 run = [
-    "xcodegen --spec ios/Zuko/project.yml generate",
-    "xcodebuild -resolvePackageDependencies -project ios/Zuko/Zuko.xcodeproj -scheme Zuko",
-    "xcodebuild build -project ios/Zuko/Zuko.xcodeproj -scheme Zuko -destination 'generic/platform=iOS Simulator' -derivedDataPath ios/Zuko/build CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO",
+    "xcodegen generate",
+    "xcodebuild -resolvePackageDependencies -project Zuko.xcodeproj -scheme Zuko",
+    "xcodebuild build -project Zuko.xcodeproj -scheme Zuko -destination 'generic/platform=iOS Simulator' -derivedDataPath build CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO",
 ]
 
 [tasks.setup-ios]

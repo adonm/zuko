@@ -46,7 +46,7 @@ platform :ios do
   # ----- build -----------------------------------------------------------------
   desc "Generate the Xcode project and build a signed .ipa (App Store method)"
   private_lane :archive do
-    sh("xcodegen --spec Zuko/project.yml generate")
+    sh("xcodegen generate --spec Zuko/project.yml")
     gym(
       project: XCODEPROJ,
       scheme: "Zuko",
