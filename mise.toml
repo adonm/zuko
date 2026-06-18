@@ -16,6 +16,12 @@ rust = { version = "latest", profile = "default" }
 # cross-compiler is only used by the release workflow.)
 [bootstrap.packages]
 "apt:gcc-aarch64-linux-gnu" = "latest" # cross linker for aarch64-unknown-linux-gnu
+"apt:shellcheck" = "latest"
+"brew:shellcheck" = "latest"
+
+[settings]
+# `mise bootstrap` (used to install [bootstrap.packages]) is still experimental.
+experimental = true
 
 [env]
 CARGO_TERM_COLOR = "always"
