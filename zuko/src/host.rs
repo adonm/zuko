@@ -1,8 +1,9 @@
 //! `zuko host` — serve this machine's shell over Iroh.
 //!
-//! Binds an Iroh endpoint with a persistent secret key, prints a copy-pasteable
-//! ticket, and for each incoming connection spawns the user's shell on a PTY
-//! and bridges it over a single bidirectional Iroh stream.
+//! Binds an Iroh endpoint with a persistent secret key, writes its dialable
+//! ticket to `~/.config/zuko/current_ticket` (read out-of-band by
+//! `zuko share`), and for each incoming connection spawns the user's shell on
+//! a PTY and bridges it over a single bidirectional Iroh stream.
 
 use anyhow::{Context, Result};
 use iroh::{endpoint::presets, Endpoint, SecretKey};
@@ -29,8 +30,10 @@ enum PtyCmd {
 
 /// Run the host: bind, print a ticket, accept connections forever.
 pub async fn run(args: HostArgs) -> Result<()> {
-    // The host logs to stderr (journald / launchd capture); stdout carries only
-    // the bare ticket so `... | grep endpointa` and piping work cleanly.
+    // The host logs to stderr only. stdout stays empty so a future caller
+    // that captures it never gets a long-lived bearer secret mixed in with
+    // status output — the ticket is read out of band (via the
+    // `~/.config/zuko/current_ticket` file) by `zuko share`.
     tracing_subscriber::fmt()
         .with_writer(std::io::stderr)
         .with_env_filter(
@@ -60,17 +63,22 @@ pub async fn run(args: HostArgs) -> Result<()> {
         .context("bind endpoint")?;
     endpoint.online().await;
 
-    // Stable node id (derived from the persisted key) + a copy-pasteable ticket.
+    // Stable node id (derived from the persisted key) + a copy-pasteable
+    // ticket. The ticket is a long-lived bearer secret (anyone holding it gets
+    // a shell), so it is **never** printed — not to stdout, not to stderr.
+    // The host operator pairs other devices with `zuko share` (an OTP-style
+    // code that expires in minutes); there is no other CLI path that exposes
+    // the raw ticket, by design.
     let node_id = endpoint.id();
     let ticket_str = EndpointTicket::new(endpoint.addr()).to_string();
 
-    // User-facing banner: this is exactly what gets pasted into the app / `zuko connect`.
     eprintln!();
     eprintln!("zuko host ready");
     eprintln!("  node id: {node_id}");
-    eprintln!("  to connect, paste this ticket into the iOS app or run:");
-    eprintln!("    zuko connect \"{ticket_str}\"");
-    println!("{ticket_str}");
+    eprintln!("  to pair another device, run on this machine:");
+    eprintln!("    zuko share");
+    eprintln!("  then on the other machine:");
+    eprintln!("    zuko claim <code>");
     eprintln!();
     info!(%node_id, "listening on alpn {:?}", String::from_utf8_lossy(ALPN));
 
@@ -262,22 +270,133 @@ fn default_key_path() -> PathBuf {
 }
 
 fn load_or_create_key(path: &PathBuf) -> Result<SecretKey> {
+    // Race-safe create-or-read for the host's persistent identity. Two `zuko
+    // host` processes starting at the same instant on a fresh install (e.g.
+    // the just-installed service plus a manual `zuko host`) would otherwise
+    // both generate a different key and the second write would clobber the
+    // first, silently flipping the node id under any host saved in between.
+    //
+    // We hold an exclusive flock on a sibling `.lock` file across the
+    // check-create-write transaction, mirroring the pattern `store::HostsLock`
+    // uses for the hosts file. The lock is on a separate inode so the atomic
+    // 0600 temp+rename can't orphan it (and so it's safe to leave on disk).
+    let _guard = KeyLock::acquire(path)?;
+
     if path.exists() {
-        let bytes = std::fs::read(path).with_context(|| format!("read key {}", path.display()))?;
-        if bytes.len() != 32 {
-            anyhow::bail!("key file {} is not 32 bytes", path.display());
+        return read_key(path);
+    }
+
+    // We're the sole creator (any concurrent caller is blocked on the flock
+    // above). Generate, write atomically through the shared 0600 writer so a
+    // crash mid-write can never leave a truncated file the next start would
+    // then reject as "not 32 bytes" (silently invalidating every saved
+    // connection).
+    let secret = SecretKey::generate();
+    write_secret_0600(path, &secret.to_bytes())?;
+    Ok(secret)
+}
+
+fn read_key(path: &PathBuf) -> Result<SecretKey> {
+    let bytes = std::fs::read(path).with_context(|| format!("read key {}", path.display()))?;
+    if bytes.len() != 32 {
+        anyhow::bail!("key file {} is not 32 bytes", path.display());
+    }
+    let mut arr = [0u8; 32];
+    arr.copy_from_slice(&bytes);
+    Ok(SecretKey::from_bytes(&arr))
+}
+
+/// Cross-process advisory lock guarding the read-or-create transaction in
+/// [`load_or_create_key`]. Lives at `<key>.lock` (a separate path so the
+/// atomic `key` temp+rename never orphans the lock inode), held until the
+/// guard is dropped. Mirrors `store::HostsLock`.
+struct KeyLock(std::fs::File);
+
+impl KeyLock {
+    fn acquire(key_path: &std::path::Path) -> Result<Self> {
+        let lock_path = key_path.with_extension("lock");
+        if let Some(parent) = lock_path.parent() {
+            std::fs::create_dir_all(parent)
+                .with_context(|| format!("mkdir {}", parent.display()))?;
         }
-        let mut arr = [0u8; 32];
-        arr.copy_from_slice(&bytes);
-        Ok(SecretKey::from_bytes(&arr))
-    } else {
-        let secret = SecretKey::generate();
-        let bytes = secret.to_bytes();
-        // The key is the host's persistent identity: write it through the shared
-        // atomic 0600 writer so a crash mid-write can never leave a truncated
-        // file that load_or_create_key would then reject (silently invalidating
-        // every saved connection on the next start).
-        write_secret_0600(path, &bytes)?;
-        Ok(secret)
+        let f = std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(false)
+            .open(&lock_path)
+            .with_context(|| format!("open {}", lock_path.display()))?;
+        fs4::fs_std::FileExt::lock_exclusive(&f)?;
+        Ok(Self(f))
+    }
+}
+
+impl Drop for KeyLock {
+    fn drop(&mut self) {
+        let _ = fs4::fs_std::FileExt::unlock(&self.0);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // Two concurrent `load_or_create_key` calls on a fresh path must converge
+    // on the *same* key — `create_new` is the gatekeeper, so the loser reads
+    // the winner's bytes back. Without the race-safety this test would fail
+    // intermittently with mismatched `to_bytes()` (and on a real host, a
+    // silent node-id flip under any saved connection).
+    #[test]
+    fn concurrent_creates_converge_on_one_key() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("key");
+
+        // Spawn N threads racing on the same fresh path. Each call returns
+        // either the key it created or the key it read after losing the
+        // race — either way, all callers must observe the same 32 bytes.
+        const N: usize = 8;
+        let path = std::sync::Arc::new(path);
+        let handles: Vec<_> = (0..N)
+            .map(|_| {
+                let p = std::sync::Arc::clone(&path);
+                std::thread::spawn(move || load_or_create_key(&p).unwrap().to_bytes())
+            })
+            .collect();
+        let keys: Vec<[u8; 32]> = handles.into_iter().map(|h| h.join().unwrap()).collect();
+
+        // Every observed key must be identical.
+        let first = keys[0];
+        for (i, k) in keys.iter().enumerate() {
+            assert_eq!(k, &first, "thread {i} observed a different key");
+        }
+
+        // The on-disk key must match what the callers observed.
+        let on_disk = std::fs::read(&*path).unwrap();
+        assert_eq!(
+            &on_disk[..],
+            &first[..],
+            "on-disk key diverges from in-memory"
+        );
+
+        // Calling again on the existing file must read back the same key
+        // (sanity check the read path).
+        let again = load_or_create_key(&path).unwrap().to_bytes();
+        assert_eq!(again, first);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn created_key_file_is_0600() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("key");
+        let _ = load_or_create_key(&path).unwrap();
+        let perms = std::fs::metadata(&path).unwrap().permissions().mode();
+        assert_eq!(
+            perms & 0o777,
+            0o600,
+            "key file must be 0600, got {:o}",
+            perms
+        );
     }
 }

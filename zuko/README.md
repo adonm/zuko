@@ -1,96 +1,89 @@
-# zuko — host + CLI client
+# zuko — host + CLI client + service installer
 
-The `zuko` binary is the **host daemon** (the machine you shell into) **and**
-the **reference CLI client**, in a single install. zuko is remote terminals over
-Iroh; the [wire protocol](../docs/PROTOCOL.md) and the other clients (iOS,
-future Android/relm4) are documented in [`../docs/`](../docs).
+The `zuko` binary is the **host daemon** (the machine you shell into), the
+**reference CLI client**, and the **service installer** — in a single binary.
+zuko is remote terminals over Iroh; the [wire protocol](../docs/PROTOCOL.md)
+and the other clients (iOS, future Android/relm4) are documented in
+[`../docs/`](../docs).
 
 ```
-zuko host              serve this machine (prints a ticket)
-zuko connect <target>  attach a terminal to a host (target = saved name or ticket)
-zuko <target>          shorthand for `zuko connect <target>`
-zuko add <name> <t>    save a host ticket under a name
-zuko ls                list saved hosts
+zuko host              serve this machine (writes a key + current_ticket)
+zuko install           install the host as a systemd/launchd user service
+zuko uninstall         stop + remove the service (keeps the key + saved hosts)
+zuko share             mint a one-time code that lets a new device pair
+zuko <code>            pair: fetch the host's ticket, save it, connect
+zuko claim <code>      the same, with flags (--as, --no-connect, --timeout)
+zuko connect <name>    attach a terminal to a saved host
+zuko <name>            shorthand for `zuko connect <name>`
+zuko ls                list saved hosts (by name)
 zuko rm <name>         remove a saved host
-zuko share             hand this host's ticket to a new device via a short code
-zuko claim <code>      fetch the ticket from a `zuko share` code, save it, connect
 ```
 
 Saved hosts live at `~/.config/zuko/hosts`; the host's persistent identity lives
 at `~/.config/zuko/key`. `zuko host` also writes its current, dialable ticket to
-`~/.config/zuko/current_ticket` (used by `zuko share`).
+`~/.config/zuko/current_ticket` (read by `zuko share`).
 
-## Install (recommended)
+## Install
 
 Prerequisite: [mise](https://mise.jdx.dev) — install it with `curl https://mise.run | sh`.
 
 ```sh
-mise use --global github:adonm/zuko
+mise use --global github:adonm/zuko   # put `zuko` on PATH
 ```
 
 mise auto-selects the right asset for your OS/arch and exposes a `zuko` shim on
-PATH. To set up the host mode as a persistent background service, run the
-installer on the machine you want to reach:
+PATH. To set up host mode as a persistent background service, run on the
+machine you want to reach:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/adonm/zuko/main/zuko/scripts/install.sh | sh
+zuko install
 ```
 
-This writes `~/.config/zuko/key` (stable node id), installs a `zuko-host-run`
-wrapper that runs `zuko host`, and starts a persistent service:
+`zuko install` writes `~/.config/zuko/key` (on the first `zuko host` run),
+installs a `zuko-host-run` wrapper at `~/.local/bin/` that execs the resolved
+`zuko` binary in host mode, and starts a persistent service:
 
 - **Linux:** systemd user unit `~/.config/systemd/user/zuko-host.service`
   - logs: `journalctl --user -u zuko-host -f`
-  - ticket: `journalctl --user -u zuko-host --no-pager | grep endpointa | tail -1`
+  - for servers: `sudo loginctl enable-linger "$USER"` so the user manager
+    runs without an active login session.
 - **macOS:** launchd agent `~/Library/LaunchAgents/dev.adonm.zuko.host.plist`
   - logs: `tail -f ~/.config/zuko/zuko-host.out.log`
-  - ticket: `grep endpointa ~/.config/zuko/zuko-host.out.log | tail -1`
 
-Environment overrides for the installer: `ZUKO_VERSION` (default `latest`, e.g.
-`v0.1.0`), `ZUKO_KEY` (default `~/.config/zuko/key`), `ZUKO_SHELL`,
-`ZUKO_PREFIX` (default `~/.local`).
+Flags for `zuko install`: `--prefix` (default `~/.local`), `--key` (default
+`~/.config/zuko/key`), `--shell` (default `$SHELL`), `--no-start` (write +
+enable the unit without starting it). `zuko uninstall` stops and removes the
+service but leaves the key + saved hosts in place.
 
 ## Connect from a terminal
 
 ```sh
-zuko connect "endpointa..."        # one-off: paste the ticket
-zuko add home "endpointa..."       # then connect by name forever after:
-zuko home                          # shorthand for `zuko connect home`
-```
-
-You can also pipe the ticket in: `echo "endpointa..." | zuko`, or
-`zuko < ticket.txt`. The session is a real PTY — `vim`, `htop`, resize, and
-Ctrl-C all behave like a local shell. Disconnect by exiting the remote shell
-(e.g. `exit` or Ctrl-D), which closes the session.
-
-## Hand off a ticket to a new device (croc-style)
-
-Pasting the long `endpointa…` ticket into a brand-new device is the one rough
-edge. `zuko share` / `zuko claim` replace it with a short, memorable code:
-
-```sh
-# on the host (or any machine with its ticket):
+# once (on the host, foreground):
 zuko share
-#   share this code (serves 1, then exits):
 #   wowu-hiva-fiki-rufu
-#   on the other machine:
-#     zuko claim wowu-hiva-fiki-rufu
 
-# on the new device:
-zuko claim wowu-hiva-fiki-rufu   # fetches the real ticket, saves it, connects
+# on this machine, once:
+zuko wowu-hiva-fiki-rufu   # = zuko claim wowu-hiva-fiki-rufu
+#   fetches the real ticket, saves it, connects
+
+# from then on:
+zuko ls                    # list saved hosts
+zuko home                  # = zuko connect home (shorthand)
 ```
 
-By default `claim` saves the host (under the host's label, or `--as <name>`) and
-drops you straight into the shell — one command and you're in. `--no-connect`
-just fetches+saves; `--no-save` prints the ticket to stdout instead.
+The session is a real PTY — `vim`, `htop`, resize, and Ctrl-C all behave like a
+local shell. Disconnect by exiting the remote shell (e.g. `exit` or Ctrl-D),
+which closes the session.
 
-**How it stays safe.** The code is a *one-time symmetric secret* for the handoff
-(the [croc](https://github.com/schollz/croc) model), never the host's identity.
-`zuko share` derives a throwaway Iroh key from the code, binds a *second*,
-ephemeral endpoint with it, and uses it solely to deliver the real ticket over
-an end-to-end encrypted connection. The real host key is unrelated and stays
-strong. The code has ~52 bits of entropy (a one-time, minutes-long window — far
-beyond reach for online guessing), and `share` exits after the first claim.
+## Pairing: how `share` / `claim` work
+
+The pairing code is a *one-time symmetric secret* (the
+[croc](https://github.com/schollz/croc) model). `zuko share` derives a
+throwaway Iroh key from the code, binds a *second*, ephemeral endpoint with
+it, and uses it solely to deliver the real ticket over an end-to-end encrypted
+connection. The real host key is unrelated and stays strong. The code has ~52
+bits of entropy (a one-time, minutes-long window — far beyond reach for online
+guessing), and `share` exits after the first claim.
 
 The throwaway endpoint is reached by node id through Iroh's N0 DNS lookup, so
 `claim` retries the dial for a few seconds (`--timeout`, default 60) while that
@@ -112,7 +105,8 @@ cargo build --release --manifest-path zuko/Cargo.toml
 ./zuko/scripts/zuko-host.sh
 ```
 
-Useful for one-off sessions or debugging; prints the ticket to stdout.
+Useful for one-off sessions or debugging; prints the node id + pairing
+instructions to stderr.
 
 ## Options
 
@@ -131,7 +125,8 @@ zuko host --help
 
 Each connection gets its own independent PTY + shell, so several phones,
 terminals (or the same one multiple times) can connect at once. They all share
-the host's single stable identity.
+the host's single stable identity — and because pairing happens through
+one-time codes, you can mint a fresh code per device without rotating anything.
 
 ## Rotate the identity
 
@@ -147,7 +142,8 @@ framing code is shared by host and client in [`src/wire.rs`](src/wire.rs). The
 ticket handoff uses a separate ALPN `zuko/handoff/1` — see
 [`src/handoff.rs`](src/handoff.rs) (with code derivation in
 [`src/code.rs`](src/code.rs) and ticket-file I/O in
-[`src/ticket_file.rs`](src/ticket_file.rs)).
+[`src/ticket_file.rs`](src/ticket_file.rs)). Service install/uninstall lives
+in [`src/service.rs`](src/service.rs).
 
 ## Testing
 
@@ -157,10 +153,11 @@ mise run test-e2e    # end-to-end: host<->connect + share<->claim over the real 
 ```
 
 The end-to-end harness ([`scripts/e2e_test.py`](scripts/e2e_test.py)) spawns
-`zuko host`, drives `zuko connect` under a PTY (the client's raw-mode path needs
-a controlling terminal), and exercises the full `share`→`claim` handoff,
-asserting the claimed ticket matches. All state is isolated under a temp
-`XDG_CONFIG_HOME`. Requires network (Iroh's public relays) and `python3`.
+`zuko host`, seeds the saved-hosts file under a temp `XDG_CONFIG_HOME`, drives
+`zuko connect <name>` under a PTY (the client's raw-mode path needs a
+controlling terminal), and exercises the full `share`→`claim` handoff,
+asserting the claimed ticket matches. All state is isolated; requires network
+(Iroh's public relays) and `python3`.
 
 ## License
 

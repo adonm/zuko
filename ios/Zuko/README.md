@@ -43,8 +43,8 @@ Zuko/
   Views/
     RootView.swift
     ConnectionListView.swift     list + empty-state onboarding
-    OnboardingView.swift         the copy-paste install command
-    AddConnectionView.swift      paste a ticket
+    OnboardingView.swift         host setup commands
+    AddConnectionView.swift      add a connection
     TerminalScreen.swift         the live terminal
 ```
 

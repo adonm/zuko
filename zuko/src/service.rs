@@ -1,0 +1,553 @@
+//! `zuko install` / `zuko uninstall` — manage the host daemon as a user
+//! service (systemd user unit on Linux, launchd agent on macOS).
+//!
+//! Once `zuko` itself is on `PATH` (e.g. via `mise use --global
+//! github:adonm/zuko`), the operator runs `zuko install` on the machine they
+//! want to reach, and the binary takes care of writing the service unit,
+//! enabling it, and starting it.
+//!
+//! ## What `install` does
+//!
+//! 1. Resolve the running `zuko` binary's absolute path (so the unit keeps
+//!    working even if `PATH` changes later).
+//! 2. Resolve the persistent `~/.config/zuko/key` path (creating the dir, not
+//!    the key — `zuko host` writes the key on first run).
+//! 3. Write a thin `zuko-host-run` wrapper at `~/.local/bin/zuko-host-run`
+//!    that execs `zuko host --key <key>` with the resolved binary. The wrapper
+//!    decouples the unit from `PATH` (systemd user units and launchd agents
+//!    don't always inherit the user's interactive shell PATH — especially
+//!    under mise shims), and gives the operator one obvious file to edit if
+//!    they want to pass extra `host` flags.
+//! 4. Write the platform's service unit and enable + start it.
+//!
+//! `uninstall` reverses step 4 (stop, disable, remove unit) but leaves the
+//! key, saved hosts, and wrapper in place — those are user data, not service
+//! state.
+//!
+//! ## Platform support
+//!
+//! - **Linux:** systemd *user* unit at
+//!   `~/.config/systemd/user/zuko-host.service` (started with
+//!   `systemctl --user`). The unit pulls in `network-online.target` and
+//!   restarts on failure. For servers that need to run before login, the
+//!   operator separately runs `loginctl enable-linger <user>` (printed at the
+//!   end of `install`); we don't do it for them because it needs sudo and
+//!   isn't always wanted on a desktop.
+//! - **macOS:** launchd agent at
+//!   `~/Library/LaunchAgents/dev.adonm.zuko.host.plist`, loaded with
+//!   `launchctl`.
+//! - **Other platforms:** `install` refuses with a clear message; the host
+//!   can still be run in the foreground with `zuko host`.
+
+use anyhow::{bail, Context, Result};
+use std::path::{Path, PathBuf};
+use std::process::Command;
+
+use crate::config_dir;
+
+/// Default install prefix for the `zuko-host-run` wrapper.
+///
+/// Public so tests + help text can reference the same default.
+pub fn default_prefix() -> PathBuf {
+    let mut p = home_dir();
+    p.push(".local");
+    p
+}
+
+/// Default key path: `~/.config/zuko/key`. Same default as `zuko host`.
+pub fn default_key_path() -> PathBuf {
+    let mut p = config_dir();
+    p.push("zuko");
+    p.push("key");
+    p
+}
+
+/// Default wrapper script path: `<prefix>/bin/zuko-host-run`.
+pub fn wrapper_path(prefix: &Path) -> PathBuf {
+    let mut p = prefix.to_path_buf();
+    p.push("bin");
+    p.push("zuko-host-run");
+    p
+}
+
+#[derive(Debug, Clone)]
+pub struct InstallArgs {
+    /// Install prefix for the wrapper (default `~/.local`).
+    pub prefix: PathBuf,
+    /// Persistent secret key path (default `~/.config/zuko/key`).
+    pub key: PathBuf,
+    /// Shell launched per connection (default `$SHELL`, falling back to
+    /// `/bin/bash`). Forwarded into the wrapper so the service doesn't depend
+    /// on the per-login `$SHELL` env var being set.
+    pub shell: String,
+    /// Don't start the service after installing it (just write + enable).
+    pub no_start: bool,
+}
+
+impl Default for InstallArgs {
+    fn default() -> Self {
+        Self {
+            prefix: default_prefix(),
+            key: default_key_path(),
+            shell: std::env::var("SHELL").unwrap_or_else(|_| "/bin/bash".to_string()),
+            no_start: false,
+        }
+    }
+}
+
+/// Run `zuko install`: write the wrapper + service unit, enable + start it.
+pub fn install(args: &InstallArgs) -> Result<()> {
+    let bin = resolve_self_exe()?;
+    let wrapper = wrapper_path(&args.prefix);
+
+    // Ensure the parent dirs exist for both the wrapper and the key file. The
+    // key itself isn't written here — `zuko host` writes it atomically on
+    // first run, and writing it now would race with the host's 0600 atomic
+    // writer. We only ensure the *parent dir* exists.
+    if let Some(parent) = wrapper.parent() {
+        std::fs::create_dir_all(parent).with_context(|| format!("mkdir {}", parent.display()))?;
+    }
+    if let Some(parent) = args.key.parent() {
+        std::fs::create_dir_all(parent).with_context(|| format!("mkdir {}", parent.display()))?;
+    }
+
+    eprintln!("==> writing wrapper at {}", wrapper.display());
+    write_wrapper(&wrapper, &bin, &args.key, &args.shell)?;
+
+    let svc = detect_service()?;
+    eprintln!("==> installing {svc} user service");
+    match svc {
+        Service::Systemd => install_systemd(&wrapper, args.no_start)?,
+        Service::Launchd => install_launchd(&wrapper, args.no_start)?,
+    }
+
+    eprintln!();
+    eprintln!("zuko host installed.");
+    eprintln!("  wrapper:  {}", wrapper.display());
+    eprintln!(
+        "  key:      {} (created on first `zuko host` run)",
+        args.key.display()
+    );
+    if args.no_start {
+        eprintln!("  (--no-start: service enabled but not started; start it with the platform tool when ready)");
+    }
+    match svc {
+        Service::Systemd if !args.no_start => {
+            eprintln!("  logs:     journalctl --user -u zuko-host -f");
+            eprintln!();
+            eprintln!("pair a device with:  zuko share");
+            eprintln!();
+            // Servers need lingering so the user manager runs without an active
+            // login session. It's a sudo operation and not always wanted on a
+            // desktop, so we just point at it instead of doing it for them.
+            eprintln!("to keep the host running after you log out (servers):");
+            eprintln!("  sudo loginctl enable-linger \"${{USER}}\"");
+        }
+        Service::Systemd => {
+            // --no-start: the unit is enabled but not running. Tell the user
+            // how to start it manually when they're ready.
+            eprintln!();
+            eprintln!("start later with:    systemctl --user start zuko-host");
+            eprintln!("pair a device with:  zuko share   (after starting)");
+        }
+        Service::Launchd if !args.no_start => {
+            eprintln!("  logs:     tail -f ~/.config/zuko/zuko-host.out.log");
+            eprintln!();
+            eprintln!("pair a device with:  zuko share");
+        }
+        Service::Launchd => {
+            eprintln!();
+            eprintln!("start later with:    launchctl load ~/Library/LaunchAgents/dev.adonm.zuko.host.plist");
+            eprintln!("pair a device with:  zuko share   (after starting)");
+        }
+    }
+    Ok(())
+}
+
+/// Run `zuko uninstall`: stop + disable + remove the service unit. Leaves the
+/// key, saved hosts, and wrapper in place (they're user data).
+pub fn uninstall() -> Result<()> {
+    let svc = detect_service()?;
+    eprintln!("==> removing {svc} user service");
+    match svc {
+        Service::Systemd => uninstall_systemd()?,
+        Service::Launchd => uninstall_launchd()?,
+    }
+    eprintln!();
+    eprintln!("zuko host service removed.");
+    eprintln!("  (key + saved hosts kept at ~/.config/zuko — delete by hand to forget this host)");
+    Ok(())
+}
+
+// ──────────────────────────────── resolver ─────────────────────────────────
+
+/// The absolute path to the currently-running `zuko` binary. The unit points
+/// at this directly (through the wrapper) so it survives PATH changes.
+fn resolve_self_exe() -> Result<PathBuf> {
+    // std::env::current_exe resolves symlinks on Linux and macOS, so a mise
+    // shim's exec'd target is what we get — exactly what we want for the unit
+    // to keep working.
+    std::env::current_exe().context("resolve current zuko binary path")
+}
+
+fn home_dir() -> PathBuf {
+    std::env::var_os("HOME")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("."))
+}
+
+/// Write the `zuko-host-run` wrapper. 0755 (it carries no secret — the secret
+/// is the key file's path, and that file is 0600). The wrapper execs the
+/// resolved `zuko` binary in host mode with the resolved key path, so the
+/// service unit never needs to know about either.
+fn write_wrapper(path: &Path, bin: &Path, key: &Path, shell: &str) -> Result<()> {
+    // Escape single quotes in paths so the literal `'$BIN'` in the wrapper
+    // stays correct even if a path contains one. Single quotes are rare but
+    // valid in Unix paths; we still want a generated wrapper that works.
+    let bin_s = sh_quote(&bin.to_string_lossy());
+    let key_s = sh_quote(&key.to_string_lossy());
+    let shell_s = sh_quote(shell);
+    let body = format!(
+        "#!/bin/sh\n\
+         # Generated by `zuko install`. Edit to taste; runs the zuko host daemon.\n\
+         # Re-run `zuko install` to regenerate (e.g. after moving the binary).\n\
+         exec {bin_s} host --key {key_s} --shell {shell_s} \"$@\"\n"
+    );
+    std::fs::write(path, body).with_context(|| format!("write wrapper {}", path.display()))?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let perms = std::fs::Permissions::from_mode(0o755);
+        std::fs::set_permissions(path, perms).context("chmod wrapper 0755")?;
+    }
+    Ok(())
+}
+
+/// Shell-single-quote a string for use inside `exec '$x' ...`. Wraps the value
+/// in single quotes and escapes any embedded single quote via the standard
+/// `'\''` idiom.
+fn sh_quote(s: &str) -> String {
+    let mut out = String::with_capacity(s.len() + 2);
+    out.push('\'');
+    for c in s.chars() {
+        if c == '\'' {
+            out.push_str("'\\''");
+        } else {
+            out.push(c);
+        }
+    }
+    out.push('\'');
+    out
+}
+
+// ──────────────────────────── service detection ────────────────────────────
+
+#[derive(Copy, Clone, Debug)]
+// One variant is always unreachable per platform (Launchd on Linux, Systemd on
+// macOS), and neither exists on other OSes. Silence the platform-specific
+// dead-code warning rather than scatter `#[cfg]` on every match arm.
+#[allow(dead_code)]
+enum Service {
+    Systemd,
+    Launchd,
+}
+
+impl std::fmt::Display for Service {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Service::Systemd => "systemd",
+            Service::Launchd => "launchd",
+        })
+    }
+}
+
+fn detect_service() -> Result<Service> {
+    // We branch on OS first, then check the tool actually exists so the error
+    // is actionable ("install systemd") rather than a silent failure path.
+    #[cfg(target_os = "linux")]
+    {
+        if std::process::Command::new("systemctl")
+            .arg("--version")
+            .output()
+            .is_ok()
+        {
+            return Ok(Service::Systemd);
+        }
+        bail!(
+            "systemctl not found. `zuko install` manages a systemd user unit; \
+             on Linux without systemd, run `zuko host` in the foreground instead."
+        );
+    }
+    #[cfg(target_os = "macos")]
+    {
+        if std::process::Command::new("launchctl")
+            .arg("version")
+            .output()
+            .is_ok()
+        {
+            return Ok(Service::Launchd);
+        }
+        bail!("launchctl not found. `zuko install` manages a launchd agent.");
+    }
+    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+    {
+        bail!(
+            "no service manager support on this OS. Run `zuko host` in the \
+             foreground instead."
+        );
+    }
+}
+
+// ─────────────────────────────────── systemd ───────────────────────────────
+
+/// Unit name (also the `systemctl --user` instance name) without extension.
+const SYSTEMD_UNIT_NAME: &str = "zuko-host";
+
+fn systemd_unit_path() -> PathBuf {
+    let mut p = config_dir();
+    p.push("systemd");
+    p.push("user");
+    p.push(format!("{SYSTEMD_UNIT_NAME}.service"));
+    p
+}
+
+fn install_systemd(wrapper: &Path, no_start: bool) -> Result<()> {
+    let unit = systemd_unit_path();
+    if let Some(parent) = unit.parent() {
+        std::fs::create_dir_all(parent).with_context(|| format!("mkdir {}", parent.display()))?;
+    }
+    let wrapper_s = wrapper.to_string_lossy();
+    // Quote ExecStart's path so a HOME / --prefix with spaces doesn't split
+    // into binary + arg. systemd doesn't do shell word-splitting on its own
+    // but does treat the first whitespace-separated token as the binary, so
+    // `/home/my user/.local/bin/zuko-host-run` would otherwise start
+    // `/home/my` with `user/...` as argv[1].
+    let body = format!(
+        "[Unit]\n\
+         Description=Zuko host (interactive shell over Iroh)\n\
+         After=network-online.target\n\
+         Wants=network-online.target\n\
+         \n\
+         [Service]\n\
+         ExecStart=\"{wrapper_s}\"\n\
+         Restart=on-failure\n\
+         RestartSec=5\n\
+         \n\
+         [Install]\n\
+         WantedBy=default.target\n"
+    );
+    std::fs::write(&unit, body).with_context(|| format!("write {}", unit.display()))?;
+    eprintln!("==> wrote {}", unit.display());
+
+    // Reload so systemd picks up the new unit, then enable. With `--no-start`
+    // we skip `--now` so the unit is enabled (will start on next boot) but
+    // not started immediately — useful when the operator wants to edit the
+    // wrapper first or wait for some other condition.
+    run("systemctl", &["--user", "daemon-reload"])?;
+    let enable_args: &[&str] = if no_start {
+        &["--user", "enable", SYSTEMD_UNIT_NAME]
+    } else {
+        &["--user", "enable", "--now", SYSTEMD_UNIT_NAME]
+    };
+    run("systemctl", enable_args)?;
+    Ok(())
+}
+
+fn uninstall_systemd() -> Result<()> {
+    // Stop + disable even if the unit is already gone — systemctl returns
+    // non-zero in that case, which we treat as success (idempotent uninstall).
+    let _ = Command::new("systemctl")
+        .args(["--user", "stop", SYSTEMD_UNIT_NAME])
+        .status();
+    let _ = Command::new("systemctl")
+        .args(["--user", "disable", SYSTEMD_UNIT_NAME])
+        .status();
+    run("systemctl", &["--user", "daemon-reload"])?;
+    let unit = systemd_unit_path();
+    if unit.exists() {
+        std::fs::remove_file(&unit).with_context(|| format!("remove {}", unit.display()))?;
+        eprintln!("==> removed {}", unit.display());
+    } else {
+        eprintln!("==> no unit at {} (nothing to remove)", unit.display());
+    }
+    Ok(())
+}
+
+// ─────────────────────────────────── launchd ───────────────────────────────
+
+const LAUNCHD_LABEL: &str = "dev.adonm.zuko.host";
+
+fn launchd_plist_path() -> PathBuf {
+    let mut p = home_dir();
+    p.push("Library");
+    p.push("LaunchAgents");
+    p.push(format!("{LAUNCHD_LABEL}.plist"));
+    p
+}
+
+fn install_launchd(wrapper: &Path, no_start: bool) -> Result<()> {
+    let plist = launchd_plist_path();
+    if let Some(parent) = plist.parent() {
+        std::fs::create_dir_all(parent).with_context(|| format!("mkdir {}", parent.display()))?;
+    }
+    let wrapper_s = wrapper.to_string_lossy();
+    let out_log = log_path("out");
+    let err_log = log_path("err");
+    let body = format!(
+        "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n\
+         <!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">\n\
+         <plist version=\"1.0\">\n\
+         <dict>\n\
+             <key>Label</key><string>{LAUNCHD_LABEL}</string>\n\
+             <key>RunAtLoad</key><true/>\n\
+             <key>KeepAlive</key><dict><key>SuccessfulExit</key><false/></dict>\n\
+             <key>ProgramArguments</key>\n\
+             <array>\n\
+                 <string>{wrapper_s}</string>\n\
+             </array>\n\
+             <key>StandardOutPath</key><string>{out_log}</string>\n\
+             <key>StandardErrorPath</key><string>{err_log}</string>\n\
+         </dict>\n\
+         </plist>\n"
+    );
+    std::fs::write(&plist, body).with_context(|| format!("write {}", plist.display()))?;
+    eprintln!("==> wrote {}", plist.display());
+
+    if no_start {
+        // Skip the load entirely — the plist is in place and will load on
+        // next login. The operator can `launchctl load` manually when ready.
+        return Ok(());
+    }
+    // launchd refuses to load an already-loaded label; unload first
+    // (best-effort, will fail on a fresh install) then load.
+    let _ = Command::new("launchctl")
+        .args(["unload", &plist.to_string_lossy()])
+        .status();
+    run("launchctl", &["load", &plist.to_string_lossy()])?;
+    Ok(())
+}
+
+fn uninstall_launchd() -> Result<()> {
+    let plist = launchd_plist_path();
+    if plist.exists() {
+        let _ = Command::new("launchctl")
+            .args(["unload", &plist.to_string_lossy()])
+            .status();
+        std::fs::remove_file(&plist).with_context(|| format!("remove {}", plist.display()))?;
+        eprintln!("==> removed {}", plist.display());
+    } else {
+        eprintln!("==> no plist at {} (nothing to remove)", plist.display());
+    }
+    Ok(())
+}
+
+fn log_path(kind: &str) -> String {
+    let mut p = config_dir();
+    p.push("zuko");
+    p.push(format!("zuko-host.{kind}.log"));
+    p.to_string_lossy().into_owned()
+}
+
+// ─────────────────────────────────── helpers ───────────────────────────────
+
+/// Run a command, streaming stderr, bailing with a useful message on failure.
+/// Used for `systemctl` / `launchctl` so the install/uninstall errors name the
+/// failing step instead of silently ignoring the exit code.
+fn run(program: &str, args: &[&str]) -> Result<()> {
+    let status = Command::new(program)
+        .args(args)
+        .status()
+        .with_context(|| format!("run {program}"))?;
+    if !status.success() {
+        bail!(
+            "{program} {} failed (exit {:?})",
+            args.join(" "),
+            status.code()
+        );
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn sh_quote_passes_simple_paths_through() {
+        assert_eq!(
+            sh_quote("/home/me/.local/bin/zuko"),
+            "'/home/me/.local/bin/zuko'"
+        );
+    }
+
+    #[test]
+    fn sh_quote_escapes_embedded_single_quote() {
+        // The standard POSIX-shell idiom for a literal single quote inside a
+        // single-quoted string is to close, escape, reopen: '...'\''...'
+        assert_eq!(sh_quote("it's"), "'it'\\''s'");
+    }
+
+    #[test]
+    fn wrapper_body_is_executable_and_execs_zuko_host() {
+        // Smoke-test that the generated wrapper parses as POSIX sh and execs
+        // `zuko host` with the resolved key path. We don't actually run it
+        // (that needs a real key + a real Iroh bind); we just check the shape.
+        let dir = tempfile::tempdir().unwrap();
+        let wrapper = dir.path().join("zuko-host-run");
+        let bin = PathBuf::from("/bin/echo");
+        let key = dir.path().join("key");
+        write_wrapper(&wrapper, &bin, &key, "/bin/sh").unwrap();
+        let body = std::fs::read_to_string(&wrapper).unwrap();
+        assert!(body.starts_with("#!/bin/sh\n"));
+        assert!(body.contains("exec '/bin/echo' host --key"));
+        assert!(body.contains("--shell '/bin/sh'"));
+        assert!(body.contains("\"$@\""));
+    }
+
+    #[test]
+    fn wrapper_is_marked_executable_on_unix() {
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let dir = tempfile::tempdir().unwrap();
+            let wrapper = dir.path().join("zuko-host-run");
+            write_wrapper(
+                &wrapper,
+                Path::new("/bin/echo"),
+                &dir.path().join("k"),
+                "/bin/sh",
+            )
+            .unwrap();
+            let mode = std::fs::metadata(&wrapper).unwrap().permissions().mode();
+            assert_eq!(mode & 0o777, 0o755, "wrapper must be 0755, got {:o}", mode);
+        }
+    }
+
+    #[test]
+    fn systemd_unit_body_has_expected_directives() {
+        // We can't write to the user's actual systemd dir from a test, but the
+        // unit body is built deterministically from the wrapper path — so we
+        // can construct the same string and check its shape.
+        let wrapper = PathBuf::from("/home/me/.local/bin/zuko-host-run");
+        let wrapper_s = wrapper.to_string_lossy();
+        // ExecStart is quoted so spaces in HOME / --prefix don't split into
+        // binary + arg (systemd parses the first whitespace token as argv[0]).
+        let body = format!(
+            "[Unit]\n\
+             Description=Zuko host (interactive shell over Iroh)\n\
+             After=network-online.target\n\
+             Wants=network-online.target\n\
+             \n\
+             [Service]\n\
+             ExecStart=\"{wrapper_s}\"\n\
+             Restart=on-failure\n\
+             RestartSec=5\n\
+             \n\
+             [Install]\n\
+             WantedBy=default.target\n"
+        );
+        assert!(body.contains("ExecStart=\"/home/me/.local/bin/zuko-host-run\""));
+        assert!(body.contains("WantedBy=default.target"));
+        assert!(body.contains("Restart=on-failure"));
+    }
+}

@@ -1,6 +1,11 @@
 #!/bin/sh
 # Run `zuko host` in the foreground (handy for testing / one-off sessions).
-# Defaults match install.sh. Override with env vars or args (passed after).
+# Defaults match `zuko install`. Override with env vars or args (passed after).
+#
+# This is a development convenience — for production use `zuko install` to set
+# up the systemd/launchd user service that keeps the daemon alive across
+# reboots. The script just execs the binary directly so you get the ticket
+# banner on stderr and can pair a device with `zuko share`.
 set -eu
 
 KEY="${ZUKO_KEY:-${HOME}/.config/zuko/key}"
@@ -14,7 +19,8 @@ elif [ -x "$(dirname "$0")/../target/debug/zuko" ]; then
 elif [ -x "$(dirname "$0")/../target/release/zuko" ]; then
     BIN="$(dirname "$0")/../target/release/zuko"
 else
-    echo "zuko not found. Run scripts/install.sh (needs mise) or cargo build first." >&2
+    echo "zuko not found. Install it with 'mise use --global github:adonm/zuko'" >&2
+    echo "or build from source: 'cargo build --manifest-path zuko/Cargo.toml'." >&2
     exit 1
 fi
 

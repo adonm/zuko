@@ -21,16 +21,17 @@ pluggable: the iOS app and the CLI are the first two, and Android / a Linux GUI
   └──────────────┘                         └──────────────────┘
 ```
 
-- **One ticket per host.** `zuko host` prints a ticket (`endpointa…`) that any
-  client dials. Because the host keeps a stable secret key, the same ticket
-  reconnects across reboots and IP changes.
+- **Pair with a code.** Add a new device with `zuko share` on the host (prints
+  a short, minutes-long code) and `zuko <code>` on the other machine. The code
+  is a one-time pad over an ephemeral Iroh key — the host's persistent key
+  stays put.
 - **Real PTY.** Bytes flow verbatim between the client and the host's shell, so
   every terminal program behaves exactly as if it were local.
 - **No port forwarding, no relay you run.** Iroh's public relays + NAT
   traversal do the reachability; the connection is end-to-end encrypted by the
   host's key.
-- **Skip the long paste on a new device.** `zuko share` mints a short code;
-  `zuko claim <code>` fetches the ticket over Iroh, saves it, and connects.
+- **Service install in the CLI.** `zuko install` writes the systemd/launchd
+  user unit and starts the daemon. `zuko uninstall` reverses it.
 
 ## Clients
 
@@ -54,39 +55,44 @@ both. The iOS app is built from source (or pushed to TestFlight from CI; see
 ### 1. Set up a host
 
 Prerequisite: [mise](https://mise.jdx.dev) on the host (`curl https://mise.run | sh`).
-The installer pulls a prebuilt `zuko` binary from GitHub Releases via mise's
-`github:` backend.
 
 On the machine you want to shell into:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/adonm/zuko/main/zuko/scripts/install.sh | sh
+mise use --global github:adonm/zuko   # put `zuko` on PATH
+zuko install                          # write the systemd/launchd unit + start it
 ```
 
-This installs `zuko`, writes a persistent secret key to `~/.config/zuko/key`,
-starts a background service (systemd user unit on Linux, launchd on macOS), and
-prints a ticket that starts with `endpointa…`.
+`zuko install` writes a persistent secret key to `~/.config/zuko/key` (on the
+first host run), installs a `zuko-host-run` wrapper at `~/.local/bin/`, and
+starts a background service (systemd user unit on Linux, launchd on macOS).
+Logs go to `journalctl --user -u zuko-host -f` (Linux) or
+`~/.config/zuko/zuko-host.out.log` (macOS).
 
-> Manual / no service manager? See [`zuko/README.md`](zuko/README.md) and
-> `zuko/scripts/zuko-host.sh`. To pin a version: `ZUKO_VERSION=v0.1.0 sh install.sh`.
+> Manual / no service manager? Run `zuko host` in the foreground, or
+> [`zuko/scripts/zuko-host.sh`](zuko/scripts/zuko-host.sh) from a checkout.
 
-### 2. Pick a client
-
-Both clients use the same ticket.
-
-**Terminal (Linux/macOS)** — the `zuko` binary:
+### 2. Pair a client
 
 ```sh
-mise use --global github:adonm/zuko
-zuko connect "endpointa..."        # one-off
-zuko add home "endpointa..."       # …or save it once, then:
-zuko home                          # shorthand for `zuko connect home`
+# on the host (code is read-once, expires in minutes):
+zuko share
+#   wowu-hiva-fiki-rufu
+
+# on the client:
+zuko wowu-hiva-fiki-rufu   # fetches the ticket, saves it, connects
 ```
 
-You can also pipe the ticket: `echo "endpointa..." | zuko`. Or, from a host
-running `zuko share`, skip the paste entirely: `zuko claim wowu-hiva-fiki-rufu`.
+By default `claim` saves the host under the host's label (override with
+`--as <name>`) and drops you straight into the shell. From then on, connect
+by name:
 
-**iOS** — the iOS app:
+```sh
+zuko ls                            # list saved hosts
+zuko home                          # = zuko connect home (shorthand)
+```
+
+**iOS** — build the app from source and run it in the Simulator or on a device:
 
 ```sh
 mise install             # rust
@@ -98,7 +104,8 @@ open ios/Zuko/Zuko.xcodeproj
 Pick your iPhone and hit Run. In the app: tap **+**, name the host, paste the
 ticket, tap **Add**. (CI builds the same way — grab the `Zuko-app` artifact from
 the [build workflow](.github/workflows/build.yml); it's an unsigned simulator
-build, so for a real device you need to sign it with your own developer account.)
+build, so for a real device you need to sign it with your own developer
+account.)
 
 ## Wire protocol
 
@@ -112,8 +119,8 @@ codes:
   0x01 RESIZE payload = [cols: u16 BE][rows: u16 BE]   (client -> host)
 ```
 
-The full spec (lifecycle, semantics, the optional ticket-handoff ALPN) is in
-[`docs/PROTOCOL.md`](docs/PROTOCOL.md). Reference impls:
+The full spec (lifecycle, semantics, the ticket-handoff ALPN used by
+`share`/`claim`) is in [`docs/PROTOCOL.md`](docs/PROTOCOL.md). Reference impls:
 [`zuko/src/wire.rs`](zuko/src/wire.rs) (Rust),
 [`ios/Zuko/Zuko/Net/Wire.swift`](ios/Zuko/Zuko/Net/Wire.swift) (Swift).
 
@@ -121,28 +128,30 @@ The full spec (lifecycle, semantics, the optional ticket-handoff ALPN) is in
 
 | Path | What |
 |------|------|
-| `zuko/` | The `zuko` binary (Rust): the **host** (`zuko host`) + the **CLI client** (`zuko connect`/`share`/`claim`). Wire framing in [`zuko/src/wire.rs`](zuko/src/wire.rs), handoff in [`zuko/src/handoff.rs`](zuko/src/handoff.rs). |
-| `zuko/scripts/` | mise-based install + run scripts, systemd/launchd units, and [`e2e_test.py`](zuko/scripts/e2e_test.py) (the end-to-end PTY harness). |
+| `zuko/` | The `zuko` binary (Rust): the **host** (`zuko host`), the **CLI client** (`zuko connect`/`share`/`claim`), and the **service installer** (`zuko install`/`uninstall`). Wire framing in [`zuko/src/wire.rs`](zuko/src/wire.rs), handoff in [`zuko/src/handoff.rs`](zuko/src/handoff.rs), service management in [`zuko/src/service.rs`](zuko/src/service.rs). |
+| `zuko/scripts/` | The foreground `zuko-host.sh` dev wrapper and [`e2e_test.py`](zuko/scripts/e2e_test.py) (the end-to-end PTY harness). |
 | `ios/Zuko/` | The **iOS client** (XcodeGen `project.yml` + Swift sources). |
 | `docs/` | [`PROTOCOL.md`](docs/PROTOCOL.md) (wire spec for client authors) and [`CLIENTS.md`](docs/CLIENTS.md) (client registry). |
 | `.github/workflows/` | CI: builds+tests the `zuko` binary (incl. the e2e harness), the iOS app (simulator), and publishes `zuko` release binaries to GitHub Releases. |
 
 ## Requirements
 
-- Host: any Linux/macOS box with [mise](https://mise.jdx.dev). The installer
-  downloads a prebuilt binary; `cargo` is only needed to build from source.
+- Host: any Linux/macOS box with [mise](https://mise.jdx.dev). `mise use
+  --global github:adonm/zuko` installs the prebuilt binary; `cargo` is only
+  needed to build from source.
 - CLI client: same — `mise use --global github:adonm/zuko`.
 - iOS client: iOS 17.5+ (IrohLib requirement), Xcode 16+.
 
 ## Security notes
 
-- Connections are end-to-end encrypted by Iroh using the host's key. Anyone who
-  has the ticket can connect, so treat it like an SSH private key — the ticket is
-  the only secret needed to reach the host.
-- `zuko share`/`claim` never weaken this: the memorable code derives a
-  *throwaway* key used only to deliver the real ticket once. The host key stays
-  strong. See [`docs/PROTOCOL.md`](docs/PROTOCOL.md#ticket-handoff-optional).
-- Rotate by deleting `~/.config/zuko/key` and restarting; the node id changes
+- The host's `endpointa…` ticket is the only long-lived secret. It moves only
+  through `zuko share` → `zuko claim`: an end-to-end-encrypted Iroh stream
+  keyed by a one-time code.
+- `zuko share`/`claim` never weaken the host key: the code derives a
+  *throwaway* key used only to deliver the real ticket once. The host key
+  stays strong. See [`docs/PROTOCOL.md`](docs/PROTOCOL.md#ticket-handoff).
+- Anyone who has the ticket can connect, so treat it like an SSH private key.
+  Rotate by deleting `~/.config/zuko/key` and restarting; the node id changes
   and all old tickets stop working.
 - The host runs your `$SHELL` per connection. For a specific command, pass
   `--shell` / `--shell-args` (see `zuko host --help`).
@@ -168,11 +177,12 @@ so local and CI stay in lockstep.
 
 - **`zuko` binary** — tagging `v*` (or running the `release` workflow)
   cross-compiles `zuko` for `linux/{x86_64,aarch64}` and
-  `macos/{x86_64,aarch64}` and attaches tarballs to a GitHub Release. The
-  install script (and `mise use --global github:adonm/zuko`) pulls these via
-  mise's `github:` backend. The release binary is ~9.5 MB — built with boring
-  dependencies and standard size-conscious cargo flags (`opt-level="z"`, fat
-  LTO, stripped symbols); no bespoke trimming, on purpose.
+  `macos/{x86_64,aarch64}` and attaches tarballs to a GitHub Release.
+  `mise use --global github:adonm/zuko` pulls these via mise's `github:`
+  backend; `zuko install` then sets up the service. The release binary is ~9.5
+  MB — built with boring dependencies and standard size-conscious cargo flags
+  (`opt-level="z"`, fat LTO, stripped symbols); no bespoke trimming, on
+  purpose.
 
   **Cutting a release** is one command — it commits any pending work, pushes
   the branch, creates an annotated `v*` tag, and pushes the tag (which fires
@@ -183,9 +193,7 @@ so local and CI stay in lockstep.
   ```
 
   The script refuses to tag a version that doesn't match `zuko/Cargo.toml`'s
-  `version`, and refuses to clobber an existing tag. Until a `v*` tag exists,
-  `mise use --global github:adonm/zuko` will fail with "no releases found" —
-  that's expected for a brand-new checkout.
+  `version`, and refuses to clobber an existing tag.
 
 - **iOS app** — [`ios/DISTRIBUTION.md`](ios/DISTRIBUTION.md) covers building a
   **signed** `.ipa` and pushing to **TestFlight entirely from GitHub Actions,

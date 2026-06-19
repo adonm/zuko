@@ -3,10 +3,13 @@
 
 Two flows are exercised:
 
-1. **host <-> connect** — spawn `zuko host`, grab the ticket it prints, drive
-   `zuko connect <ticket>` under a PTY (the client's raw-mode path needs a
-   controlling terminal), type a command, and confirm the shell's output
-   comes back.
+1. **host <-> connect (by saved name)** — spawn `zuko host`, read its current
+   ticket out of the on-disk `current_ticket` file (the daemon keeps the
+   long-lived ticket off stdout, so the only source is that file), seed the
+   test's isolated hosts file with that ticket under a name, and drive
+   `zuko connect <name>` under a PTY (the client's raw-mode path needs a
+   controlling terminal). The connect path is the same one a real user hits
+   after `zuko claim <code>`.
 
 2. **share <-> claim** — with the host still running (so it writes
    `current_ticket`), spawn `zuko share`, capture the memorable code it
@@ -33,7 +36,7 @@ import time
 ZUKO = os.path.abspath(sys.argv[1]) if len(sys.argv) > 1 else "zuko/target/release/zuko"
 TOKEN = "hello-zuko-ITEST"
 # Generous timeouts: Iroh relay handshakes can be slow on CI runners.
-HOST_TICKET_TIMEOUT = 60
+HOST_ONLINE_TIMEOUT = 60
 CLIENT_WINDOW = 45
 SHARE_CODE_TIMEOUT = 45
 CLAIM_TIMEOUT = 90
@@ -51,30 +54,36 @@ def banner(msg):
     print(f"\n=== {msg} ===", file=sys.stderr, flush=True)
 
 
-def wait_for_line(proc, prefix, timeout):
-    """Read proc.stdout line-by-line until one starts with `prefix`."""
+def wait_for_file(path, timeout):
+    """Wait until `path` exists and has non-empty contents."""
     deadline = time.time() + timeout
     while time.time() < deadline:
-        line = proc.stdout.readline()
-        if not line:
-            time.sleep(0.1)
-            continue
-        text = line.decode(errors="replace").strip()
-        if text.startswith(prefix):
-            return text
+        try:
+            with open(path) as f:
+                content = f.read().strip()
+            if content:
+                return content
+        except OSError:
+            pass
+        time.sleep(0.25)
     return None
 
 
 # ─────────────────────────── host <-> connect ──────────────────────────────
 
-def run_client_under_pty(ticket):
-    """Fork `zuko connect` on a PTY, type `echo <TOKEN>`, expect it echoed."""
+def run_client_under_pty(name, env):
+    """Fork `zuko connect <name>` on a PTY, type `echo <TOKEN>`, expect echoed."""
     pid, fd = pty.fork()
     if pid == 0:
         # Child: become the client. The PTY is its controlling terminal, so
-        # crossterm's enable_raw_mode on stdin works.
+        # crossterm's enable_raw_mode on stdin works. The child inherits the
+        # parent's os.environ, but the parent only built an `env` dict for
+        # subprocess.Popen — so apply it here before exec so the client sees
+        # the isolated XDG_CONFIG_HOME with our seeded saved-hosts file.
+        os.environ.clear()
+        os.environ.update(env)
         os.environ["RUST_LOG"] = ""
-        os.execvp(ZUKO, [ZUKO, "connect", ticket])
+        os.execvp(ZUKO, [ZUKO, "connect", name])
 
     out = b""
     start = time.time()
@@ -113,9 +122,21 @@ def run_client_under_pty(ticket):
     return out
 
 
-def test_host_connect(env, ticket):
-    banner("test: host <-> connect")
-    out = run_client_under_pty(ticket)
+def seed_saved_host(env, name, ticket):
+    """Write the test's saved-hosts file directly so we can exercise
+    `zuko connect <name>` without going through the public OTP handoff for
+    the connect test (the share/claim test below covers the handoff)."""
+    zuko_dir = os.path.join(env["XDG_CONFIG_HOME"], "zuko")
+    os.makedirs(zuko_dir, exist_ok=True)
+    with open(os.path.join(zuko_dir, "hosts"), "w") as f:
+        f.write(f"# zuko saved hosts (seeded by e2e_test.py)\n")
+        f.write(f"{name}\t{ticket}\n")
+
+
+def test_host_connect(env, name, ticket):
+    banner("test: host <-> connect (by saved name)")
+    seed_saved_host(env, name, ticket)
+    out = run_client_under_pty(name, env)
     tail = out.decode(errors="replace")[-300:]
     print("---- client output (tail) ----", file=sys.stderr)
     print(tail, file=sys.stderr)
@@ -131,7 +152,7 @@ def test_host_connect(env, ticket):
 
 def test_share_claim(env, expected_ticket):
     banner("test: share <-> claim")
-    # `zuko share` reads current_ticket (written by the host), serves one claim.
+    # `zuko share` reads current_ticket (written by the host), serves claims.
     share = subprocess.Popen(
         [ZUKO, "share", "--count", "1", "--timeout", "120", "--label", "e2e-host"],
         stdout=subprocess.PIPE,
@@ -139,21 +160,22 @@ def test_share_claim(env, expected_ticket):
         env=env,
     )
     try:
-        code = wait_for_line(share, prefix="", timeout=SHARE_CODE_TIMEOUT)
+        code = share.stdout.readline()
         # The first stdout line is the code; share's banner goes to stderr.
         # Be defensive: skip any leading blank, take the first non-empty line.
-        # wait_for_line with prefix="" returns the first line read.
+        while code is not None and code.strip() == b"":
+            code = share.stdout.readline()
         if not code:
             print(red("FAIL: no code printed by `zuko share`"), file=sys.stderr)
             return False
-        # Re-read in case the first line was blank: drain until a short dashed code.
-        while code == "" and share.stdout:
-            line = share.stdout.readline()
-            if not line:
-                break
-            code = line.decode(errors="replace").strip()
+        code = code.decode(errors="replace").strip()
         print(f"share code: {code}", file=sys.stderr)
 
+        # `zuko claim <code>`: fetches the ticket, saves it under --as, and
+        # (with --no-connect) skips the PTY session. The bare `zuko <code>`
+        # shorthand dispatches to the same `handoff::claim` Rust function —
+        # verified by unit tests for `code::looks_like_code`, so we don't
+        # need a second network round-trip here.
         claim = subprocess.run(
             [ZUKO, "claim", code, "--no-connect", "--as", "e2e-claimed",
              "--timeout", str(CLAIM_TIMEOUT)],
@@ -167,16 +189,13 @@ def test_share_claim(env, expected_ticket):
             return False
 
         # Confirm it landed in the saved-hosts file under the right name+ticket.
-        ls = subprocess.run(
-            [ZUKO, "ls"], capture_output=True, env=env, timeout=30
-        )
-        hosts = ls.stdout.decode(errors="replace")
-        print("---- zuko ls ----", file=sys.stderr)
+        # (`zuko ls` only prints names now, so read the hosts file directly to
+        # also verify the saved ticket matches.)
+        hosts_path = os.path.join(env["XDG_CONFIG_HOME"], "zuko", "hosts")
+        with open(hosts_path) as f:
+            hosts = f.read()
+        print("---- saved hosts file ----", file=sys.stderr)
         print(hosts, file=sys.stderr)
-        if "e2e-claimed" not in hosts:
-            print(red("FAIL: claimed host not in `zuko ls`"), file=sys.stderr)
-            return False
-        # The claimed ticket must equal the host's real ticket.
         for line in hosts.splitlines():
             parts = line.split()
             if len(parts) == 2 and parts[0] == "e2e-claimed":
@@ -187,7 +206,7 @@ def test_share_claim(env, expected_ticket):
                     return False
                 print(green("OK: share/claim delivered the real ticket"), file=sys.stderr)
                 return True
-        print(red("FAIL: claimed entry malformed"), file=sys.stderr)
+        print(red("FAIL: e2e-claimed not in saved-hosts file"), file=sys.stderr)
         return False
     finally:
         share.terminate()
@@ -214,19 +233,23 @@ def main():
 
     host = subprocess.Popen(
         [ZUKO, "host", "--shell", "/bin/sh"],
-        stdout=subprocess.PIPE,
+        stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
         env=env,
     )
     failures = 0
     try:
-        ticket = wait_for_line(host, prefix="endpointa", timeout=HOST_TICKET_TIMEOUT)
+        # The host keeps the long-lived ticket off stdout; read it from the
+        # current_ticket file the daemon writes (the same source `zuko share`
+        # reads).
+        ticket_path = os.path.join(xdg, "zuko", "current_ticket")
+        ticket = wait_for_file(ticket_path, HOST_ONLINE_TIMEOUT)
         if not ticket:
-            print(red("FAIL: no ticket from `zuko host`"), file=sys.stderr)
+            print(red(f"FAIL: no ticket written to {ticket_path}"), file=sys.stderr)
             return 1
         print(f"host ticket: {ticket[:32]}...", file=sys.stderr)
 
-        if not test_host_connect(env, ticket):
+        if not test_host_connect(env, "e2e-direct", ticket):
             failures += 1
         if not test_share_claim(env, ticket):
             failures += 1
@@ -247,3 +270,4 @@ def main():
 
 if __name__ == "__main__":
     sys.exit(main())
+

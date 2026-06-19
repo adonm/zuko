@@ -4,7 +4,8 @@
 # The tag push triggers .github/workflows/release.yml, which cross-compiles
 # zuko for linux/{x86_64,aarch64} + macos/{x86_64,aarch64}, packages each as
 # zuko-<target>.tar.gz, and attaches them to a GitHub Release — which is what
-# `mise use --global github:adonm/zuko` and zuko/scripts/install.sh consume.
+# `mise use --global github:adonm/zuko` consumes. The end user then runs
+# `zuko install` to set up the host daemon as a user service.
 #
 # Usage:
 #   mise run release v0.1.0

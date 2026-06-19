@@ -1,25 +1,25 @@
 import SwiftUI
 import UIKit
 
-/// The repo-tied install command shown on first run. We deliberately use the
-/// raw.githubusercontent.com URL (versioned with the repo) rather than a
-/// separate hostname, so this baked-in string can't rot if a vanity domain
-/// ever moves.
+/// The repo-tied install commands shown on first run.
 enum HostSetup {
     static let repoOwner = "adonm"
     static let repoName = "zuko"
-    static let branch = "main"
 
-    static let installCommand =
-        "curl -fsSL https://raw.githubusercontent.com/\(repoOwner)/\(repoName)/\(branch)/zuko/scripts/install.sh | sh"
+    /// Install zuko (mise pulls a prebuilt binary from GitHub Releases) and
+    /// the host daemon as a user service. Prerequisite: mise on the host
+    /// (`curl https://mise.run | sh`).
+    static let zukoInstallCommand = "mise use --global github:adonm/zuko && zuko install"
 
-    /// Where the ticket the host prints should be pasted back (user-facing hint).
-    static let ticketPrefix = "endpointa"
+    /// Mint a one-time pairing code on the host. The iOS app doesn't speak
+    /// the pairing protocol yet — pair through the CLI on another machine
+    /// (`zuko <code>`) to save the host, then it's available here.
+    static let shareCommand = "zuko share"
 }
 
-/// Reusable card explaining how to set up a host and get a ticket.
+/// Reusable card explaining how to set up a host.
 struct OnboardingView: View {
-    @State private var copied = false
+    @State private var copiedStep: Int?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
@@ -30,14 +30,17 @@ struct OnboardingView: View {
                     .foregroundStyle(Color.accentColor)
             }
 
-            Text("Run this once on the Mac/Linux box you want to shell into. It installs a small daemon that keeps a persistent, end-to-end-encrypted Iroh session and prints a ticket.")
+            Text("Run this once on the Mac/Linux box you want to shell into. `zuko install` sets up a background daemon (systemd on Linux, launchd on macOS) that keeps a persistent, end-to-end-encrypted Iroh session. Prerequisite: [mise](https://mise.jdx.dev) on the host (`curl https://mise.run | sh`).")
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
 
-            CopyableCommand(command: HostSetup.installCommand)
+            VStack(alignment: .leading, spacing: 10) {
+                step(1, "Install zuko + the host service", HostSetup.zukoInstallCommand)
+                step(2, "Mint a pairing code (on the host)", HostSetup.shareCommand)
+            }
 
-            if copied {
-                Text("Copied. After it runs, look for the line starting with `\(HostSetup.ticketPrefix)` — that's your ticket.")
+            if let copiedStep {
+                Text("Copied step \(copiedStep).")
                     .font(.footnote)
                     .foregroundStyle(.green)
                     .transition(.opacity)
@@ -45,18 +48,34 @@ struct OnboardingView: View {
 
             Divider().padding(.vertical, 4)
 
-            Text("Then tap **+**, name the connection, and paste the ticket.")
+            Text("Pair through the CLI: on another machine with `zuko` installed, run `zuko <code>`. That saves the host, which you can then connect to from any client.")
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
         }
         .padding()
         .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 16))
     }
+
+    /// A numbered, monospaced, copyable single-line command box.
+    private func step(_ n: Int, _ title: String, _ command: String) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text("\(n). \(title)")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            CopyableCommand(command: command) {
+                withAnimation { copiedStep = n }
+                DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
+                    withAnimation { if copiedStep == n { copiedStep = nil } }
+                }
+            }
+        }
+    }
 }
 
 /// A monospaced, copyable single-line command box.
 struct CopyableCommand: View {
     let command: String
+    var onCopy: (() -> Void)? = nil
     @State private var copied = false
 
     var body: some View {
@@ -70,6 +89,7 @@ struct CopyableCommand: View {
             Button {
                 UIPasteboard.general.string = command
                 withAnimation { copied = true }
+                onCopy?()
                 DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
                     withAnimation { copied = false }
                 }

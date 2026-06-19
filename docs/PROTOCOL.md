@@ -82,24 +82,25 @@ string starting with `endpointa`. It encodes:
 
 Because the secret key is persistent, the node id is stable across restarts and
 IP changes; Iroh's discovery resolves the current address on dial, so a saved
-ticket keeps working. A host prints its ticket to stdout on startup and refreshes
-`~/.config/zuko/current_ticket` while it runs.
+ticket keeps working. The host writes the ticket to
+`~/.config/zuko/current_ticket` for `zuko share` to read; clients receive it
+exclusively through the [handoff](#ticket-handoff) flow.
 
-## Ticket handoff (optional)
+## Ticket handoff
 
-Pasting the long `endpointa…` ticket into a new device is the one rough edge.
-The optional **handoff** lets a client fetch a host's ticket using a short,
-memorable code (the [croc](https://github.com/schollz/croc) model). `zuko share`
-and `zuko claim` implement it; a client may ignore it entirely.
+The **handoff** lets a client fetch a host's ticket using a short, memorable
+code (the [croc](https://github.com/schollz/croc) model). `zuko share` and
+`zuko claim` implement it.
 
 - The host operator runs `zuko share`, which derives a **throwaway** Iroh
-  `SecretKey` from the code (`SHA-256(normalized_code) → ed25519 seed`), binds a
-  *second*, ephemeral endpoint with that key, and serves the real ticket on a
-  separate ALPN.
+  `SecretKey` from the code via memory-hard Argon2id
+  (`Argon2id(normalized_code, salt="zuko-share-handoff-v1") → 32-byte seed`),
+  binds a *second*, ephemeral endpoint with that key, and serves the real
+  ticket on a separate ALPN.
 - **Handoff ALPN:** `zuko/handoff/1`.
 - The code is a **one-time symmetric secret** for the handoff only — ~52 bits
   (e.g. `wowu-hiva-fiki-rufu`), plenty for the minutes-long window before
-  `share` exits after the first claim. The real host key is never derivable from
+  `share` exits after the first claim. The real host key is not derivable from
   it.
 - **Wire:** the host opens a unidirectional stream (`open_uni`) and writes a
   UTF-8 payload, then closes the send side:
@@ -111,26 +112,30 @@ and `zuko claim` implement it; a client may ignore it entirely.
 
 The throwaway endpoint is reached by node id through Iroh's N0 DNS address
 lookup, which can lag a couple of seconds behind `share` coming online, so a
-claimer should retry the dial for a short window.
+claimer retries the dial for a short window.
 
 ## Implementing a client
 
 A minimal client, in any language with Iroh bindings (Rust `iroh`, Swift
 `IrohLib`, …):
 
-1. Parse the ticket → `EndpointAddr`.
-2. `Endpoint::builder(presets::N0).bind()`; `connect(addr, b"zuko/1")`.
-3. `open_bi()` → `(send, recv)`. Send an initial `RESIZE`.
-4. Put the local terminal into raw mode. Pump:
+1. Get the host's ticket by implementing the [handoff](#ticket-handoff):
+   accept a short code from the user, derive the throwaway key, dial it, and
+   read the real ticket off the uni stream.
+2. Parse the ticket → `EndpointAddr`.
+3. `Endpoint::builder(presets::N0).bind()`; `connect(addr, b"zuko/1")`.
+4. `open_bi()` → `(send, recv)`. Send an initial `RESIZE`.
+5. Put the local terminal into raw mode. Pump:
    - keystrokes → `DATA` frames on `send`;
    - `DATA` frames from `recv` → render to the terminal;
    - window-size changes → `RESIZE` frames.
-5. End when `recv` closes or the connection drops; restore the terminal.
+6. End when `recv` closes or the connection drops; restore the terminal.
 
 Reference code:
 
 - **Rust:** [`zuko/src/wire.rs`](../zuko/src/wire.rs) (framing),
-  [`zuko/src/client.rs`](../zuko/src/client.rs) (the connect loop).
+  [`zuko/src/client.rs`](../zuko/src/client.rs) (the connect loop),
+  [`zuko/src/handoff.rs`](../zuko/src/handoff.rs) (the claim side of pairing).
 - **Swift:** [`ios/Zuko/Zuko/Net/Wire.swift`](../ios/Zuko/Zuko/Net/Wire.swift),
   [`ios/Zuko/Zuko/Net/IrohSession.swift`](../ios/Zuko/Zuko/Net/IrohSession.swift).
 
@@ -142,8 +147,8 @@ compatible with `TERM=xterm-256color`.
 ## Security
 
 - The ticket is the secret. Anyone holding it can open a shell; store and
-  transmit it accordingly (the handoff exists precisely to avoid pasting it
-  through chat/email).
+  transmit it accordingly. Clients learn it only through the
+  [handoff](#ticket-handoff).
 - Connections are end-to-end encrypted by Iroh. The relays see only encrypted
   traffic.
 - Rotate the host identity by deleting `~/.config/zuko/key` and restarting;

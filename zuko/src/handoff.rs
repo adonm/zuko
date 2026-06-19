@@ -1,10 +1,12 @@
 //! `zuko share` / `zuko claim` — croc-style ticket handoff over Iroh.
 //!
-//! Pasting the long `endpointa…` ticket into a brand-new device is the one
-//! rough edge left in the flow. These two commands remove it: the host operator
-//! runs `zuko share`, reads off a short memorable code, and the new device runs
-//! `zuko claim <code>` to fetch the real ticket over an end-to-end encrypted
-//! Iroh connection — then saves it and connects, all in one command.
+//! This is the **only** way a new device learns a host's ticket: the host
+//! operator runs `zuko share`, reads off a short memorable code, and the new
+//! device runs `zuko claim <code>` to fetch the real ticket over an
+//! end-to-end encrypted Iroh connection — then saves it and connects, all in
+//! one command. There is no `zuko add <name> <ticket>` any more, because that
+//! path is exactly how long-lived bearer secrets leak (shell history,
+//! scrollback, copy/paste into chat).
 //!
 //! ## How it stays safe
 //!
@@ -191,18 +193,18 @@ async fn serve_handoff(
 
 // ────────────────────────── claim (client side) ────────────────────────────
 
-/// Resolve a `zuko share` code to the host's real ticket, save it, and (by
-/// default) connect immediately. `no_save` just prints the ticket; `no_connect`
-/// skips the terminal session.
+/// Resolve a `zuko share` code to the host's real ticket, **save it** under a
+/// name, and (by default) connect immediately. Saving is mandatory — the
+/// long-lived ticket never goes to stdout. Bare `zuko <code>` is the
+/// shortcut for this command on a first-run client.
 pub async fn claim(
     code: &str,
     name: Option<String>,
     no_connect: bool,
-    no_save: bool,
     timeout_secs: u64,
 ) -> Result<()> {
     // No tracing subscriber here: if we connect, the terminal goes raw and any
-    // log output would corrupt it. Status goes to stderr; the ticket to stdout.
+    // log output would corrupt it. Status goes to stderr; nothing to stdout.
     let secret = derive_key(code)?;
     let node_id = secret.public();
 
@@ -229,21 +231,23 @@ pub async fn claim(
     let (label, ticket) = payload
         .split_once('\n')
         .unwrap_or(("host", payload.as_str()));
-    let label = label.trim();
+    // `share` sanitizes its label before sending, but treat the received
+    // bytes as untrusted — a misbehaving peer could send whitespace or a
+    // leading '#' that would then make `store::add` reject the save name.
+    // Sanitizing here keeps the two sides symmetric.
+    let label = sanitize_label(label);
     let ticket = ticket.trim();
     if ticket.is_empty() {
         bail!("received an empty ticket");
     }
 
     eprintln!("claimed host: {label}");
-    if no_save {
-        // Raw ticket to stdout so it can be piped into `zuko add` etc.
-        println!("{ticket}");
-    } else {
-        let save_name = name.unwrap_or_else(|| label.to_string());
-        crate::store::add(&save_name, ticket)?;
-        eprintln!("saved as {save_name}  (run `zuko {save_name}` to reconnect)");
-    }
+    // Always save — the raw ticket is a long-lived bearer secret and must not
+    // be printed to stdout (it would land in scrollback / shell history /
+    // piped files).
+    let save_name = name.unwrap_or(label);
+    crate::store::add(&save_name, ticket)?;
+    eprintln!("saved as {save_name}  (run `zuko {save_name}` to reconnect)");
 
     if !no_connect {
         crate::client::connect(ticket).await?;
@@ -256,7 +260,8 @@ pub async fn claim(
 /// seconds behind `zuko share` coming online; backon handles the tenacity.
 ///
 /// `timeout_secs > 0` bounds the *total* wall time (across all attempts) via an
-/// outer deadline; `timeout_secs == 0` tries up to a fixed number of attempts.
+/// outer deadline; `timeout_secs == 0` retries indefinitely (matches the
+/// `Claim --timeout` help and `share`'s `--timeout 0` semantics).
 async fn dial_throwaway(
     endpoint: &Endpoint,
     node_id: iroh::PublicKey,
@@ -265,17 +270,22 @@ async fn dial_throwaway(
     // Constant 2s between attempts: long enough for DNS propagation, short
     // enough that the outer deadline still allows many tries.
     const DELAY: Duration = Duration::from_secs(2);
-    const MAX_TIMES: usize = 30;
 
-    let retry = (|| async { endpoint.connect(node_id, HANDOFF_ALPN).await })
-        .retry(
-            ConstantBuilder::default()
-                .with_delay(DELAY)
-                .with_max_times(MAX_TIMES),
-        )
-        .notify(|err: &iroh::endpoint::ConnectError, dur: Duration| {
-            warn!("claim dial failed, retrying in {dur:?}: {err}");
-        });
+    // `timeout_secs == 0` means "wait forever" — drop the retry cap so the
+    // only bound is the user's patience (or Ctrl-C). With a deadline we still
+    // cap retries so the backoff loop terminates even if every dial fails
+    // instantly; without one, the user has explicitly opted into forever.
+    let retry = (|| async { endpoint.connect(node_id, HANDOFF_ALPN).await }).retry(
+        ConstantBuilder::default()
+            .with_delay(DELAY)
+            .with_max_times(if timeout_secs == 0 {
+                usize::MAX
+            } else {
+                // ~2x the worst-case wall time (DELAY * attempts) so the
+                // outer deadline is always the binding constraint.
+                30
+            }),
+    );
 
     if timeout_secs == 0 {
         return retry.await.context("dial throwaway endpoint");

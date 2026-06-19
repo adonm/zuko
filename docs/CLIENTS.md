@@ -23,12 +23,18 @@ attach). The iOS app is built from source (or [TestFlight from CI](../ios/DISTRI
 
 Read [`PROTOCOL.md`](PROTOCOL.md) first — it's short. In brief:
 
-1. Parse the host's `endpointa…` ticket.
-2. Connect over Iroh on ALPN `zuko/1`, open one bidi stream, send an initial
+1. **Get the host's ticket** by implementing the
+   [ticket handoff](PROTOCOL.md#ticket-handoff): accept a short memorable code
+   from the user, derive the throwaway key from it, dial the ephemeral host,
+   and read the real ticket off the uni stream. The CLI flow is
+   `zuko share` → `zuko <code>` (or `zuko claim <code>` with flags); the same
+   UX is the goal for every client.
+2. Parse the host's `endpointa…` ticket.
+3. Connect over Iroh on ALPN `zuko/1`, open one bidi stream, send an initial
    `RESIZE`.
-3. Pump `[type:u8][len:u16 BE][payload]` frames (`0x00 DATA`, `0x01 RESIZE`)
+4. Pump `[type:u8][len:u16 BE][payload]` frames (`0x00 DATA`, `0x01 RESIZE`)
    between the stream and a terminal emulator.
-4. End on stream close / connection drop.
+5. End on stream close / connection drop.
 
 The reference implementations are deliberately small and worth cribbing from:
 
@@ -48,6 +54,7 @@ that bit the existing clients (so you don't have to):
 - Keep writes **serialised** so a burst of keystrokes + a resize never
   interleaves frames on the wire.
 - Hold the connection open until the client has finished reading any
-  one-shot payload (relevant if you also implement the [ticket handoff](PROTOCOL.md#ticket-handoff-optional)).
+  one-shot payload (relevant for the [ticket handoff](PROTOCOL.md#ticket-handoff),
+  where the host opens `open_uni` and writes the ticket before closing).
 
 If you build one, open a PR adding a row to the table above.
