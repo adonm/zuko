@@ -38,7 +38,7 @@ struct AddConnectionView: View {
                 } header: {
                     Text("Ticket")
                 } footer: {
-                    Text("Tip: on the host run the install command to get a ticket. The host's node id is stable across restarts, so this connection keeps working.")
+                    Text("On the host: `mise use --global github:adonm/zuko && zuko install`. The host's node id is stable across restarts, so this connection keeps working.")
                 }
                 if let error {
                     Section {

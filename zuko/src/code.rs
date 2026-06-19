@@ -112,6 +112,32 @@ pub(crate) fn generate_code() -> String {
     String::from_utf8(out).expect("code is ascii-only")
 }
 
+/// Heuristic: does this string look like a pairing code? Used by the
+/// bare-`zuko <input>` shortcut to tell a one-time code apart from a saved
+/// host name without making the user remember which subcommand to type.
+///
+/// A code normalises to exactly `WORDS_IN_CODE * 4` lowercase letters (16)
+/// in strict CVCV-×-4 position: even indices in `CONSONANTS`, odd indices in
+/// `VOWELS`. Real saved-host names effectively never match this — the
+/// position-constrained alphabet makes a false positive astronomically
+/// unlikely — so the disambiguation is safe in both directions.
+pub(crate) fn looks_like_code(s: &str) -> bool {
+    let normalized = normalize_code(s);
+    if normalized.len() != WORDS_IN_CODE * 4 {
+        return false;
+    }
+    let bytes = normalized.as_bytes();
+    // The code is CVCV CVCV CVCV CVCV — so even byte positions are consonants
+    // and odd positions are vowels. One pass, no allocations.
+    bytes.iter().enumerate().all(|(i, b)| {
+        if i % 2 == 0 {
+            CONSONANTS.contains(b)
+        } else {
+            VOWELS.contains(b)
+        }
+    })
+}
+
 fn pick(alphabet: &[u8], byte: u8) -> u8 {
     alphabet[(byte as usize) % alphabet.len()]
 }
@@ -219,5 +245,51 @@ mod tests {
         assert_eq!(sanitize_label("   "), "host");
         assert_eq!(sanitize_label("#comment"), "host");
         assert_eq!(sanitize_label("plain"), "plain");
+    }
+
+    #[test]
+    fn looks_like_code_accepts_real_codes_in_any_format() {
+        // The exact CVCV-×-4 shape, in every separator/case variant a user
+        // might type.
+        assert!(looks_like_code("tofa-mive-laru-bedo"));
+        assert!(looks_like_code("TOFA MIVE LARU BEDO"));
+        assert!(looks_like_code("tofamivelarubedo"));
+        assert!(looks_like_code("  tofa_mive.laru+bedo  "));
+    }
+
+    #[test]
+    fn looks_like_code_rejects_wrong_shape_or_alphabet() {
+        // Wrong length: too short / too long / empty.
+        assert!(!looks_like_code("tofa-mive-laru"));
+        assert!(!looks_like_code("tofa-mive-laru-bedo-extra"));
+        assert!(!looks_like_code(""));
+        // Right length, wrong alphabet (q / y aren't in CONSONANTS, o is fine
+        // but only at vowel positions).
+        assert!(!looks_like_code("qqqq-qqqq-qqqq-qqqq"));
+        // Right length, wrong CVCV pattern: consonant where a vowel belongs.
+        assert!(!looks_like_code("tttt-tttt-tttt-tttt"));
+        // Realistic saved-host names must not be misread as codes.
+        assert!(!looks_like_code("home"));
+        assert!(!looks_like_code("workstation"));
+        assert!(!looks_like_code("my-server"));
+        assert!(!looks_like_code("prod-1"));
+    }
+
+    #[test]
+    fn generated_codes_are_detected_as_codes() {
+        // Round-trip: a freshly-generated code must look like one. Catches
+        // drift between `generate_code` and `looks_like_code` (e.g. if the
+        // alphabet or word count ever changes in one but not the other).
+        for _ in 0..64 {
+            let code = generate_code();
+            assert!(
+                looks_like_code(&code),
+                "generated code not detected: {code}"
+            );
+            assert!(
+                looks_like_code(code.replace('-', " ").as_str()),
+                "space form: {code}"
+            );
+        }
     }
 }

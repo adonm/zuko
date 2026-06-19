@@ -15,6 +15,14 @@
 //! [`crate::secret`] — and every `add`/`rm` takes an exclusive `flock` on a
 //! sibling `.lock` file so two concurrent `zuko` processes can't silently
 //! overwrite each other's update.
+//!
+//! ## Why tickets never cross the CLI surface
+//!
+//! The CLI never accepts a raw ticket as an argument or via stdin — that path
+//! is the one way long-lived bearer secrets leak (shell history, scrollback,
+//! copy/paste into chat). New hosts land in this file **only** via
+//! `zuko claim <code>` (the OTP-style pairing in [`crate::handoff`]); from then
+//! on, `zuko connect <name>` / bare `zuko <name>` look the ticket up here.
 
 use anyhow::{bail, Result};
 use std::fs;
@@ -22,42 +30,34 @@ use std::fs;
 use crate::config_dir;
 use crate::secret::write_secret_0600;
 
-/// Resolve a `zuko connect` target to a raw ticket string.
-///
-/// - If `target` is the name of a saved host, returns that host's ticket.
-/// - Otherwise treats `target` itself as a raw ticket.
-/// - With no target and piped stdin, reads the ticket from stdin (so
-///   `zuko < ticket.txt` and `pbpaste | zuko` work).
-/// - With no target on a real tty, bails with usage so an interactive bare
-///   `zuko` doesn't block waiting for stdin.
-pub fn resolve_ticket(target: Option<String>) -> Result<String> {
-    if let Some(name) = target {
-        let trimmed = name.trim();
-        if let Some(ticket) = lookup(trimmed) {
-            return Ok(ticket);
-        }
-        return Ok(trimmed.to_string());
+/// Look up a saved host by name, returning its ticket. Bails with a clear
+/// usage hint if the name isn't known — we never fall back to treating the
+/// input as a raw ticket (that path leaks long-lived secrets into shell
+/// history, which is exactly what the pairing flow exists to avoid).
+pub fn lookup_ticket_or_bail(name: &str) -> Result<String> {
+    if let Some(ticket) = lookup(name.trim()) {
+        return Ok(ticket);
     }
-
-    use std::io::IsTerminal;
-    if std::io::stdin().is_terminal() {
-        bail!(
-            "usage: zuko <saved-name|ticket>\n  \
-             save a host with: zuko add <name> <ticket>\n  \
-             list saved hosts: zuko ls"
-        );
-    }
-    let mut buf = String::new();
-    std::io::Read::read_to_string(&mut std::io::stdin(), &mut buf)?;
-    let t = buf.trim().to_string();
-    if t.is_empty() {
-        bail!("no ticket on stdin");
-    }
-    Ok(t)
+    let known: Vec<String> = load().into_iter().map(|(n, _)| n).collect();
+    let hint = if known.is_empty() {
+        "no saved hosts yet — pair one with `zuko claim <code>`".to_string()
+    } else {
+        format!("known hosts: {}", known.join(", "))
+    };
+    bail!("no saved host named \"{name}\"\n  {hint}");
 }
 
-/// Save a host. Rejects names containing whitespace or `#`.
-pub fn add(name: &str, ticket: &str) -> Result<()> {
+/// Return saved host names in insertion order. Used by the bare-`zuko`
+/// first-run menu to list options without dragging the long-lived tickets
+/// along — they're never printed.
+pub(crate) fn saved_names() -> Vec<String> {
+    load().into_iter().map(|(n, _)| n).collect()
+}
+
+/// Save a host. Rejects names containing whitespace or `#`. Called only by
+/// `zuko claim` (after a successful OTP handoff) — there's no `zuko add`
+/// subcommand any more, precisely so tickets can't be pasted in by hand.
+pub(crate) fn add(name: &str, ticket: &str) -> Result<()> {
     let name = name.trim();
     let ticket = ticket.trim();
     validate_name(name)?;
@@ -81,10 +81,12 @@ pub fn add(name: &str, ticket: &str) -> Result<()> {
     store(&entries)
 }
 
-/// Print saved hosts to stdout (`zuko ls`).
+/// Print saved hosts' **names only** to stdout (`zuko ls`). Tickets are
+/// long-lived bearer secrets, so we deliberately don't echo them — picking a
+/// name to reconnect is the only thing `ls` is for.
 pub fn list() {
-    for (name, ticket) in load() {
-        println!("{name}\t{ticket}");
+    for (name, _ticket) in load() {
+        println!("{name}");
     }
 }
 
@@ -97,7 +99,12 @@ pub fn remove(name: &str) -> Result<()> {
     store(&after)
 }
 
-fn lookup(name: &str) -> Option<String> {
+/// Look up a saved host by name, returning its ticket if found. Returns
+/// `None` (rather than erroring) so the bare-`zuko <input>` shortcut can
+/// distinguish "unknown name, maybe it's a pairing code" from a real lookup
+/// failure — see [`lookup_ticket_or_bail`] for the strict variant used by
+/// `zuko connect <name>`.
+pub(crate) fn lookup(name: &str) -> Option<String> {
     load().into_iter().find(|(n, _)| n == name).map(|(_, t)| t)
 }
 
@@ -134,7 +141,7 @@ fn load() -> Vec<(String, String)> {
 fn store(entries: &[(String, String)]) -> Result<()> {
     let path = hosts_path();
     let mut body = String::new();
-    body.push_str("# zuko saved hosts — do not edit by hand if a `zuko add` is running\n");
+    body.push_str("# zuko saved hosts — do not edit by hand if a `zuko claim`/`rm` is running\n");
     body.push_str("# format: name<TAB>ticket\n");
     for (name, ticket) in entries {
         body.push_str(name);
@@ -239,19 +246,18 @@ mod tests {
     }
 
     #[test]
-    fn resolves_saved_name_then_raw_ticket() {
+    fn lookup_or_bail_rejects_unknown_names() {
         let _g = lock();
         let _dir = isolated();
         add("home", "endpointaAAAA").unwrap();
-        assert_eq!(
-            resolve_ticket(Some("home".to_string())).unwrap(),
-            "endpointaAAAA"
-        );
-        // Unknown name falls through as a raw ticket.
-        assert_eq!(
-            resolve_ticket(Some("endpointaZZZZ".to_string())).unwrap(),
-            "endpointaZZZZ"
-        );
+        assert_eq!(lookup_ticket_or_bail("home").unwrap(), "endpointaAAAA");
+        // Unknown name must bail rather than fall through to treating the
+        // input as a raw ticket — long-lived secrets don't belong on the CLI.
+        let err = lookup_ticket_or_bail("nope").unwrap_err();
+        assert!(format!("{err:#}").contains("no saved host named \"nope\""));
+        // A raw ticket string is also not a valid lookup key.
+        let err = lookup_ticket_or_bail("endpointaZZZZ").unwrap_err();
+        assert!(format!("{err:#}").contains("no saved host named"));
     }
 
     // Smoke-test writing a comment+entry by hand and parsing it back, so the
