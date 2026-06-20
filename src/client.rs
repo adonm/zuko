@@ -20,12 +20,22 @@
 //! frame arrives for ~10 s we print a "stalled" notice (iroh's QUIC keepalive
 //! keeps the transport alive, but this surfaces a stuck link to the user
 //! faster than the 15–30 s QUIC idle timeout).
+//!
+//! ## Force-quit
+//!
+//! Because raw mode forwards Ctrl-C to the remote shell, a wedged connection
+//! has no escape: keystrokes disappear into the frame channel and the only
+//! recovery is the stall timer or killing the process from another terminal.
+//! Pressing Ctrl-C 3× within ~1 s, with no remote output between presses,
+//! force-exits the local client (exit code 130, the SIGINT convention). The
+//! "no output" gate is what distinguishes a wedged session from a silent but
+//! healthy one.
 
 use anyhow::{Context, Result};
 use iroh::endpoint::RecvStream;
 use iroh::{endpoint::presets, Endpoint, EndpointAddr};
 use iroh_tickets::endpoint::EndpointTicket;
-use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::io::AsyncWriteExt as _;
@@ -44,6 +54,18 @@ const BACKOFF_MAX: Duration = Duration::from_secs(5);
 /// inbound frame at all.
 const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(5);
 const STALL_THRESHOLD: Duration = Duration::from_secs(10);
+
+/// Force-quit escape hatch: in raw mode Ctrl-C (0x03) is forwarded to the
+/// remote shell, so a wedged connection has no normal escape (keystrokes go
+/// into the void). Pressing Ctrl-C this many times, each within
+/// `FORCE_QUIT_WINDOW` of the previous **and** with no remote output between
+/// presses, force-exits the local client. The "no output" gate is what keeps
+/// this from triggering when the user is just mashing Ctrl-C to interrupt a
+/// silent long-running remote command — a responsive remote resets the count.
+/// Abrupt exit is low-cost: a `zuko` session typically targets a shell inside
+/// tmux/zellij, so the remote work survives.
+const FORCE_QUIT_PRESSES: u32 = 3;
+const FORCE_QUIT_WINDOW: Duration = Duration::from_secs(1);
 
 /// Why a connection's read half ended — drives the reconnect loop.
 enum ReadEnd {
@@ -85,22 +107,66 @@ pub async fn connect(ticket_str: &str) -> Result<()> {
     let frame_rx_slot: Arc<tokio::sync::Mutex<Option<mpsc::Receiver<Vec<u8>>>>> =
         Arc::new(tokio::sync::Mutex::new(Some(frame_rx)));
 
+    // Monotonic token bumped by the read loop whenever DATA is written to
+    // stdout. The stdin thread samples it to detect "no remote output since
+    // the previous Ctrl-C", which is the gate for the 3× Ctrl-C force-quit
+    // hatch. Process-wide (not reset on reconnect) — a successful resume
+    // replays recent output and bumps this, which is exactly the "remote is
+    // alive again" signal we want to reset the burst.
+    let stdout_seq: Arc<AtomicU64> = Arc::new(AtomicU64::new(0));
+
     // stdin -> DATA frames. A dedicated OS thread does blocking reads (the
     // original design — tokio's async stdin also parks on a blocking thread,
     // and a plain thread keeps the cancellation story simple). Bytes are
     // forwarded verbatim so the remote shell sees exactly what a local shell
     // would (Ctrl-C is 0x03, etc). EOF (Ctrl-D) just stops the producer; the
     // shell's response to it drives session end via recv EOF.
+    //
+    // The thread also implements the force-quit escape hatch: a burst of
+    // Ctrl-C presses with no remote output between them force-exits the
+    // client, since raw mode otherwise swallows Ctrl-C into the remote
+    // stream and leaves no way out of a wedged session.
     let stdin_tx = frame_tx.clone();
+    let stdout_seq_for_stdin = stdout_seq.clone();
     std::thread::spawn(move || {
         let mut stdin = std::io::stdin();
         let mut buf = vec![0u8; 4096];
+        // Burst-tracking state. `burst` is the count of consecutive
+        // qualifying Ctrl-Cs; `prev_at` is when we last saw one; `prev_at_seq`
+        // is the value of `stdout_seq` at that moment, so we can tell whether
+        // any output has arrived since.
+        let mut burst: u32 = 0;
+        let mut prev_at: Option<Instant> = None;
+        let mut prev_at_seq: u64 = 0;
         loop {
             match std::io::Read::read(&mut stdin, &mut buf) {
                 Ok(0) | Err(_) => break,
                 Ok(n) => {
-                    if stdin_tx.blocking_send(crate::wire::data_frame(&buf[..n])).is_err() {
+                    if stdin_tx
+                        .blocking_send(crate::wire::data_frame(&buf[..n]))
+                        .is_err()
+                    {
                         break;
+                    }
+                    // Force-quit accounting. We count 0x03 bytes; a paste of
+                    // several is an intentional gesture and resolves the same
+                    // way as mashing the key.
+                    let now = Instant::now();
+                    let cur_seq = stdout_seq_for_stdin.load(Ordering::Relaxed);
+                    for &b in &buf[..n] {
+                        if b != 0x03 {
+                            continue;
+                        }
+                        let within_window = prev_at
+                            .map(|p| now.duration_since(p) <= FORCE_QUIT_WINDOW)
+                            .unwrap_or(false);
+                        let output_unchanged = cur_seq == prev_at_seq;
+                        burst = advance_burst(burst, within_window, output_unchanged);
+                        prev_at = Some(now);
+                        prev_at_seq = cur_seq;
+                        if burst >= FORCE_QUIT_PRESSES {
+                            force_quit();
+                        }
                     }
                 }
             }
@@ -131,6 +197,9 @@ pub async fn connect(ticket_str: &str) -> Result<()> {
     let mut session_id: Option<[u8; 8]> = None;
     let mut backoff = BACKOFF_MIN;
     let stop = Arc::new(AtomicBool::new(false));
+    // Print the force-quit hint exactly once on the first successful connect,
+    // not on every reconnect (the user already knows).
+    let mut hint_printed = false;
 
     // Reconnect loop. Each iteration: dial, handshake (HELLO + initial RESIZE),
     // run the session until the read half ends, then either stop (shell exited)
@@ -233,6 +302,13 @@ pub async fn connect(ticket_str: &str) -> Result<()> {
         if welcome.resumed() {
             status_line("resumed session");
         }
+        if !hint_printed {
+            // One-shot discoverability nudge for the force-quit hatch. Stays
+            // on its own line via status_line's CR/\r\n so the remote prompt
+            // draws cleanly under it.
+            status_line("connected — press Ctrl-C 3× to force-quit if it hangs");
+            hint_printed = true;
+        }
 
         // Heartbeat: PING every interval, enqueued into the frame channel so
         // the writer puts them on the wire alongside keystrokes.
@@ -257,6 +333,7 @@ pub async fn connect(ticket_str: &str) -> Result<()> {
         let last_heard = Arc::new(tokio::sync::Mutex::new(Instant::now()));
         let last_heard_for_read = last_heard.clone();
         let pong_tx = frame_tx.clone();
+        let stdout_seq_for_read = stdout_seq.clone();
         let read_end = tokio::spawn(async move {
             let mut recv = recv;
             let mut tmp = vec![0u8; 16 * 1024];
@@ -274,6 +351,10 @@ pub async fn connect(ticket_str: &str) -> Result<()> {
                                     {
                                         return ReadEnd::Disconnected;
                                     }
+                                    // Bump the force-quit token: any DATA the
+                                    // remote sent resets the Ctrl-C burst so a
+                                    // responsive session never false-triggers.
+                                    stdout_seq_for_read.fetch_add(1, Ordering::Relaxed);
                                 }
                                 TYPE_PING => {
                                     let _ = pong_tx.send(pong_frame(decode_nonce(&f.payload))).await;
@@ -391,4 +472,91 @@ fn status_line(msg: &str) {
     let mut out = std::io::stderr();
     let _ = write!(out, "\r\x1b[2Kzuko: {msg}\r\n");
     let _ = out.flush();
+}
+
+/// Pure rule for the 3× Ctrl-C force-quit hatch. Returns the new burst count
+/// after observing one Ctrl-C. `within_window` should be true iff the previous
+/// Ctrl-C was within `FORCE_QUIT_WINDOW`; `output_unchanged` should be true
+/// iff no `DATA` frame has been written to stdout since the previous Ctrl-C.
+/// Extracted as a free function so the rule is unit-testable without I/O.
+fn advance_burst(prev_burst: u32, within_window: bool, output_unchanged: bool) -> u32 {
+    if within_window && output_unchanged {
+        prev_burst.saturating_add(1)
+    } else {
+        1
+    }
+}
+
+/// Force-exit the client from the stdin thread: restore cooked mode first so
+/// the message lands on a clean terminal (the `RawModeGuard` won't run its
+/// `Drop` across `process::exit`), then exit 130 — the conventional code for
+/// "terminated by SIGINT", so the parent shell sees an interrupt rather than
+/// a generic failure. Deliberately skips `Endpoint::close`: the user has
+/// decided the session is stuck and wants out *now*; the remote shell is
+/// typically inside tmux/zellij and survives.
+fn force_quit() -> ! {
+    let _ = crossterm::terminal::disable_raw_mode();
+    eprintln!("\rzuko: 3× Ctrl-C with no response — exiting");
+    std::process::exit(130);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn burst_starts_at_one() {
+        // First-ever Ctrl-C: no prior press, so it always starts a fresh burst
+        // at 1 regardless of the window/output inputs.
+        assert_eq!(advance_burst(0, false, false), 1);
+        assert_eq!(advance_burst(0, true, true), 1);
+    }
+
+    #[test]
+    fn burst_climbs_when_no_output_and_within_window() {
+        // The wedged case: rapid Ctrl-Cs, nothing coming back. Climbs to the
+        // threshold, at which point the stdin thread calls `force_quit`.
+        let mut burst = advance_burst(0, false, false);
+        assert_eq!(burst, 1);
+        burst = advance_burst(burst, true, true);
+        assert_eq!(burst, 2);
+        burst = advance_burst(burst, true, true);
+        assert_eq!(burst, 3);
+        assert!(burst >= FORCE_QUIT_PRESSES);
+    }
+
+    #[test]
+    fn burst_resets_when_remote_output_arrived() {
+        // Healthy remote: Ctrl-C interrupts the foreground job, the shell
+        // redraws a prompt (DATA arrives) — the next Ctrl-C must NOT carry
+        // over the previous burst, or normal usage would false-trigger.
+        let burst = advance_burst(0, false, false);
+        let burst = advance_burst(burst, true, true); // 2, still wedged
+        assert_eq!(burst, 2);
+        // Remote responded between presses → output_unchanged is false.
+        let burst = advance_burst(burst, true, false);
+        assert_eq!(burst, 1, "output between presses must reset the burst");
+    }
+
+    #[test]
+    fn burst_resets_when_too_far_apart_in_time() {
+        // User hit Ctrl-C, wandered off, came back and hit it again: not a
+        // force-quit gesture, treat as a fresh single press.
+        let burst = advance_burst(0, false, false);
+        let burst = advance_burst(burst, true, true);
+        assert_eq!(burst, 2);
+        let burst = advance_burst(burst, false, true);
+        assert_eq!(burst, 1, "outside the window must reset the burst");
+    }
+
+    #[test]
+    fn burst_saturates_and_never_overflows() {
+        // A runaway caller (or a paste of many 0x03 bytes) can't wrap the
+        // counter past the threshold into stale "below threshold" territory.
+        let mut burst = FORCE_QUIT_PRESSES;
+        for _ in 0..1_000 {
+            burst = advance_burst(burst, true, true);
+            assert!(burst >= FORCE_QUIT_PRESSES);
+        }
+    }
 }

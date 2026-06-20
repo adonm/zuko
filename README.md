@@ -129,6 +129,15 @@ single connection, so a dropped link is recoverable rather than fatal:
   the client re-sends its size, the host resizes the PTY, and the app gets a
   `SIGWINCH` and redraws.
 
+Because the CLI runs the terminal in raw mode (so Ctrl-C reaches the remote
+shell, not the local one), a truly wedged session has no normal escape —
+keystrokes vanish into the frame channel. The escape hatch is **Ctrl-C 3×
+within ~1 s, with no remote output between presses**: that force-exits the
+client (code 130). The "no output" gate is what stops it firing when you're
+just mashing Ctrl-C on a silent-but-healthy remote command. Abrupt exit is
+low-cost: your remote shell is almost always inside `tmux`/`zellij` and
+survives the detach.
+
 The host reaps a session when its shell exits, or after a 30-minute grace
 period with no attached client (mosh-style, so an abandoned `vim` doesn't run
 forever). Restarting `zuko host` ends all sessions (the shells get `SIGHUP`),

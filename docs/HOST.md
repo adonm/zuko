@@ -152,6 +152,18 @@ session id is **not a secret** — the ticket already gates access, so anyone
 holding it can resume any of the host's sessions (same trust boundary as mosh's
 key).
 
+### Force-quitting the CLI
+
+The CLI runs the terminal in raw mode so Ctrl-C is forwarded to the remote
+shell (it has to be — that's how you interrupt a remote command). The
+downside: a truly wedged connection swallows keystrokes, and plain Ctrl-C
+can't get you out. The escape hatch is **Ctrl-C 3× within ~1 s, with no
+remote output between presses** — that force-exits the client (code 130).
+The "no output" gate means interrupting a silent-but-healthy remote command
+(e.g. `find /`) doesn't false-trigger; only a session that's stopped
+responding altogether does. Since the remote shell is typically inside
+`tmux`/`zellij`, the abrupt detach doesn't lose any work.
+
 ## Multiple devices
 
 Each session is its own independent PTY + shell. Several phones, terminals (or

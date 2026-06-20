@@ -70,7 +70,14 @@ that bit the existing clients (so you don't have to):
   delivers `SIGWINCH`, so full-screen apps (`vim`, `htop`) redraw a clean
   screen despite the raw-byte replay of recent output.
 - Forward keystrokes **verbatim** (Ctrl-C is `0x03`, etc.) — don't trap signals
-  locally; the host's PTY handles them.
+  locally; the host's PTY handles them. The corollary: a client in raw mode has
+  no built-in escape from a wedged session, so consider an explicit one. The
+  reference CLI force-exits on **Ctrl-C 3× within ~1 s, gated on no remote
+  output between presses** — the gate is what distinguishes "interrupt this
+  silent remote command" (responsive) from "the session is stuck" (no output),
+  and the cost of an abrupt detach is low because the remote shell is usually
+  inside `tmux`/`zellij`. The same heuristic (or an ssh-style escape character)
+  is worth having in any raw-mode client.
 - Keep writes **serialised** so a burst of keystrokes + a resize never
   interleaves frames on the wire. (The iOS app runs its write pump on a
   background task for this, and so it isn't starved by output rendering.)
