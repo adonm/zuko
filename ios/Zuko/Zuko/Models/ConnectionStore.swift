@@ -70,6 +70,20 @@ final class ConnectionStore: ObservableObject {
         save()
     }
 
+    /// Update the saved session id on a connection (v0.4+ resume). The host
+    /// assigns the id on connect; persisting it lets a later app launch
+    /// resume the same session. Best-effort: a Keychain failure is logged,
+    /// not thrown — the live session still works without the persisted id.
+    func updateSessionID(_ sessionID: Data?, for connection: Connection) {
+        guard let idx = connections.firstIndex(where: { $0.id == connection.id }) else {
+            return
+        }
+        // Skip the write if nothing changed (the callback fires often).
+        guard connections[idx].lastSessionID != sessionID else { return }
+        connections[idx].lastSessionID = sessionID
+        save()
+    }
+
     // MARK: - Persistence
 
     /// Load connections from the Keychain, migrating from `UserDefaults` on

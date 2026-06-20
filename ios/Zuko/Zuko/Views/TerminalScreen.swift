@@ -4,6 +4,7 @@ import SwiftUI
 struct TerminalScreen: View {
     let connection: Connection
     @StateObject private var session = IrohSession()
+    @EnvironmentObject private var store: ConnectionStore
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {
@@ -28,8 +29,13 @@ struct TerminalScreen: View {
             }
         }
         .task {
-            // Tiny delay so SwiftTerm lays out before we report a real size.
-            session.connect(ticket: connection.ticket)
+            // Resume the prior session if we have a saved id for this host;
+            // the host replays recent output. Tiny delay so SwiftTerm lays
+            // out before we report a real size.
+            session.onSessionID = { [connection] id in
+                store.updateSessionID(id, for: connection)
+            }
+            session.connect(ticket: connection.ticket, sessionID: connection.lastSessionID)
         }
         .onDisappear {
             session.disconnect()
@@ -40,6 +46,10 @@ struct TerminalScreen: View {
         switch session.status {
         case .connecting:
             return "Connecting to host…"
+        case .reconnecting:
+            return "Reconnecting…"
+        case .stalled:
+            return "Connection stalled — will resume"
         case .failed(let reason):
             return "Failed: \(reason)"
         case .disconnected(let reason):

@@ -2,8 +2,8 @@
 
 zuko is **remote terminals over Iroh**: a [host daemon](../src/) and a
 [tiny wire protocol](PROTOCOL.md). Clients connect to a host and render its
-shell. Anyone can write one — the protocol is one Iroh stream and two frame
-types.
+shell. Anyone can write one — the protocol is one Iroh stream and a handful of
+frame types.
 
 ## Status
 
@@ -29,20 +29,28 @@ Read [`PROTOCOL.md`](PROTOCOL.md) first — it's short. In brief:
    and read the real ticket off the uni stream. The CLI flow is
    `zuko share` → `zuko <code>` (or `zuko claim <code>` with flags); the same
    UX is the goal for every client.
-   
+
    **Mobile clients:** don't reimplement the Argon2id key derivation — the
    crate ships a [uniffi](https://mozilla.github.io/uniffi.rs/) FFI surface
-   ([`src/ffi.rs`](../src/ffi.rs)) exposing `derive_handoff_key(code)`, which
-   is literally `src/code.rs::derive_key`. Wrap the `staticlib` into an
-   XCFramework (iOS) / AAR (Android) and call it from your client so the
-   derivation is bit-exact with the CLI by construction. The iOS app uses this
-   pattern; see [`ios/Zuko/`](../ios/Zuko).
+   ([`src/ffi.rs`](../src/ffi.rs)) exposing `derive_handoff_key(code)`, so the
+   derivation is bit-exact with the CLI by construction. Wrap the `staticlib`
+   into an XCFramework (iOS) / AAR (Android); see [`ios/Zuko/`](../ios/Zuko)
+   for the reference.
 2. Parse the host's `endpointa…` ticket.
-3. Connect over Iroh on ALPN `zuko/1`, open one bidi stream, send an initial
-   `RESIZE`.
-4. Pump `[type:u8][len:u16 BE][payload]` frames (`0x00 DATA`, `0x01 RESIZE`)
-   between the stream and a terminal emulator.
-5. End on stream close / connection drop.
+3. Connect over Iroh on ALPN `zuko/1`, open one bidi stream, and send a
+   `HELLO` as the **first frame** (carrying your capability flags, current
+   terminal size, and an empty session id for a fresh session). Iroh only
+   surfaces a stream to the peer once the initiator sends data, so `HELLO`
+   doubles as the stream-opening write.
+4. Read the host's `WELCOME` (its flags + the assigned session id), then pump
+   `[type:u8][len:u16 BE][payload]` frames (`0x00 DATA`, `0x01 RESIZE`) between
+   the stream and a terminal emulator. On a reconnect, send `HELLO` again with
+   the session id from the first `WELCOME` to **resume** the same shell — the
+   host replays recent output as `DATA` frames before live output. Answer
+   inbound `PING` with `PONG` to take part in the heartbeat.
+5. Distinguish the two read-half endings: EOF (host closed the stream → the
+   shell exited → stop) vs. error (network drop → reconnect with the session
+   id to resume). A bounded backoff spaces reconnect attempts.
 
 The reference implementations are deliberately small and worth cribbing from:
 
@@ -55,12 +63,26 @@ The host sets `TERM=xterm-256color`, so pick an emulator that speaks it. Gotchas
 that bit the existing clients (so you don't have to):
 
 - The stream **opener must write first** — Iroh only surfaces a stream to the
-  peer once the initiator sends data. Send the initial `RESIZE` immediately
-  after `open_bi`.
+  peer once the initiator sends data. Send `HELLO` (with your size) right
+  after `open_bi`; it subsumes the v0.3 leading `RESIZE`.
+- Send your **current size on every reconnect** — it resizes the PTY and
+  delivers `SIGWINCH`, so full-screen apps (`vim`, `htop`) redraw a clean
+  screen despite the raw-byte replay of recent output.
 - Forward keystrokes **verbatim** (Ctrl-C is `0x03`, etc.) — don't trap signals
-  locally; the host's PTY handles them.
+  locally; the host's PTY handles them. The corollary: a client in raw mode has
+  no built-in escape from a wedged session, so consider an explicit one. The
+  reference CLI force-exits on **Ctrl-C 3× within ~1 s, gated on no remote
+  output between presses** — the gate is what distinguishes "interrupt this
+  silent remote command" (responsive) from "the session is stuck" (no output),
+  and the cost of an abrupt detach is low because the remote shell is usually
+  inside `tmux`/`zellij`. The same heuristic (or an ssh-style escape character)
+  is worth having in any raw-mode client.
 - Keep writes **serialised** so a burst of keystrokes + a resize never
-  interleaves frames on the wire.
+  interleaves frames on the wire. (The iOS app runs its write pump on a
+  background task for this, and so it isn't starved by output rendering.)
+- Bound your outbound queue — without a cap, keystrokes typed during a network
+  outage grow memory without limit. The reference clients cap theirs and drop
+  under pressure rather than block.
 - Hold the connection open until the client has finished reading any
   one-shot payload (relevant for the [ticket handoff](PROTOCOL.md#ticket-handoff),
   where the host opens `open_uni` and writes the ticket before closing).

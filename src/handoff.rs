@@ -189,6 +189,13 @@ pub async fn share(args: &ShareArgs) -> Result<()> {
         }
     }
     eprintln!("share: done");
+    // Close the throwaway endpoint gracefully so iroh can drain its
+    // connections. Dropping it without this logs "Endpoint dropped without
+    // calling `Endpoint::close`. Aborting ungracefully." and makes the peer
+    // see a connection timeout instead of a clean close. By this point every
+    // claim's connection is already torn down (the client closes it, then
+    // `serve_handoff` waits on `conn.closed()`), so this returns quickly.
+    endpoint.close().await;
     Ok(())
 }
 
@@ -294,6 +301,12 @@ pub async fn claim(
     // test misses this because it uses `--no-connect`, so `claim` returns
     // immediately and `conn` drops.)
     conn.close(0u32.into(), b"claimed");
+    // Close the throwaway endpoint gracefully (see `share`). Do it now, before
+    // parsing the payload and *especially* before the long-lived `connect()`:
+    // otherwise the handoff endpoint is held alive for the entire terminal
+    // session and dropped ungracefully when `claim` finally returns. By this
+    // point the connection is already closing, so this drains quickly.
+    endpoint.close().await;
     let payload = String::from_utf8(payload).context("handoff payload wasn't utf-8")?;
 
     let (label, ticket) = payload
