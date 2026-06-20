@@ -29,11 +29,14 @@ for target in aarch64-apple-ios x86_64-apple-ios aarch64-apple-ios-sim; do
     rustup target add "$target" 2>/dev/null || true
 done
 
-# 1. Build staticlibs for each iOS slice.
-echo "==> cargo build --release for iOS targets"
-cargo build --release --target aarch64-apple-ios
-cargo build --release --target aarch64-apple-ios-sim
-cargo build --release --target x86_64-apple-ios
+# 1. Build staticlibs for each iOS slice. `--lib` skips the binary target
+#    (main.rs would fail to cross-compile — it imports desktop-only deps).
+#    Target-cfg in Cargo.toml keeps portable-pty/crossterm/clap/etc. out of
+#    the iOS build, so only `code.rs` + `ffi.rs` + their deps compile.
+echo "==> cargo build --lib --release for iOS targets"
+cargo build --lib --release --target aarch64-apple-ios
+cargo build --lib --release --target aarch64-apple-ios-sim
+cargo build --lib --release --target x86_64-apple-ios
 
 # 2. Build a host staticlib so uniffi-bindgen can read the crate metadata.
 #    (--library mode works against a staticlib; no cdylib needed.)

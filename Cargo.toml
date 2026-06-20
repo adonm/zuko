@@ -27,26 +27,14 @@ crate-type = ["rlib", "staticlib"]
 
 [dependencies]
 iroh = "1.0"
-iroh-tickets = "1.0"
-# Just the tokio features we actually use.
-tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "io-util", "signal", "time"] }
-portable-pty = "0.8"
-crossterm = "0.28"
-anyhow = "1"
-clap = { version = "4", features = ["derive"] }
-tracing = "0.1"
-tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+# Just the tokio features we actually use. Target-cfg'd below for non-iOS,
+# because the iOS FFI build (code.rs + ffi.rs) is fully synchronous — no
+# async runtime needed on device.
 # Memory-hard KDF for deriving the throwaway handoff key from a memorable code
 # (`zuko share`/`claim`). Replaces a single unsalted SHA-256 so the ~52-bit
 # code resists offline brute-force if the ephemeral NodeId leaks.
 argon2 = "0.5"
-# Retry/backoff for `zuko claim`'s dial (N0 DNS lookup lags `zuko share` online).
-backon = "1"
-# Cross-process advisory locking for the saved-hosts file (`zuko add`/`rm`).
-fs4 = "0.12"
-# Interactive host picker for bare `zuko` (arrow-key Select with filtering).
-# Builds on crossterm (already a dep), so the marginal weight is small.
-inquire = "0.7"
+anyhow = "1"
 # `#[derive(thiserror::Error)]` for the FFI error enum (uniffi requires a
 # proper Error type, not a bare String).
 thiserror = "1"
@@ -55,6 +43,28 @@ thiserror = "1"
 # `cli` feature provides `uniffi_bindgen_main()`, used by the `uniffi-bindgen`
 # binary wrapper (see [[bin]] above) to generate Swift bindings at build time.
 uniffi = { version = "0.31", features = ["cli"] }
+
+# Host/client-only deps — NOT compiled for iOS (the FFI build only needs
+# `code.rs` + `ffi.rs`, which are synchronous and pull in none of these).
+# `portable-pty` uses Linux/macOS ioctl symbols that don't exist on iOS;
+# `crossterm` + `inquire` are interactive-terminal-only; etc. Target-cfg
+# keeps the CLI build unchanged while letting `cargo build --lib --target
+# *-apple-ios*` succeed.
+[target.'cfg(not(target_os = "ios"))'.dependencies]
+iroh-tickets = "1.0"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "io-util", "signal", "time"] }
+portable-pty = "0.8"
+crossterm = "0.28"
+clap = { version = "4", features = ["derive"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+# Retry/backoff for `zuko claim`'s dial (N0 DNS lookup lags `zuko share` online).
+backon = "1"
+# Cross-process advisory locking for the saved-hosts file (`zuko add`/`rm`).
+fs4 = "0.12"
+# Interactive host picker for bare `zuko` (arrow-key Select with filtering).
+# Builds on crossterm (already a dep), so the marginal weight is small.
+inquire = "0.7"
 
 [dev-dependencies]
 tempfile = "3"
