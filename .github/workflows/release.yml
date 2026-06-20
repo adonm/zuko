@@ -50,7 +50,6 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
         with:
-          workspaces: zuko
           key: ${{ matrix.target }}
 
       - name: Add rust target
@@ -63,12 +62,12 @@ jobs:
           echo "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc" >> "$GITHUB_ENV"
 
       - name: Build release (target = ${{ matrix.target }})
-        run: cargo build --release --manifest-path zuko/Cargo.toml --target "${ZUKO_TARGET}"
+        run: cargo build --release --target "${ZUKO_TARGET}"
 
       - name: Package
         run: |
           mkdir -p dist
-          cp "zuko/target/${ZUKO_TARGET}/release/zuko" dist/zuko
+          cp "target/${ZUKO_TARGET}/release/zuko" dist/zuko
           chmod +x dist/zuko
           tar -C dist -czf "$ARTIFACT" zuko
           # `sha256sum` is Linux-only; macOS ships `shasum -a 256` (Perl). The

@@ -30,19 +30,18 @@ CARGO_TERM_COLOR = "always"
 
 [tasks.build]
 description = "Build the zuko release binary (native target)"
-run = "cargo build --release --manifest-path zuko/Cargo.toml"
+run = "cargo build --release"
 
 [tasks.test]
-description = "Clippy + unit tests for zuko (host + client + share/claim)"
+description = "Clippy + unit tests for zuko (host + client + share/claim). Skips the network-gated e2e test (run `mise run test-e2e` for that)."
 run = [
-    "cargo clippy --all-targets --manifest-path zuko/Cargo.toml -- -D warnings",
-    "cargo test --manifest-path zuko/Cargo.toml",
+    "cargo clippy --all-targets -- -D warnings",
+    "cargo test",
 ]
 
 [tasks.test-e2e]
-description = "End-to-end PTY harness (host<->connect + share<->claim) against the live Iroh network. Needs network."
-depends = ["build"]
-run = "python3 zuko/scripts/e2e_test.py"
+description = "End-to-end PTY harness (host<->connect + share<->claim) against the live Iroh network. Needs network. Runs the #[ignore] e2e integration test in tests/e2e.rs."
+run = "cargo test --release --test e2e -- --ignored --nocapture"
 
 [tasks.build-ios]
 description = "Generate the Xcode project and build the iOS app (iOS Simulator, unsigned). macOS only. Run `setup-ios` first."
@@ -59,8 +58,8 @@ run = "brew install xcodegen fastlane"
 
 [tasks.run-host]
 description = "Run `zuko host` in the foreground (mise shim or local debug build)"
-run = "sh zuko/scripts/zuko-host.sh"
+run = "sh scripts/zuko-host.sh"
 
 [tasks.release]
 description = "Cut a release: commit pending work, push, tag vX.Y.Z, push tag (triggers release.yml). Pass the version, e.g. `mise run release v0.1.0`."
-run = "sh zuko/scripts/release.sh ${@}"
+run = "sh scripts/release.sh ${@}"

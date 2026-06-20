@@ -47,17 +47,22 @@ pub fn lookup_ticket_or_bail(name: &str) -> Result<String> {
     bail!("no saved host named \"{name}\"\n  {hint}");
 }
 
-/// Return saved host names in insertion order. Used by the bare-`zuko`
-/// first-run menu to list options without dragging the long-lived tickets
-/// along — they're never printed.
-pub(crate) fn saved_names() -> Vec<String> {
+/// Return saved host names in recency order (most-recently-touched first).
+/// Used by the bare-`zuko` picker and the first-run menu to surface hosts the
+/// user actually reaches for, without dragging the long-lived tickets along —
+/// they're never printed.
+pub fn saved_names() -> Vec<String> {
     load().into_iter().map(|(n, _)| n).collect()
 }
 
 /// Save a host. Rejects names containing whitespace or `#`. Called only by
 /// `zuko claim` (after a successful OTP handoff) — there's no `zuko add`
 /// subcommand any more, precisely so tickets can't be pasted in by hand.
-pub(crate) fn add(name: &str, ticket: &str) -> Result<()> {
+///
+/// New hosts are inserted at the **front** (most-recent position), matching
+/// the iOS app's move-to-front-on-add. A re-claim of an existing name updates
+/// the ticket *and* promotes the entry to the front.
+pub fn add(name: &str, ticket: &str) -> Result<()> {
     let name = name.trim();
     let ticket = ticket.trim();
     validate_name(name)?;
@@ -72,13 +77,33 @@ pub(crate) fn add(name: &str, ticket: &str) -> Result<()> {
     // `zuko add` / `zuko rm` can't drop our update (or vice versa).
     let _guard = HostsLock::acquire()?;
     let mut entries = load();
-    if let Some(existing) = entries.iter_mut().find(|(n, _)| n == name) {
-        // Overwrite an existing entry under the same name in place.
-        existing.1 = ticket.to_string();
-    } else {
-        entries.push((name.to_string(), ticket.to_string()));
-    }
+    // Drop any existing entry under this name so the re-insert lands at the
+    // front (move-to-front on re-claim, not in-place update).
+    entries.retain(|(n, _)| n != name);
+    entries.insert(0, (name.to_string(), ticket.to_string()));
     store(&entries)
+}
+
+/// Promote a saved host to the front of the list (most-recent position).
+/// Called after a successful `zuko connect` / bare `zuko <name>` / picker
+/// selection so the bare-`zuko` menu surfaces the hosts you actually use.
+/// No-op if the name isn't saved (e.g. a one-off connect via a path that
+/// didn't save); best-effort — callers swallow errors here so a failed touch
+/// never undoes a successful session.
+pub fn touch(name: &str) -> Result<()> {
+    let name = name.trim();
+    let _guard = HostsLock::acquire()?;
+    let mut entries = load();
+    if let Some(idx) = entries.iter().position(|(n, _)| n == name) {
+        if idx != 0 {
+            let entry = entries.remove(idx);
+            entries.insert(0, entry);
+            store(&entries)?;
+        }
+    }
+    // If the name isn't found, no-op rather than inserting — `touch` only
+    // reorders existing entries; it never adds.
+    Ok(())
 }
 
 /// Print saved hosts' **names only** to stdout (`zuko ls`). Tickets are
@@ -104,7 +129,7 @@ pub fn remove(name: &str) -> Result<()> {
 /// distinguish "unknown name, maybe it's a pairing code" from a real lookup
 /// failure — see [`lookup_ticket_or_bail`] for the strict variant used by
 /// `zuko connect <name>`.
-pub(crate) fn lookup(name: &str) -> Option<String> {
+pub fn lookup(name: &str) -> Option<String> {
     load().into_iter().find(|(n, _)| n == name).map(|(_, t)| t)
 }
 
@@ -225,13 +250,58 @@ mod tests {
         add("server", "endpointaBBBB").unwrap();
         assert_eq!(lookup("home").as_deref(), Some("endpointaAAAA"));
 
-        // Overwriting an existing name updates in place.
+        // Overwriting an existing name updates the ticket AND promotes it to
+        // the front (move-to-front on re-claim).
         add("home", "endpointaCCCC").unwrap();
         assert_eq!(lookup("home").as_deref(), Some("endpointaCCCC"));
 
         remove("server").unwrap();
         assert!(lookup("server").is_none());
         assert_eq!(lookup("home").as_deref(), Some("endpointaCCCC"));
+    }
+
+    #[test]
+    fn add_inserts_at_front() {
+        let _g = lock();
+        let _dir = isolated();
+        add("first", "endpointaAAAA").unwrap();
+        add("second", "endpointaBBBB").unwrap();
+        add("third", "endpointaCCCC").unwrap();
+        // Most-recently-added first.
+        let names = saved_names();
+        assert_eq!(names, vec!["third", "second", "first"]);
+    }
+
+    #[test]
+    fn add_reclaim_promotes_to_front() {
+        let _g = lock();
+        let _dir = isolated();
+        add("alpha", "endpointaAAAA").unwrap();
+        add("beta", "endpointaBBBB").unwrap();
+        add("gamma", "endpointaCCCC").unwrap();
+        // alpha is at the back; re-claim it — it should jump to the front.
+        add("alpha", "endpointaDDDD").unwrap();
+        assert_eq!(saved_names(), vec!["alpha", "gamma", "beta"]);
+        // Ticket updated too.
+        assert_eq!(lookup("alpha").as_deref(), Some("endpointaDDDD"));
+    }
+
+    #[test]
+    fn touch_promotes_to_front() {
+        let _g = lock();
+        let _dir = isolated();
+        add("a", "endpointaAAAA").unwrap();
+        add("b", "endpointaBBBB").unwrap();
+        add("c", "endpointaCCCC").unwrap();
+        // order: c, b, a
+        touch("a").unwrap();
+        assert_eq!(saved_names(), vec!["a", "c", "b"]);
+        // Touching the front-most is a no-op (no rewrite).
+        touch("a").unwrap();
+        assert_eq!(saved_names(), vec!["a", "c", "b"]);
+        // Touching an unknown name is a silent no-op (never inserts).
+        touch("nope").unwrap();
+        assert_eq!(saved_names(), vec!["a", "c", "b"]);
     }
 
     #[test]

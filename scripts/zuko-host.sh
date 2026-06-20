@@ -20,7 +20,7 @@ elif [ -x "$(dirname "$0")/../target/release/zuko" ]; then
     BIN="$(dirname "$0")/../target/release/zuko"
 else
     echo "zuko not found. Install it with 'mise use --global github:adonm/zuko'" >&2
-    echo "or build from source: 'cargo build --manifest-path zuko/Cargo.toml'." >&2
+    echo "or build from source: 'cargo build'." >&2
     exit 1
 fi
 

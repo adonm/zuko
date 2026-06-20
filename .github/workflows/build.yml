@@ -26,8 +26,6 @@ jobs:
         run: rustup component add clippy rustfmt
 
       - uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: zuko
 
       - name: Clippy + tests
         run: mise run test
@@ -36,14 +34,17 @@ jobs:
         run: mise run build
 
       - name: End-to-end (host<->connect, share<->claim)
-        # Spawns `zuko host`, drives `zuko connect` under a PTY, and exercises
-        # `zuko share`/`zuko claim` against the real Iroh network. Needs python3
-        # (stdlib only) and network access to Iroh's public relays.
+        # Runs the #[ignore] e2e integration test in tests/e2e.rs: spawns
+        # `zuko host`, drives `zuko connect` under a PTY, and exercises
+        # `zuko share`/`zuko claim` against the real Iroh network (needs
+        # network access to Iroh's public relays). The Rust harness replaces
+        # the former Python script — same coverage, plus a regression guard
+        # that `share` exits on its own after a claim.
         run: mise run test-e2e
 
       - name: Upload binary
         uses: actions/upload-artifact@v4
         with:
           name: zuko-${{ runner.os }}
-          path: zuko/target/release/zuko
+          path: target/release/zuko
           if-no-files-found: error
