@@ -16,7 +16,7 @@ jobs:
     # without changing which Xcode we build with.
     runs-on: macos-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
 
       # Fast lint pass — fails in seconds on style/correctness issues, before
       # the ~10 min FFI compile + xcodebuild. SwiftLint is on Homebrew, so the
@@ -34,7 +34,7 @@ jobs:
           xcodebuild -version
 
       - name: mise install (rust)
-        uses: jdx/mise-action@v2
+        uses: jdx/mise-action@v4
         with:
           cache: true
 
@@ -84,7 +84,7 @@ jobs:
           echo "Found $app"
 
       - name: Upload app
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v7
         with:
           name: Zuko-app
           path: ${{ steps.app.outputs.path }}

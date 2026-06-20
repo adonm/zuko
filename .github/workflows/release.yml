@@ -27,24 +27,26 @@ jobs:
       matrix:
         include:
           # Linux: native on ubuntu (x86_64), cross on ubuntu (aarch64).
-          # macOS: both targets build on Apple Silicon hardware (macos-14) —
-          # Rust + Apple's `clang` cross-compile x86_64-apple-darwin natively,
-          # so there's no need to wait on the scarce (and shrinking) Intel
-          # macos-13 runner pool. Apple stopped selling Intel Macs in 2020;
-          # building Intel binaries on Apple Silicon is well-supported.
+          # macOS: both targets build on Apple Silicon hardware (currently
+          # macos-latest = macos-15) — Rust + Apple's `clang` cross-compile
+          # x86_64-apple-darwin natively, so there's no need to wait on the
+          # scarce (and shrinking) Intel macos-13 runner pool. Apple stopped
+          # selling Intel Macs in 2020; building Intel binaries on Apple
+          # Silicon is well-supported. Tracking macos-latest keeps us off
+          # stale runner images without affecting the cross-compile target.
           - { runner: ubuntu-latest, target: x86_64-unknown-linux-gnu,  cross: false }
           - { runner: ubuntu-latest, target: aarch64-unknown-linux-gnu, cross: true  }
-          - { runner: macos-14,      target: x86_64-apple-darwin,       cross: false }
-          - { runner: macos-14,      target: aarch64-apple-darwin,      cross: false }
+          - { runner: macos-latest,  target: x86_64-apple-darwin,       cross: false }
+          - { runner: macos-latest,  target: aarch64-apple-darwin,      cross: false }
     runs-on: ${{ matrix.runner }}
     env:
       ZUKO_TARGET: ${{ matrix.target }}
       ARTIFACT: zuko-${{ matrix.target }}.tar.gz
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: mise install (rust)
-        uses: jdx/mise-action@v2
+        uses: jdx/mise-action@v4
         with:
           cache: true
 
@@ -84,7 +86,7 @@ jobs:
           cat "$ARTIFACT.sha256"
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: ${{ env.ARTIFACT }}
           path: |
@@ -98,7 +100,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Download all artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           path: assets
           merge-multiple: true

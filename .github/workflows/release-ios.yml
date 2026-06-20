@@ -59,7 +59,7 @@ jobs:
       # Always beta on tag/release events; respect the dropdown on dispatch.
       LANE: ${{ (github.event_name == 'workflow_dispatch' && inputs.lane) || 'beta' }}
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
 
       # Resolve a build number that's strictly monotonic per marketing
       # version AND fits in Int32. App Store Connect requires every upload
@@ -82,7 +82,7 @@ jobs:
           xcodebuild -version
 
       - name: mise install (rust)
-        uses: jdx/mise-action@v2
+        uses: jdx/mise-action@v4
         with:
           cache: true
 
@@ -121,7 +121,7 @@ jobs:
         run: sh scripts/build-ffi.sh
 
       - name: Import distribution certificate (.p12 from secret)
-        uses: apple-actions/import-codesign-certs@v3
+        uses: apple-actions/import-codesign-certs@v7
         with:
           p12-file-base64: ${{ secrets.BUILD_CERTIFICATE_BASE64 }}
           p12-password: ${{ secrets.P12_PASSWORD }}
@@ -172,7 +172,7 @@ jobs:
           echo "Found $ipa"
 
       - name: Upload .ipa
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v7
         with:
           name: Zuko-ipa
           path: ${{ steps.ipa.outputs.path }}
