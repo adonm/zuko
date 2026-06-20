@@ -114,25 +114,28 @@ EOF
 XCFW="$OUT_DIR/$FRAMEWORK_NAME.xcframework"
 rm -rf "$XCFW"
 
+# Stage the framework slices in a temp dir, NOT inside $XCFW —
+# `xcodebuild -create-xcframework` copies its inputs into the output, so
+# pre-creating them inside the output path collides on the second run.
+STAGE=$(mktemp -d)
+trap 'rm -rf "$STAGE"' EXIT
+
 echo "==> assembling framework slices"
 create_framework \
-    "$XCFW/ios-arm64/$FRAMEWORK_NAME.framework" \
+    "$STAGE/ios-arm64/$FRAMEWORK_NAME.framework" \
     "$TARGET_DIR/aarch64-apple-ios/release/lib${LIB_NAME}.a"
 create_framework \
-    "$XCFW/ios-arm64_x86_64-simulator/$FRAMEWORK_NAME.framework" \
+    "$STAGE/ios-arm64_x86_64-simulator/$FRAMEWORK_NAME.framework" \
     "$SIM_UNIVERSAL"
 
-# 6. Bundle into an XCFramework.
+# 6. Bundle into an XCFramework. xcodebuild copies the framework slices from
+#    the staging dir into $XCFW, producing the canonical layout.
 echo "==> xcodebuild -create-xcframework"
 xcodebuild -create-xcframework \
-    -framework "$XCFW/ios-arm64/$FRAMEWORK_NAME.framework" \
-    -framework "$XCFW/ios-arm64_x86_64-simulator/$FRAMEWORK_NAME.framework" \
+    -framework "$STAGE/ios-arm64/$FRAMEWORK_NAME.framework" \
+    -framework "$STAGE/ios-arm64_x86_64-simulator/$FRAMEWORK_NAME.framework" \
     -output "$XCFW" \
     >/dev/null
-
-# xcodebuild copies the frameworks into the XCFramework; remove the loose
-# per-slice dirs so only the canonical XCFW layout remains.
-rm -rf "$XCFW/ios-arm64" "$XCFW/ios-arm64_x86_64-simulator"
 
 echo
 echo "done."
