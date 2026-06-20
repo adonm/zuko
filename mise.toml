@@ -12,6 +12,9 @@
 # 'minimal' profile, and `Swatinem/rust-cache` can restore a toolchain without
 # them — see the matching `rustup component add` step in the workflows).
 rust = { version = "latest", components = "clippy,rustfmt" }
+# SwiftLint for the iOS app. Installed + shimmed by mise on Linux (static
+# binary from realm/SwiftLint releases) and macOS. `mise run lint` uses it.
+swiftlint = "latest"
 
 # System-level deps used by builds. `mise bootstrap packages install` installs
 # only the ones for the current OS/package manager. Just the linux/arm64
@@ -59,6 +62,20 @@ run = [
 [tasks.setup-ios]
 description = "Install iOS tooling (xcodegen, fastlane) via Homebrew. macOS only."
 run = "brew install xcodegen fastlane"
+
+[tasks.lint]
+description = "Run SwiftLint on the iOS Swift sources. Works on Linux (swiftlint-static, no SourceKit needed) and macOS (swiftlint from brew/mise). `mise install` brings the tool."
+run = """
+if command -v swiftlint-static >/dev/null 2>&1; then
+    swiftlint-static --config .swiftlint.yml ios/Zuko
+else
+    swiftlint --config .swiftlint.yml ios/Zuko
+fi
+"""
+
+[tasks.setup-ios-signing]
+description = "One-time Apple signing setup for the iOS TestFlight pipeline. Generates cert+profile material, walks you through the developer-portal dance, and pushes the 7 GH Actions secrets via `gh`. No Mac needed. See ios/DISTRIBUTION.md."
+run = "sh scripts/setup-ios-signing.sh"
 
 [tasks.run-host]
 description = "Run `zuko host` in the foreground (mise shim or local debug build)"

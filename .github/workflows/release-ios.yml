@@ -40,8 +40,26 @@ jobs:
         with:
           cache: true
 
+      # Cache cargo's registry + per-target `target/` dirs. `mise cache:true`
+      # only caches the toolchain install (the rustup download); without this,
+      # every run recompiles every Rust dep from scratch for all four iOS
+      # targets the FFI script builds — ~10 min of pure recompute per run.
+      # The key namespaces by workflow so the signed-build cache doesn't
+      # collide with build-ios's (same code, different intent).
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ios-release
+
       - name: Install iOS tooling (xcodegen + fastlane via mise/brew)
         run: mise run setup-ios
+
+      # Build the Rust staticlib into a ZukoRust.xcframework + regenerate the
+      # Swift bindings. The app's project.yml references the local ZukoFFI
+      # package, which requires the xcframework at SwiftPM resolve time — so
+      # this MUST run before `xcodegen` (which fastlane does internally).
+      # Mirrors the same step in build-ios.yml.
+      - name: Build ZukoRust.xcframework (Rust FFI for iOS)
+        run: sh scripts/build-ffi.sh
 
       - name: Import distribution certificate (.p12 from secret)
         uses: apple-actions/import-codesign-certs@v3
@@ -55,8 +73,17 @@ jobs:
           dest_dir="$HOME/Library/MobileDevice/Provisioning Profiles"
           mkdir -p "$dest_dir"
           printf '%s' "${{ secrets.PROVISIONING_PROFILE_BASE64 }}" | base64 -d > "$dest_dir/dev.adonm.zuko.mobileprovision"
-          echo "Installed profile:"
-          /usr/libexec/PlistBuddy -c "Print :Name" /dev/stdin <<< "$(security cms -D -d "$dest_dir/dev.adonm.zuko.mobileprovision")" || true
+          # Parse the profile (it's a CMS-signed plist) to extract its UUID +
+          # name. The UUID is what xcodebuild's PROVISIONING_PROFILE_SPECIFIER
+          # wants under manual signing; we expose it to the fastlane step via
+          # $GITHUB_ENV. `security cms -D -i <file>` is the right invocation
+          # (the older `-D -d <file>` form errors out on macOS 15's security).
+          plist="$(security cms -D -i "$dest_dir/dev.adonm.zuko.mobileprovision")"
+          uuid="$(/usr/libexec/PlistBuddy -c 'Print :UUID' /dev/stdin <<<"$plist")"
+          name="$(/usr/libexec/PlistBuddy -c 'Print :Name' /dev/stdin <<<"$plist")"
+          echo "Installed profile: name=$name uuid=$uuid"
+          echo "APP_PROFILE_UUID=$uuid" >> "$GITHUB_ENV"
+          echo "APP_PROFILE_NAME=$name" >> "$GITHUB_ENV"
 
       - name: fastlane ${{ inputs.lane }}
         working-directory: ios

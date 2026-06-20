@@ -319,12 +319,22 @@ final class IrohSession: ObservableObject {
     /// it signals EOF itself when the loop ends — `disconnect` never touches
     /// `send` directly.
     private func startWritePump(send: SendStream) {
-        var continuation: AsyncStream<Data>.Continuation!
         // `.bufferingOldest` caps the queue; `yield` returns `.dropped` when
         // full, which we intentionally ignore — the link is stalling and will
         // time out shortly, so dropping recent input beats growing memory or
         // blocking SwiftTerm's delegate call on the main actor.
-        let stream = AsyncStream<Data>(.bufferingOldest(Self.outboundFrameCap)) { c in continuation = c }
+        //
+        // `makeStream(of:bufferingPolicy:)` (Swift 6) is used instead of
+        // `AsyncStream<Data>(.bufferingOldest(n)) { ... }` because the
+        // latter triggers an overload-resolution bug on Xcode 26's Swift 6
+        // compiler — the compiler resolves `.bufferingOldest` against
+        // `Data.Type` instead of `Continuation.BufferingPolicy`, regardless
+        // of explicit type annotations. `makeStream` takes the policy as a
+        // labeled argument, which sidesteps the issue.
+        let (stream, continuation) = AsyncStream.makeStream(
+            of: Data.self,
+            bufferingPolicy: .bufferingOldest(Self.outboundFrameCap)
+        )
         writeContinuation = continuation
         Task.detached(priority: .userInitiated) {
             // `disconnect` signals shutdown via the continuation (`finish`) +

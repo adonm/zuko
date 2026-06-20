@@ -154,7 +154,7 @@ capability flags, the ticket-handoff ALPN) is in
   --global github:adonm/zuko` installs the prebuilt binary; `cargo` is only
   needed to build from source.
 - CLI client: same — `mise use --global github:adonm/zuko`.
-- iOS client: iOS 17.5+ (IrohLib requirement), Xcode 16+.
+- iOS client: iOS 26+ (IrohLib requirement), Xcode 26+.
 
 ## Security notes
 

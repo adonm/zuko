@@ -25,7 +25,7 @@ TARGET_DIR=$(cargo metadata --format-version 1 --no-deps | python3 -c 'import js
 
 # iOS deployment target — must match the ZukoFFI Package.swift platforms and
 # iroh-ffi's (17.5). The N0 relay stack (nw_path_is_ultra_constrained) needs it.
-export IPHONEOS_DEPLOYMENT_TARGET="17.5"
+export IPHONEOS_DEPLOYMENT_TARGET="26.0"
 
 # Ensure the iOS targets are installed (no-op if already present).
 for target in aarch64-apple-ios x86_64-apple-ios aarch64-apple-ios-sim; do

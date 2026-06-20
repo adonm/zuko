@@ -13,6 +13,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # Fast lint pass — fails in seconds on style/correctness issues, before
+      # the ~10 min FFI compile + xcodebuild. SwiftLint is on Homebrew, so the
+      # install is ~5 s on the macOS runner.
+      - name: SwiftLint
+        run: |
+          brew install swiftlint >/dev/null
+          swiftlint --config .swiftlint.yml ios/Zuko --reporter github-actions-logging
+
       - name: Select newest Xcode (full iOS platform)
         run: |
           xcode="$(ls -d /Applications/Xcode*.app | sort -V | tail -1)"
@@ -24,6 +32,17 @@ jobs:
         uses: jdx/mise-action@v2
         with:
           cache: true
+
+      # Cache cargo's registry + per-target `target/` dirs. `mise cache:true`
+      # only caches the toolchain install (the rustup download); without this,
+      # every run recompiles every Rust dep from scratch for all four iOS
+      # targets the FFI script builds — ~10 min of pure recompute that hasn't
+      # changed since the last run. The key namespaces by workflow so the
+      # simulator-only build doesn't collide with release-ios's device+sim
+      # FFI slices (which are built with the same code but different intents).
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ios-sim
 
       - name: Install iOS tooling (xcodegen via mise/brew)
         run: mise run setup-ios

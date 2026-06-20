@@ -31,3 +31,15 @@ target/
 # Local secrets / runtime state
 *.key
 zuko-key
+
+# Apple signing material produced by `mise run setup-ios-signing`. Default
+# workspace is outside the repo (~/.config/zuko/ios-signing), but gitignore
+# these anyway in case someone overrides ZUKO_IOS_SIGNING_DIR into the tree.
+*.p12
+*.cer
+*.mobileprovision
+*.p8
+p12-password
+team-id
+asc-key-id
+asc-issuer-id

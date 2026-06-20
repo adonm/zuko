@@ -70,6 +70,25 @@ Create these seven secrets:
 | `ASC_ISSUER_ID`              | App Store Connect **Issuer ID** |
 | `ASC_KEY_CONTENT`            | full contents of the `.p8` (PEM body, newlines included) |
 
+### Shortcut: `mise run setup-ios-signing`
+
+[`scripts/setup-ios-signing.sh`](../scripts/setup-ios-signing.sh) automates the
+whole flow: generates the key + CSR, opens the right portal pages, builds the
+`.p12` with a random password, and pushes all seven secrets via the `gh` CLI
+(no Mac needed, no manual copy-paste into the secrets UI). Prereqs: `openssl`
++ `gh` on PATH, `gh auth login` done, run from inside the repo.
+
+```sh
+mise run setup-ios-signing
+```
+
+Artifacts (`.key`, `.p12`, `.mobileprovision`, `.p8`, etc.) land under
+`~/.config/zuko/ios-signing/` (override with `ZUKO_IOS_SIGNING_DIR`) — outside
+the repo so `git clean` can't delete them, and reused on re-runs so rotation
+is just "run it again". The manual steps below are the same flow, done by
+hand — use them as a reference or if you prefer not to authorise `gh` to set
+secrets from your machine.
+
 ## Run it
 
 *Actions → release-ios → Run workflow*:
