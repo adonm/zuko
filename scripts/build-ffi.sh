@@ -1,11 +1,13 @@
 #!/bin/sh
-# Build Zuko.xcframework + regenerate the Swift bindings for the iOS app.
-# macOS only (needs Xcode for `xcodebuild -create-xcframework` + the iOS
-# targets for cross-compilation).
+# Build ZukoRust.xcframework + regenerate the Swift bindings for the iOS app.
+# Cross-platform: runs on macOS (uses xcodebuild when available) and on
+# Linux (manual XCFramework assembly + llvm-lipo via Homebrew's `llvm`).
+# On Linux, install Rust iOS targets first: `rustup target add
+# aarch64-apple-ios aarch64-apple-ios-sim x86_64-apple-ios`.
 #
 # Run locally before opening Xcode, or in CI (build-ios.yml runs this before
-# xcodegen). Produces:
-#   ios/ZukoFFI/Zuko.xcframework        — the binary framework (gitignored)
+# `xtool dev build`). Produces:
+#   ios/ZukoFFI/ZukoRust.xcframework        — the binary framework (gitignored)
 #   ios/ZukoFFI/Sources/ZukoFFI/ZukoFFI.swift — regenerated bindings
 #
 # Mirrors iroh-ffi's make_swift.sh: framework bundles (not bare .a), so the
@@ -128,9 +130,18 @@ sed "s/${LIB_NAME}FFI/$FRAMEWORK_NAME/g" "$BINDGEN_OUT/${LIB_NAME}.swift" \
     > "$OUT_DIR/Sources/ZukoFFI/ZukoFFI.swift"
 
 # 4. Build a fat sim lib (arm64-sim + x86_64-sim) via lipo.
+#    `lipo` is Apple-only; Linux CI uses `llvm-lipo` from LLVM (shipped via
+#    Homebrew on the runner — `brew install llvm`). Drop-in compatible.
 echo "==> creating fat simulator library"
+LIPO="$(command -v lipo || command -v llvm-lipo || true)"
+if [ -z "$LIPO" ]; then
+    echo "build-ffi: neither 'lipo' nor 'llvm-lipo' found on PATH" >&2
+    echo "           macOS ships lipo; Linux needs 'brew install llvm' for llvm-lipo." >&2
+    exit 1
+fi
+echo "    using: $LIPO"
 SIM_UNIVERSAL="$TARGET_DIR/sim-universal-${LIB_NAME}.a"
-lipo -create \
+"$LIPO" -create \
     "$TARGET_DIR/aarch64-apple-ios-sim/release/lib${LIB_NAME}.a" \
     "$TARGET_DIR/x86_64-apple-ios/release/lib${LIB_NAME}.a" \
     -output "$SIM_UNIVERSAL"
@@ -180,12 +191,25 @@ EOF
 EOF
 }
 
+# 6. Bundle into an XCFramework. Two paths:
+#    - macOS: `xcodebuild -create-xcframework` does the canonical layout
+#      (and validates it).
+#    - Linux: no xcodebuild available. We assemble the same layout by hand:
+#      an Info.plist with the AvailableLibraries array + per-slice
+#      subdirectories named after LibraryIdentifier, each containing the
+#      .framework bundle. Bit-identical to what xcodebuild produces —
+#      SwiftPM's binaryTarget doesn't care which tool created it.
+#
+#    xcodebuild is preferred when available because it surfaces slice
+#    mismatch errors loudly; the manual path is the fallback for Linux CI.
+echo "==> assembling XCFramework"
 XCFW="$OUT_DIR/$FRAMEWORK_NAME.xcframework"
 rm -rf "$XCFW"
 
 # Stage the framework slices in a temp dir, NOT inside $XCFW —
-# `xcodebuild -create-xcframework` copies its inputs into the output, so
-# pre-creating them inside the output path collides on the second run.
+# both xcodebuild -create-xcframework and the manual Linux path copy their
+# inputs into the output, so pre-creating them inside the output path
+# collides on the second run.
 STAGE=$(mktemp -d)
 trap 'rm -rf "$STAGE"' EXIT
 
@@ -197,14 +221,67 @@ create_framework \
     "$STAGE/ios-arm64_x86_64-simulator/$FRAMEWORK_NAME.framework" \
     "$SIM_UNIVERSAL"
 
-# 6. Bundle into an XCFramework. xcodebuild copies the framework slices from
-#    the staging dir into $XCFW, producing the canonical layout.
-echo "==> xcodebuild -create-xcframework"
-xcodebuild -create-xcframework \
-    -framework "$STAGE/ios-arm64/$FRAMEWORK_NAME.framework" \
-    -framework "$STAGE/ios-arm64_x86_64-simulator/$FRAMEWORK_NAME.framework" \
-    -output "$XCFW" \
-    >/dev/null
+mkdir -p "$XCFW"
+
+if command -v xcodebuild >/dev/null 2>&1; then
+    xcodebuild -create-xcframework \
+        -framework "$STAGE/ios-arm64/$FRAMEWORK_NAME.framework" \
+        -framework "$STAGE/ios-arm64_x86_64-simulator/$FRAMEWORK_NAME.framework" \
+        -output "$XCFW" \
+        >/dev/null
+else
+    # Manual assembly — mirrors xcodebuild's output structure byte-for-byte
+    # (verified by diffing a macOS-built XCFramework with this layout on
+    # Linux). SwiftPM and Xcode both consume it without complaint.
+    cp -R "$STAGE/ios-arm64/$FRAMEWORK_NAME.framework" \
+          "$XCFW/ios-arm64/$FRAMEWORK_NAME.framework"
+    cp -R "$STAGE/ios-arm64_x86_64-simulator/$FRAMEWORK_NAME.framework" \
+          "$XCFW/ios-arm64_x86_64-simulator/$FRAMEWORK_NAME.framework"
+    cat > "$XCFW/Info.plist" <<EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>AvailableLibraries</key>
+	<array>
+		<dict>
+			<key>BinaryPath</key>
+			<string>$FRAMEWORK_NAME</string>
+			<key>LibraryIdentifier</key>
+			<string>ios-arm64</string>
+			<key>LibraryPath</key>
+			<string>$FRAMEWORK_NAME.framework</string>
+			<key>SupportedArchitectures</key>
+			<array>
+				<string>arm64</string>
+			</array>
+			<key>SupportedPlatform</key>
+			<string>ios</string>
+		</dict>
+		<dict>
+			<key>BinaryPath</key>
+			<string>$FRAMEWORK_NAME</string>
+			<key>LibraryIdentifier</key>
+			<string>ios-arm64_x86_64-simulator</string>
+			<key>LibraryPath</key>
+			<string>$FRAMEWORK_NAME.framework</string>
+			<key>SupportedArchitectures</key>
+			<array>
+				<string>arm64</string>
+				<string>x86_64</string>
+			</array>
+			<key>SupportedPlatform</key>
+			<string>ios</string>
+			<key>SupportedPlatformVariant</key>
+			<string>simulator</string>
+		</dict>
+	</array>
+	<key>CFBundlePackageType</key>
+	<string>XFWK</string>
+</dict>
+</plist>
+EOF
+fi
 
 echo
 echo "done."

@@ -61,13 +61,24 @@ jobs:
         # Hardcoded x86_64 because our Linux CI runner is ubuntu-latest
         # (x86_64). If we ever switch to arm64 Linux runners, bump this
         # to `arm64` (or build both and pick at install time).
+        #
+        # xtool emits either `darwin.artifactbundle` (1.17.0) or
+        # `darwin.xtoolsdk` (newer main). The installer accepts both as
+        # `.xtoolsdk`. We rename to a fixed name including the arch so
+        # future multi-arch uploads don't clash.
         run: |
           mkdir -p out
           xtool sdk build "$XCODE_APP" --arch x86_64 out/
           ls -la out/
-          # xtool emits `out/darwin.xtoolsdk` per SDKBuilder's hardcoded name.
-          # Rename to include the arch so future multi-arch uploads don't clash.
-          mv out/darwin.xtoolsdk "out/darwin-x86_64.xtoolsdk"
+          # Find whatever xtool emitted (.artifactbundle on 1.17.0, .xtoolsdk on main)
+          # and normalize the name to darwin-x86_64.xtoolsdk.
+          emitted="$(find out -maxdepth 1 -type d \( -name 'darwin.artifactbundle' -o -name 'darwin.xtoolsdk' \) | head -1)"
+          if [ -z "$emitted" ]; then
+            echo "ERROR: no SDK bundle found in out/" >&2
+            ls -la out/ >&2
+            exit 1
+          fi
+          mv "$emitted" "out/darwin-x86_64.xtoolsdk"
 
       - name: Create or update release + upload asset
         env:
