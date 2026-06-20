@@ -4153,7 +4153,9 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "46eefd5468602930da46b1f49d3448c6dfc2e81295f93120f23f8174fd70267f"
 dependencies = [
  "anyhow",
+ "camino",
  "cargo_metadata",
+ "clap",
  "uniffi_bindgen",
  "uniffi_core",
  "uniffi_macros",
@@ -5065,7 +5067,7 @@ checksum = "b8848ee67ecc8aedbaf3e4122217aff892639231befc6a1b58d29fff4c2cabaa"
 
 [[package]]
 name = "zuko"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "anyhow",
  "argon2",
@@ -5078,6 +5080,7 @@ dependencies = [
  "iroh-tickets",
  "portable-pty",
  "tempfile",
+ "thiserror 1.0.69",
  "tokio",
  "tracing",
  "tracing-subscriber",

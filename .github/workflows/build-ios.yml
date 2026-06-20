@@ -28,6 +28,13 @@ jobs:
       - name: Install iOS tooling (xcodegen via mise/brew)
         run: mise run setup-ios
 
+      # Build the Rust staticlib into a Zuko.xcframework + regenerate the
+      # Swift bindings. The iOS app's project.yml references the local
+      # ZukoFFI package (../ZukoFFI), which expects Zuko.xcframework to
+      # exist at resolve time — so this must run before `xcodegen`.
+      - name: Build Zuko.xcframework (Rust FFI for iOS)
+        run: sh scripts/build-ffi.sh
+
       - name: Generate + resolve + build
         run: mise run build-ios
 

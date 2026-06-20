@@ -1,45 +1,67 @@
 import SwiftUI
 
-/// Sheet for pasting a host ticket and naming the connection.
+/// Sheet for pairing with a host via a `zuko share` code.
+///
+/// Replaces the old paste-a-raw-ticket flow (which violated the project's
+/// security model — long-lived bearer secrets don't belong on the clipboard).
+/// The code is a *one-time* symmetric secret: the iOS app derives the same
+/// throwaway Iroh key as the CLI's `zuko share`, dials the derived NodeId,
+/// and reads the real ticket off an end-to-end-encrypted uni stream. The
+/// raw ticket never touches the UI surface. See [`ClaimSession`] + the
+/// `src/handoff.rs` Rust reference.
 struct AddConnectionView: View {
     @EnvironmentObject private var store: ConnectionStore
     @Environment(\.dismiss) private var dismiss
 
-    @State private var label: String = ""
-    @State private var ticket: String = ""
-    @State private var error: String?
-    @FocusState private var focusedField: Field?
+    @StateObject private var claimSession = ClaimSession()
 
-    private enum Field { case label, ticket }
+    @State private var code: String = ""
+    @State private var error: String?
+    @FocusState private var codeFieldFocused: Bool
+
+    private let codePlaceholder = "wowu-hiva-fiki-rufu"
+
+    /// Is a claim in flight? Drives the button → spinner swap + disables input.
+    private var isClaiming: Bool {
+        switch claimSession.status {
+        case .idle, .failed: return false
+        default: return true
+        }
+    }
 
     var body: some View {
         NavigationStack {
             Form {
-                Section("Name") {
-                    TextField("e.g. home server", text: $label)
-                        .focused($focusedField, equals: .label)
-                        .submitLabel(.next)
-                        .onSubmit { focusedField = .ticket }
-                }
                 Section {
-                    TextEditor(text: $ticket)
-                        .focused($focusedField, equals: .ticket)
+                    TextField(codePlaceholder, text: $code)
+                        .focused($codeFieldFocused)
                         .font(.system(.body, design: .monospaced))
-                        .frame(minHeight: 96)
-                        .overlay(alignment: .topLeading) {
-                            if ticket.isEmpty {
-                                Text("Paste the ticket your host printed (starts with \(HostSetup.ticketPrefix)…)")
-                                    .foregroundStyle(.secondary)
-                                    .font(.subheadline)
-                                    .padding(.top, 8)
-                                    .allowsHitTesting(false)
-                            }
-                        }
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled()
+                        .submitLabel(.go)
+                        .onSubmit { claim() }
+                        .disabled(isClaiming)
                 } header: {
-                    Text("Ticket")
+                    Text("Pairing code")
                 } footer: {
-                    Text("On the host: `mise use --global github:adonm/zuko && zuko install`. The host's node id is stable across restarts, so this connection keeps working.")
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("On the host:")
+                            .font(.caption).fontWeight(.semibold)
+                        Text(HostSetup.shareCommand)
+                            .font(.system(.caption, design: .monospaced))
+                        Text("Reads the code aloud, then type it here. The host's real ticket arrives over an end-to-end-encrypted Iroh stream — it never touches the clipboard.")
+                            .padding(.top, 2)
+                    }
                 }
+
+                if case .failed(let msg) = claimSession.status {
+                    Section {
+                        Label(msg, systemImage: "exclamationmark.triangle")
+                            .foregroundStyle(.red)
+                            .font(.footnote)
+                    }
+                }
+
                 if let error {
                     Section {
                         Label(error, systemImage: "exclamationmark.triangle")
@@ -48,28 +70,57 @@ struct AddConnectionView: View {
                     }
                 }
             }
-            .navigationTitle("New connection")
+            .navigationTitle("Pair with a host")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
                     Button("Cancel") { dismiss() }
+                        .disabled(isClaiming)
                 }
                 ToolbarItem(placement: .topBarTrailing) {
-                    Button("Add") { add() }
-                        .disabled(ticket.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                        .bold()
+                    if isClaiming {
+                        // Step label + spinner: the claim has three phases
+                        // (derive / dial / read), and each can take a few
+                        // seconds, so show which one rather than an opaque
+                        // spinner.
+                        HStack(spacing: 6) {
+                            Text(claimSession.status.label)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                            ProgressView()
+                        }
+                    } else {
+                        Button("Pair", action: claim)
+                            .disabled(code.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                            .bold()
+                    }
                 }
             }
-            .onAppear { focusedField = .ticket }
+            .onAppear { codeFieldFocused = true }
         }
     }
 
-    private func add() {
-        do {
-            _ = try store.add(label: label, ticket: ticket)
-            dismiss()
-        } catch {
-            self.error = error.localizedDescription
+    // MARK: - Actions
+
+    private func claim() {
+        let trimmed = code.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        error = nil
+
+        Task {
+            do {
+                let result = try await claimSession.claim(code: trimmed)
+                // Save the claimed ticket under the host's label (sent in the
+                // payload). `ConnectionStore.add` validates + de-dupe + saves
+                // to the Keychain — same path as the old paste-ticket flow,
+                // just fed from the handoff instead of the clipboard.
+                _ = try store.add(label: result.label, ticket: result.ticket)
+                dismiss()
+            } catch {
+                // ClaimSession.status already carries the failed message; the
+                // `error` state is a fallback for save failures specifically.
+                self.error = error.localizedDescription
+            }
         }
     }
 }

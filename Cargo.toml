@@ -11,6 +11,14 @@ publish = false
 name = "zuko"
 path = "src/main.rs"
 
+# One-liner wrapper around `uniffi::uniffi_bindgen_main()`, so the Swift
+# bindings can be generated with `cargo run --bin uniffi-bindgen -- generate
+# --language swift ...` without a separate `cargo install` step. Only used at
+# XCFramework build time; not part of the `zuko` CLI.
+[[bin]]
+name = "uniffi-bindgen"
+path = "uniffi-bindgen.rs"
+
 [lib]
 name = "zuko"
 # `rlib` for the binary + tests; `staticlib` so the iOS app can wrap the
@@ -39,9 +47,14 @@ fs4 = "0.12"
 # Interactive host picker for bare `zuko` (arrow-key Select with filtering).
 # Builds on crossterm (already a dep), so the marginal weight is small.
 inquire = "0.7"
-# FFI bindings for mobile clients (the iOS app's `zuko-ffi` XCFramework).
+# `#[derive(thiserror::Error)]` for the FFI error enum (uniffi requires a
+# proper Error type, not a bare String).
+thiserror = "1"
+# FFI bindings for mobile clients (the iOS app's `Zuko.xcframework`).
 # Pinned to 0.31 to match iroh-ffi so both XCFrameworks link cleanly together.
-uniffi = "0.31"
+# `cli` feature provides `uniffi_bindgen_main()`, used by the `uniffi-bindgen`
+# binary wrapper (see [[bin]] above) to generate Swift bindings at build time.
+uniffi = { version = "0.31", features = ["cli"] }
 
 [dev-dependencies]
 tempfile = "3"

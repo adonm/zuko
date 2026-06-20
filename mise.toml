@@ -43,8 +43,12 @@ run = [
 description = "End-to-end PTY harness (host<->connect + share<->claim) against the live Iroh network. Needs network. Runs the #[ignore] e2e integration test in tests/e2e.rs."
 run = "cargo test --release --test e2e -- --ignored --nocapture"
 
+[tasks.build-ffi]
+description = "Build Zuko.xcframework + regenerate the Swift bindings for the iOS app. macOS only (needs Xcode + iOS targets)."
+run = "sh scripts/build-ffi.sh"
+
 [tasks.build-ios]
-description = "Generate the Xcode project and build the iOS app (iOS Simulator, unsigned). macOS only. Run `setup-ios` first."
+description = "Generate the Xcode project and build the iOS app (iOS Simulator, unsigned). macOS only. Run `setup-ios` + `build-ffi` first."
 dir = "ios/Zuko"
 run = [
     "xcodegen generate",

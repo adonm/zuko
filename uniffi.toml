@@ -1,0 +1,6 @@
+# uniffi-bindgen config. The cdylib_name is the library name without the
+# `lib` prefix and platform extension — uniffi uses it to locate the FFI
+# symbols inside the staticlib. Must match the crate name (`zuko`).
+
+[bindings.swift]
+cdylib_name = "zuko"

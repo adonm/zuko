@@ -21,6 +21,16 @@
 //! iOS app, and mismatched uniffi runtimes can produce duplicate-symbol errors
 //! at link time.
 
+/// Error from the FFI handoff-key derivation. uniffi requires a proper Error
+/// enum (not a bare `String`) so the Swift side gets a typed error to switch
+/// on. Kept to a single variant for now — the derivation either works or it
+/// doesn't, and the message carries the detail.
+#[derive(Debug, thiserror::Error, uniffi::Error)]
+pub enum DeriveKeyError {
+    #[error("handoff key derivation failed: {message}")]
+    DerivationFailed { message: String },
+}
+
 /// Derive the 32-byte handoff seed from a pairing code.
 ///
 /// This is literally [`crate::code::derive_key`]: it normalises the code,
@@ -33,10 +43,12 @@
 /// The seed is returned as a `Vec<u8>` (not a fixed array) because uniffi's
 /// Swift codegen maps `Vec<u8>` to `Data`, which is what the iOS side wants.
 #[uniffi::export]
-pub fn derive_handoff_key(code: String) -> Result<Vec<u8>, String> {
+pub fn derive_handoff_key(code: String) -> Result<Vec<u8>, DeriveKeyError> {
     crate::code::derive_key(&code)
         .map(|sk| sk.to_bytes().to_vec())
-        .map_err(|e| format!("{e:#}"))
+        .map_err(|e| DeriveKeyError::DerivationFailed {
+            message: format!("{e:#}"),
+        })
 }
 
 #[cfg(test)]
