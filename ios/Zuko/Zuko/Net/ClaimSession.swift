@@ -90,7 +90,7 @@ final class ClaimSession: ObservableObject {
         //    The lookup lags `zuko share` coming online by a few seconds, so
         //    retry with constant backoff (matches the CLI's `dial_throwaway`).
         status = .dialing
-        let addr = EndpointAddr.new(id: nodeId, relayUrl: nil, addresses: [])
+        let addr = EndpointAddr(id: nodeId, relayUrl: nil, addresses: [])
         let conn: IrohLib.Connection
         do {
             conn = try await Self.dialWithRetry(
@@ -165,7 +165,9 @@ final class ClaimSession: ObservableObject {
                 try? await Task.sleep(nanoseconds: 2_000_000_000)
             }
         }
-        throw lastError.map { "\($0)" } ?? "timed out after \(Int(timeout))s"
+        throw ClaimError.dialFailed(
+            lastError.map { "\($0)" } ?? "timed out after \(Int(timeout))s"
+        )
     }
 
     /// Read a uni recv stream to end, bailing if it exceeds `max` bytes.
