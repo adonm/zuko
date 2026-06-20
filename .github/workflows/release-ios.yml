@@ -99,10 +99,13 @@ jobs:
       - name: Install iOS tooling (xcodegen via brew; fastlane via bundler)
         run: mise run setup-ios
 
-      # Resolve the bundler-driven fastlane from ios/fastlane/Gemfile so the
-      # build is reproducible against the pinned gem versions (instead of
-      # whatever Homebrew bottled that week, which had been shadowing itself
-      # with the runner's pre-installed 3.3-gem copy).
+      # Resolve the bundler-driven fastlane from ios/Gemfile so the build
+      # is reproducible against the pinned gem versions (instead of whatever
+      # Homebrew bottled that week, which had been shadowing itself with the
+      # runner's pre-installed 3.3-gem copy). Lives at ios/Gemfile (not
+      # ios/fastlane/Gemfile) because Bundler walks UP from the CWD looking
+      # for a Gemfile, never down — running `bundle install` from `ios/`
+      # wouldn't find one in `ios/fastlane/`.
       - name: bundle install (fastlane + xcodeproj from Gemfile)
         working-directory: ios
         run: |
