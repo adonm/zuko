@@ -78,18 +78,18 @@ build_and_localize() {
         --localize-symbol='_rust_*' \
         --localize-symbol='__rust_*' \
         "$lib"
-    # Sanity check: nm should now show 'r' (relocatable/local) for
-    # _rust_eh_personality and 'T' (text/external) for our uniffi exports.
-    # If localizing silently fails (e.g. Mach-O feature gap), we'd see
-    # 'T' for _rust_eh_personality — surface that loudly so we don't
-    # ship a broken archive that re-trips the link error in CI.
+    # Sanity check: nm should now show either 'U' (undefined — the
+    # symbol is now an external reference, will be resolved from
+    # Iroh.framework's archive at link time) or 'r'/'t' (local text).
+    # Both are success states for localization. If nm still shows 'T'
+    # (global text), the localization silently failed and the linker
+    # will re-trip the duplicate-symbol error in CI — surface it loudly.
     syms="$(nm "$lib" 2>/dev/null | grep -E ' _rust_eh_personality$' | awk '{print $1}' | sort -u)"
-    if [ "$syms" = "t" ] || [ "$syms" = "r" ]; then
-        echo "    $target: _rust_eh_personality localized ($syms)"
-    else
-        echo "    $target: WARNING — _rust_eh_personality visibility unexpected: '$syms'" >&2
-        echo "    (linker may still emit 'duplicate symbol' — check llvm-objcopy Mach-O support)" >&2
-    fi
+    case "$syms" in
+        U|t|r|"t r"|"r t") echo "    $target: _rust_eh_personality localized ($syms)" ;;
+        T|"T U"|"U T") echo "    $target: ERROR — _rust_eh_personality still global (T); localization failed" >&2; exit 1 ;;
+        *) echo "    $target: WARNING — _rust_eh_personality visibility unexpected: '$syms'" >&2 ;;
+    esac
 }
 
 build_and_localize aarch64-apple-ios
