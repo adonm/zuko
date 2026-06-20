@@ -16,10 +16,15 @@
 //! state (cwd, running command, editor) is preserved across network blips and
 //! even across app restarts within the session's lifetime.
 //!
-//! Sessions are reaped when their shell exits (PTY EOF) or after a grace period
-//! with no attached client (default 30 min, mosh-style — bounds memory so an
-//! abandoned `vim` doesn't sit forever). tmux-style "live until killed" is a
-//! future config knob.
+//! Sessions are reaped when their shell exits (PTY EOF). Detached sessions are
+//! kept **indefinitely** — a client can resume days later — so the host never
+//! auto-reaps on idle. The trade-off is memory: an abandoned `vim` will sit
+//! forever until the operator intervenes. The escape hatch is `zuko reap`,
+//! which talks to the host's control socket
+//! (`~/.config/zuko/control.sock`, see [`crate::control`]) and asks it to kill
+//! any session idle for over the given threshold (default 1 hour), sparing the
+//! session the command is run from (detected via `$ZUKO_SESSION_ID`, which the
+//! host sets on every spawned shell).
 //!
 //! ## Why we don't need a server-side terminal emulator
 //!
@@ -42,6 +47,7 @@ use tokio::sync::{Mutex as AsyncMutex, Notify};
 use tracing::{info, warn};
 
 use crate::config_dir;
+use crate::control::{control_socket_path, hex_id, parse_session_id_hex};
 use crate::secret::write_secret_0600;
 use crate::ticket_file::write_current_ticket;
 use crate::wire::{
@@ -69,10 +75,11 @@ const PUMP_CHANNEL_CAP: usize = 128;
 /// without being an unbounded heap liability per session.
 const RING_BUFFER_BYTES: usize = 1024 * 1024;
 
-/// How long a detached session (no attached client) is kept before reaping.
-/// Mosh-style grace: bounds memory so an abandoned shell doesn't run forever,
-/// while giving real-world reconnects (wifi blip, app restart) plenty of room.
-const SESSION_GRACE: std::time::Duration = std::time::Duration::from_secs(30 * 60);
+/// How often the auto-reaper sweeps the registry. With no time-based reaping
+/// (sessions live forever — see [`spawn_reaper`]) the sweep's only job is to
+/// catch shell-exited sessions that [`serve`] somehow didn't clean up itself
+/// (defensive; cheap).
+const REAPER_INTERVAL: std::time::Duration = std::time::Duration::from_secs(60);
 
 /// Heartbeat interval. The host sends a PING every interval; a PONG (or any
 /// frame) resets the client's stall timer. iroh's QUIC keepalive (5 s) already
@@ -191,6 +198,7 @@ pub async fn run(args: HostArgs) -> Result<()> {
     // anchor that keeps detached-session PTY reader tasks alive.
     let sessions: SessionRegistry = Arc::new(AsyncMutex::new(HashMap::new()));
     spawn_reaper(sessions.clone());
+    spawn_control_listener(sessions.clone());
 
     // Accept connections forever. Each connection attaches to a session (new
     // or resumed); the session persists after the connection ends.
@@ -213,6 +221,10 @@ pub async fn run(args: HostArgs) -> Result<()> {
             }
         }
     }
+    // Best-effort: remove the control socket so a stale path doesn't sit at
+    // `control_socket_path()` for the next start to clean up. We unlink on
+    // bind too, so a clean shutdown isn't load-bearing — but it's tidy.
+    let _ = std::fs::remove_file(control_socket_path());
     Ok(())
 }
 
@@ -253,9 +265,11 @@ struct Session {
     /// client learns the shell exited (recv EOF → `ShellExited` → stop,
     /// rather than reconnecting a dead session).
     exited_notify: Arc<Notify>,
-    /// Last time a connection detached. The reaper drops the session once
-    /// `SESSION_GRACE` has elapsed with no new attachment.
-    last_detach: AsyncMutex<std::time::Instant>,
+    /// Last time the session saw activity — updated on attach, on every PTY
+    /// output chunk, and on every inbound client frame. Used by `zuko reap`
+    /// (via the control socket) to find idle sessions. The auto-reaper never
+    /// reaps on this — sessions live forever unless the shell exits.
+    last_activity: Arc<std::sync::Mutex<std::time::Instant>>,
     /// The child shell, for explicit kill on reap. portable-pty `Child` is a
     /// trait; `spawn_command` returns `Box<dyn Child + Send + Sync>`. Its Drop
     /// isn't guaranteed to wait across backends, so we kill+wait explicitly.
@@ -273,6 +287,12 @@ impl Session {
         cols: u16,
         rows: u16,
     ) -> Result<Arc<Session>> {
+        // Mint the session id up front so we can expose it to the spawned shell
+        // via `$ZUKO_SESSION_ID` — `zuko reap` reads this to spare the session
+        // it's running in. `rand::random` gives 8 fresh bytes.
+        let id: SessionId = rand::random();
+        let id_hex = hex_id(&id);
+
         let pty_system = native_pty_system();
         let pair = pty_system
             .openpty(PtySize {
@@ -286,6 +306,7 @@ impl Session {
         let mut cmd = CommandBuilder::new(&shell);
         cmd.args(&shell_args);
         cmd.env("TERM", "xterm-256color");
+        cmd.env("ZUKO_SESSION_ID", &id_hex);
         if let Some(dir) = cwd.as_deref() {
             cmd.cwd(dir);
         }
@@ -339,6 +360,8 @@ impl Session {
         let child = Arc::new(std::sync::Mutex::new(Some(child)));
         let attached_tx: Arc<std::sync::Mutex<Option<tokio::sync::mpsc::Sender<OutItem>>>> =
             Arc::new(std::sync::Mutex::new(None));
+        let last_activity: Arc<std::sync::Mutex<std::time::Instant>> =
+            Arc::new(std::sync::Mutex::new(std::time::Instant::now()));
 
         // PTY reader -> (ring + attached connection). Runs for the session's
         // whole life: even with no connection attached it keeps buffering, so
@@ -350,6 +373,7 @@ impl Session {
         let exited_for_reader = exited.clone();
         let exited_notify_for_reader = exited_notify.clone();
         let attached_for_reader = attached_tx.clone();
+        let last_activity_for_reader = last_activity.clone();
         std::thread::spawn(move || {
             let mut reader = reader;
             let mut buf = vec![0u8; 16 * 1024];
@@ -359,6 +383,13 @@ impl Session {
                     Ok(n) => {
                         let chunk = buf[..n].to_vec();
                         ring_for_reader.append(&chunk);
+                        // PTY output counts as session activity (so a session
+                        // producing output stays on the right side of `zuko
+                        // reap`'s idle threshold). The mutex hold is trivial
+                        // — just an Instant write — so unthrottled is fine.
+                        if let Ok(mut t) = last_activity_for_reader.lock() {
+                            *t = std::time::Instant::now();
+                        }
                         // Clone the sender under the lock (quick), send
                         // outside the lock. If the send errors the receiver is
                         // gone — clear the slot so we stop trying (the ring
@@ -388,10 +419,6 @@ impl Session {
             exited_notify_for_reader.notify_one();
         });
 
-        // Mint a session id. `rand::random` needs no trait import and gives
-        // 8 fresh bytes — enough uniqueness for a per-host session registry.
-        let id: SessionId = rand::random();
-
         Ok(Arc::new(Session {
             id,
             pty_tx,
@@ -400,17 +427,21 @@ impl Session {
             attach_notify: Notify::new(),
             exited,
             exited_notify,
-            last_detach: AsyncMutex::new(std::time::Instant::now()),
+            last_activity,
             child,
         }))
     }
 
     /// Install `tx` as the live fan-out sender for new PTY output. Replaces
     /// any previous sender (roam). The previous connection's `pty_to_net` task
-    /// observes its sender dropped and exits.
+    /// observes its sender dropped and exits. A new attachment counts as
+    /// activity, so this also bumps `last_activity`.
     fn attach(&self, tx: tokio::sync::mpsc::Sender<OutItem>) {
         let mut guard = self.attached_tx.lock().expect("attached_tx lock poisoned");
         *guard = Some(tx);
+        if let Ok(mut t) = self.last_activity.lock() {
+            *t = std::time::Instant::now();
+        }
     }
 
     /// Stop fanning output to any connection. The PTY reader keeps running and
@@ -420,10 +451,24 @@ impl Session {
         *guard = None;
     }
 
-    /// Mark the session's last-detach timestamp to now (called when a
-    /// connection ends), so the reaper's grace window restarts.
-    async fn touch_detach(&self) {
-        *self.last_detach.lock().await = std::time::Instant::now();
+    /// Mark the session as having just seen activity (a frame from the client,
+    /// a resume, etc). Called by the net→PTY pump on every frame. The auto-
+    /// reaper never reads this; `zuko reap` (via the control socket) does.
+    fn touch_activity(&self) {
+        if let Ok(mut t) = self.last_activity.lock() {
+            *t = std::time::Instant::now();
+        }
+    }
+
+    /// Idle duration: how long since this session last saw activity (a client
+    /// frame, an attach, or PTY output). `None` if the lock is contended (the
+    /// caller treats that as "not idle" — same as the auto-reaper's `try_lock`
+    /// pattern).
+    fn idle(&self) -> Option<std::time::Duration> {
+        self.last_activity
+            .lock()
+            .ok()
+            .map(|t| t.elapsed())
     }
 }
 
@@ -603,8 +648,12 @@ async fn serve(
     // Network -> PTY. Async frame parser over the iroh recv stream. The first
     // frame was already consumed above; `acc` may still hold buffered bytes
     // from a coalesced read, so the pump continues from `acc`/`tmp`. PONGs for
-    // inbound PINGs are routed back via `pong_tx`.
+    // inbound PINGs are routed back via `pong_tx`. Real user input (DATA,
+    // RESIZE) bumps `last_activity` so `zuko reap` sees an active session;
+    // PINGs and PONGs deliberately don't, or a connected-but-ignored session
+    // would never look idle.
     let pty_tx = session.pty_tx.clone();
+    let session_for_net = session.clone();
     let net_to_pty: tokio::task::JoinHandle<ConnEnd> = tokio::spawn(async move {
         loop {
             // Parse any bytes already in `acc` first (from the handshake
@@ -613,6 +662,9 @@ async fn serve(
                 if !handle_client_frame(&frame, &pty_tx, &pong_tx).await {
                     // pty_tx closed → session reaped; connection done.
                     return ConnEnd::ShellExited;
+                }
+                if frame.typ == TYPE_DATA || frame.typ == TYPE_RESIZE {
+                    session_for_net.touch_activity();
                 }
             }
             match recv.read(&mut tmp).await {
@@ -646,9 +698,10 @@ async fn serve(
     let end = net_to_pty.await.unwrap_or(ConnEnd::Detached);
 
     // Tear down this connection's attachment. The session itself stays (for
-    // resume + grace reaping) unless the shell exited.
+    // resume — sessions are kept indefinitely; see `zuko reap` for explicit
+    // cleanup) unless the shell exited.
     session.detach();
-    session.touch_detach().await;
+    session.touch_activity();
     pty_to_net.abort();
     heartbeat.abort();
 
@@ -736,12 +789,14 @@ fn reap_session(session: &Arc<Session>) {
     }
 }
 
-/// Periodically reap sessions whose shell has exited, or that have been
-/// detached (no attached client) longer than [`SESSION_GRACE`]. Bounds the
-/// host's memory + process footprint so abandoned `vim`s don't run forever.
+/// Periodically reap sessions whose shell has exited but that [`serve`] didn't
+/// clean up itself (e.g. if the connection task was cancelled mid-detach). The
+/// sweep is defensive — sessions are otherwise kept indefinitely (the mosh
+/// "live until killed" model), with [`crate::control`] / `zuko reap` as the
+/// operator-facing cleanup path. Cheap: a 60 s tick iterating the registry.
 fn spawn_reaper(sessions: SessionRegistry) {
     tokio::spawn(async move {
-        let mut tick = tokio::time::interval(std::time::Duration::from_secs(60));
+        let mut tick = tokio::time::interval(REAPER_INTERVAL);
         tick.tick().await; // drain the immediate first tick
         loop {
             tick.tick().await;
@@ -754,14 +809,9 @@ fn spawn_reaper(sessions: SessionRegistry) {
                         .load(std::sync::atomic::Ordering::Relaxed)
                     {
                         to_reap.push(*id);
-                        continue;
                     }
-                    // Grace: detached too long with no shell exit.
-                    if let Ok(last) = session.last_detach.try_lock() {
-                        if last.elapsed() > SESSION_GRACE {
-                            to_reap.push(*id);
-                        }
-                    }
+                    // No time-based reaping — sessions live forever until the
+                    // shell exits or `zuko reap` is run.
                 }
             }
             for id in &to_reap {
@@ -771,15 +821,162 @@ fn spawn_reaper(sessions: SessionRegistry) {
                 };
                 if let Some(session) = session {
                     reap_session(&session);
-                    info!(session = hex_id(id), "reaped idle session");
+                    info!(session = hex_id(id), "reaped exited session");
                 }
             }
         }
     });
 }
 
-fn hex_id(id: &SessionId) -> String {
-    id.iter().map(|b| format!("{b:02x}")).collect()
+/// Bind the host's control socket and serve [`crate::control`] requests on a
+/// dedicated OS thread per connection. Plain `std::thread` (not tokio) is
+/// deliberate: the work is blocking I/O (a line read, a registry sweep, a
+/// few lines back), the connection rate is operator-paced (a couple per day
+/// at most), and using `blocking_lock` on the `AsyncMutex` registry from
+/// outside the async runtime keeps the handler code boring.
+///
+/// Failures to bind are logged and swallowed — a missing control socket only
+/// means `zuko reap` won't work; shells still serve. A stale socket from a
+/// crashed previous host is unlinked before bind (standard Unix-socket
+/// hygiene).
+fn spawn_control_listener(sessions: SessionRegistry) {
+    std::thread::spawn(move || {
+        let path = control_socket_path();
+        // Stale socket from a previous crashed host — otherwise `bind` fails
+        // with EADDRINUSE and the operator's `zuko reap` can never connect.
+        let _ = std::fs::remove_file(&path);
+        if let Some(parent) = path.parent() {
+            if let Err(e) = std::fs::create_dir_all(parent) {
+                warn!("control socket: mkdir {}: {e:#}", parent.display());
+                return;
+            }
+        }
+        let listener = match std::os::unix::net::UnixListener::bind(&path) {
+            Ok(l) => l,
+            Err(e) => {
+                warn!(
+                    "could not bind control socket at {} — `zuko reap` won't work ({e:#})",
+                    path.display()
+                );
+                return;
+            }
+        };
+        info!(path = %path.display(), "control socket listening");
+        for stream in listener.incoming() {
+            let Ok(stream) = stream else {
+                warn!("control socket: accept failed, stopping listener");
+                break;
+            };
+            // Each request is tiny and operator-paced; a thread per connection
+            // is the simplest correct shape. `std::thread` keeps us off the
+            // tokio runtime entirely (see the doc comment above).
+            let sessions = sessions.clone();
+            std::thread::spawn(move || {
+                if let Err(e) = handle_control_conn(stream, sessions) {
+                    warn!("control socket request failed: {e:#}");
+                }
+            });
+        }
+        // Listener exhausted (rare: only on socket teardown). Clean up so the
+        // next start binds cleanly.
+        let _ = std::fs::remove_file(&path);
+    });
+}
+
+/// One control connection: read one request line, dispatch, write the reply.
+/// The request format is documented in [`crate::control`].
+fn handle_control_conn(
+    stream: std::os::unix::net::UnixStream,
+    sessions: SessionRegistry,
+) -> Result<()> {
+    use std::io::{BufRead, BufReader, Write};
+    let mut reader = BufReader::new(&stream);
+    let mut line = String::new();
+    reader
+        .read_line(&mut line)
+        .context("read control request line")?;
+    let resp = handle_control_line(line.trim(), &sessions);
+    (&stream)
+        .write_all(resp.as_bytes())
+        .context("write control response")?;
+    Ok(())
+}
+
+/// Build the response string for one parsed control request. Pure (no I/O)
+/// so it can be unit-tested; the actual reap happens via [`reap_idle`].
+fn handle_control_line(line: &str, sessions: &SessionRegistry) -> String {
+    let parts: Vec<&str> = line.split_whitespace().collect();
+    if parts.len() < 3 || parts.first() != Some(&"REAP") {
+        return format!(
+            "ERROR expected 'REAP <secs> <skip|none>', got {line:?}\n"
+        );
+    }
+    let secs: u64 = match parts[1].parse() {
+        Ok(s) => s,
+        Err(_) => return format!("ERROR bad secs value: {:?}\n", parts[1]),
+    };
+    let skip: Option<SessionId> = if parts[2] == "none" {
+        None
+    } else {
+        match parse_session_id_hex(parts[2]) {
+            Some(id) => Some(id),
+            None => return format!("ERROR bad skip session id: {:?}\n", parts[2]),
+        }
+    };
+    let reaped = reap_idle(sessions, std::time::Duration::from_secs(secs), skip);
+    use std::fmt::Write;
+    let mut out = String::new();
+    for id in &reaped {
+        let _ = writeln!(out, "REAPED {}", hex_id(id));
+    }
+    let _ = writeln!(out, "DONE {}", reaped.len());
+    out
+}
+
+/// Reap every session idle longer than `threshold`, sparing `skip` (the
+/// session the `zuko reap` CLI is running inside, if any). Returns the ids
+/// that were killed, in the order they were reaped. Synchronous + blocking —
+/// only call from the control-socket handler thread.
+fn reap_idle(
+    sessions: &SessionRegistry,
+    threshold: std::time::Duration,
+    skip: Option<SessionId>,
+) -> Vec<SessionId> {
+    // First pass: collect candidates under a short hold of the registry lock.
+    let mut to_reap: Vec<SessionId> = Vec::new();
+    {
+        let registry = sessions.blocking_lock();
+        for (id, session) in registry.iter() {
+            if Some(*id) == skip {
+                continue;
+            }
+            // An exited session is always a candidate regardless of activity —
+            // it's already dead, just hasn't been cleaned up yet.
+            let exited = session
+                .exited
+                .load(std::sync::atomic::Ordering::Relaxed);
+            let idle_too_long = session
+                .idle()
+                .map(|d| d > threshold)
+                .unwrap_or(false);
+            if exited || idle_too_long {
+                to_reap.push(*id);
+            }
+        }
+    }
+    // Second pass: actually remove + kill each one. Done outside the registry
+    // lock so the (potentially blocking) child kill doesn't hold it.
+    for id in &to_reap {
+        let session = {
+            let mut registry = sessions.blocking_lock();
+            registry.remove(id)
+        };
+        if let Some(session) = session {
+            reap_session(&session);
+            info!(session = hex_id(id), "reaped idle session via control socket");
+        }
+    }
+    to_reap
 }
 
 fn default_key_path() -> PathBuf {
@@ -942,5 +1139,53 @@ mod tests {
     fn ring_buffer_empty_snapshot() {
         let ring = RingBuffer::new(1024);
         assert!(ring.snapshot().is_empty());
+    }
+
+    // ── control-socket request parsing ──
+    //
+    // The error paths of `handle_control_line` don't need real sessions (the
+    // request fails validation before the registry is inspected), so an empty
+    // registry is enough. The success path requires a real `Session` (PTY +
+    // child + reader thread) and is covered end-to-end by `tests/e2e.rs`.
+
+    fn empty_registry() -> SessionRegistry {
+        Arc::new(AsyncMutex::new(HashMap::new()))
+    }
+
+    #[test]
+    fn control_line_rejects_unknown_verb() {
+        let r = empty_registry();
+        let resp = handle_control_line("LIST", &r);
+        assert!(resp.starts_with("ERROR "), "got: {resp:?}");
+    }
+
+    #[test]
+    fn control_line_rejects_missing_args() {
+        let r = empty_registry();
+        let resp = handle_control_line("REAP 60", &r);
+        assert!(resp.starts_with("ERROR "), "got: {resp:?}");
+    }
+
+    #[test]
+    fn control_line_rejects_non_numeric_secs() {
+        let r = empty_registry();
+        let resp = handle_control_line("REAP soon none", &r);
+        assert!(resp.contains("ERROR bad secs"), "got: {resp:?}");
+    }
+
+    #[test]
+    fn control_line_rejects_bad_skip_id() {
+        let r = empty_registry();
+        let resp = handle_control_line("REAP 60 nothex", &r);
+        assert!(resp.contains("ERROR bad skip session id"), "got: {resp:?}");
+    }
+
+    #[test]
+    fn control_line_reap_on_empty_registry_returns_done_zero() {
+        // No sessions = nothing to reap, even with a valid request.
+        let r = empty_registry();
+        let resp = handle_control_line("REAP 3600 none", &r);
+        assert!(resp.contains("DONE 0"), "got: {resp:?}");
+        assert!(!resp.contains("REAPED"));
     }
 }

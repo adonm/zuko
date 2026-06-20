@@ -99,9 +99,9 @@ across QUIC packets; receivers must accumulate bytes and parse greedily (see
    session alive (PTY reader keeps buffering into the ring buffer) so a client
    can reconnect with the session id and resume. The session ends only when the
    shell exits (host sees PTY EOF → closes the stream → client sees recv EOF →
-   stops) or the host reaps it after a grace period with no attached client
-   (default 30 min, mosh-style). The host kills the child when the session is
-   reaped.
+   stops) or an operator runs `zuko reap` on the host (kills idle sessions
+   over a threshold — default 1 hour — sparing the session it's run from).
+   The host kills the child when the session is reaped.
 
 ## Session resume
 
@@ -131,7 +131,7 @@ app-level heartbeat surfaces a stuck link faster and lets the client show a
 (echoing the nonce). If a client receives no frame at all for ~10 s it flips to
 a `stalled` UI state; the actual reconnect triggers when the QUIC idle timeout
 (15–30 s) errors the recv. The host doesn't gate reaping on heartbeat state —
-it reaps on shell exit or the grace timer.
+sessions live forever until the shell exits or `zuko reap` is invoked.
 
 ## Ticket
 

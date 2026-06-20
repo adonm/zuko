@@ -17,6 +17,7 @@ zuko connect <name>    attach a terminal to a saved host
 zuko <name>            shorthand for `zuko connect <name>`
 zuko ls                list saved hosts (by name)
 zuko rm <name>         remove a saved host
+zuko reap              kill idle sessions on this host (default: idle > 1h)
 ```
 
 Saved hosts live at `~/.config/zuko/hosts`; the host's persistent identity lives
@@ -139,10 +140,21 @@ blip and even across an app relaunch.
 A session ends, and the host reaps it, when:
 
 - the shell exits (the host sees PTY EOF), or
-- no client has been attached for **30 minutes** (mosh-style grace, so an
-  abandoned shell doesn't run forever), or
+- `zuko reap` is run on the host and the session has been idle (no PTY
+  output, no client keystrokes, no attach) for over the threshold — default
+  **1 hour**, override with `--idle-secs`. The session `zuko reap` is run
+  from is always spared (detected via `$ZUKO_SESSION_ID`, which the host sets
+  on every spawned shell), so a `zuko reap` inside a zuko session can't kill
+  its own shell out from under itself. Reaped sessions are killed + removed
+  from the registry; their shells get `SIGKILL` (same as the auto-reaper).
 - `zuko host` restarts (the shells get `SIGHUP`, same as restarting a tmux
   server — there's no on-disk session persistence across host restarts yet).
+
+Sessions are **not** auto-reaped on a timer — a detached session with a live
+shell stays put forever (so resuming days later works). The trade-off is
+memory: an abandoned `vim` will sit there until you intervene. `zuko reap`
+is the operator-facing cleanup path; `logout`, restarting `zuko host`, or
+using your process manager on the host all work too.
 
 The CLI (`zuko connect`) auto-reconnects with a bounded backoff; the iOS app
 shows *Reconnecting…* / *Connection stalled* states and resumes on its own. The

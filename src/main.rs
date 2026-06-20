@@ -45,7 +45,7 @@ use clap::{Args, Parser, Subcommand};
 use inquire::{InquireError, Select};
 use std::io::IsTerminal;
 
-use zuko::{client, code, handoff, host, service, store, HostArgs, ShareArgs};
+use zuko::{client, code, control, handoff, host, service, store, HostArgs, ShareArgs};
 
 #[derive(Parser)]
 #[command(
@@ -114,6 +114,20 @@ enum Command {
         /// (default 60; 0 = wait forever).
         #[arg(long, default_value_t = 60)]
         timeout: u64,
+    },
+
+    /// Reap idle sessions on this host. Talks to the running `zuko host`'s
+    /// control socket (`~/.config/zuko/control.sock`) and asks it to kill any
+    /// session that hasn't seen activity for over `--idle-secs` (default
+    /// 3600 = 1 hour). Run this on the host machine, not from a client.
+    ///
+    /// The session this command is run from is always spared — detected via
+    /// `$ZUKO_SESSION_ID`, which the host sets on every spawned shell — so
+    /// `zuko reap` inside a zuko session can't kill its own shell.
+    Reap {
+        /// Idle threshold in seconds (default 3600 = 1 hour).
+        #[arg(long, default_value_t = 3600)]
+        idle_secs: u64,
     },
 }
 
@@ -186,6 +200,28 @@ async fn main() -> Result<()> {
             no_connect,
             timeout,
         }) => handoff::claim(&code, r#as, no_connect, timeout).await,
+        Some(Command::Reap { idle_secs }) => {
+            // Spare the session we're running inside, if any. The host sets
+            // $ZUKO_SESSION_ID on every spawned shell; if it's missing we're
+            // on a plain SSH/console login, so nothing to skip.
+            let skip = std::env::var("ZUKO_SESSION_ID")
+                .ok()
+                .and_then(|s| control::parse_session_id_hex(&s));
+            match control::reap(idle_secs, skip) {
+                Ok(reaped) => {
+                    if reaped.is_empty() {
+                        println!("no sessions idle > {idle_secs}s");
+                    } else {
+                        for id in &reaped {
+                            println!("reaped session {id}");
+                        }
+                        println!("reaped {} session(s)", reaped.len());
+                    }
+                    Ok(())
+                }
+                Err(e) => Err(e),
+            }
+        }
         None => match cli.name {
             // Bare `zuko <input>`: the power-user shortcut. Distinguish a
             // saved-host name (the common case after the first claim) from a

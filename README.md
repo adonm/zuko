@@ -38,8 +38,9 @@ flowchart TB
   every terminal program behaves exactly as if it were local.
 - **Survives network drops.** A session outlives its connection: drop wifi, put
   the laptop to sleep, switch networks — the client reconnects and resumes the
-  same shell (cwd, running command, editor intact). The host keeps each session
-  alive for 30 min after you detach, so even an app relaunch can resume. See
+  same shell (cwd, running command, editor intact). The host keeps sessions
+  alive **forever** (so resuming days later still works); run `zuko reap` on
+  the host to clean up idle ones. See
   [Reconnect & resume](#reconnect--resume).
 - **No port forwarding, no relay you run.** Iroh's public relays + NAT
   traversal do the reachability; the connection is end-to-end encrypted by the
@@ -113,17 +114,20 @@ from source (Simulator or device).
 
 A zuko **session** (PTY + shell + a buffer of recent output) outlives any single
 connection: drop wifi, sleep the laptop, switch networks — the client reconnects
-and resumes the same shell (cwd, running command, editor intact). The host keeps
-each session alive for 30 min after you detach, so even an app relaunch can
-resume. Print `exit` in the remote shell to end for real; `kill` the `zuko`
-process to give up.
+and resumes the same shell (cwd, running command, editor intact). The host
+keeps sessions alive **forever** (so resuming days later still works) — the
+operator controls cleanup via `zuko reap` (kills sessions idle for over an hour,
+run on the host). Print `exit` in the remote shell to end for real; `kill` the
+`zuko` process to give up.
 
 If the session wedges hard (keystrokes vanish), **Ctrl-C 3× within ~1 s** with
 no remote output between presses force-exits the client — see
 [`docs/HOST.md`](docs/HOST.md#force-quitting-the-cli) for the detail.
 
-Full mechanics (ring buffer, SIGWINCH redraw, reaping, the wire flags that make
-resume work) are in [`docs/PROTOCOL.md`](docs/PROTOCOL.md#session-resume).
+Full mechanics (ring buffer, SIGWINCH redraw, the wire flags that make
+resume work) are in [`docs/PROTOCOL.md`](docs/PROTOCOL.md#session-resume);
+the operator-facing cleanup is `zuko reap` (see
+[`docs/HOST.md`](docs/HOST.md#sessions--resume)).
 
 ## Wire protocol
 
