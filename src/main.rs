@@ -42,6 +42,8 @@ mod wire;
 
 use anyhow::Result;
 use clap::{Args, Parser, Subcommand};
+use inquire::{InquireError, Select};
+use std::io::IsTerminal;
 
 #[derive(Parser)]
 #[command(
@@ -198,10 +200,7 @@ async fn main() -> Result<()> {
     let cli = Cli::parse();
     match cli.command {
         Some(Command::Host(args)) => host::run(args).await,
-        Some(Command::Connect { name }) => {
-            let ticket = store::lookup_ticket_or_bail(&name)?;
-            client::connect(&ticket).await
-        }
+        Some(Command::Connect { name }) => connect_by_name(&name).await,
         Some(Command::Install(args)) => {
             service::install(&args.resolve())?;
             Ok(())
@@ -233,7 +232,7 @@ async fn main() -> Result<()> {
             // names never look like a 4×CVCV code, so the disambiguation is
             // unambiguous. See [`code::looks_like_code`] for the rule.
             Some(input) => match store::lookup(input.trim()) {
-                Some(ticket) => client::connect(&ticket).await,
+                Some(_) => connect_by_name(input.trim()).await,
                 None if code::looks_like_code(&input) => {
                     handoff::claim(
                         &input, /*as*/ None, /*no_connect*/ false, /*timeout*/ 60,
@@ -247,33 +246,71 @@ async fn main() -> Result<()> {
                     unreachable!("lookup_ticket_or_bail always bails")
                 }
             },
-            None => {
-                print_bare_zuko_hint();
-                Ok(())
-            }
+            None => bare_zuko_menu().await,
         },
     }
 }
 
-/// Bare `zuko` (no subcommand): an actionable menu. The function name is
-/// neutral because the behavior branches on saved-hosts state — it lists
-/// saved hosts by name when any exist (the common case after the first claim),
-/// or prints the first-run pairing/serve menu when there are none.
-fn print_bare_zuko_hint() {
-    let saved = store::saved_names();
-    if !saved.is_empty() {
-        // Most-common case after the first claim: list names and let the user
-        // pick one. Tickets are deliberately not echoed (long-lived secret).
-        eprintln!("saved hosts:");
-        for name in saved {
-            eprintln!("  {name}");
-        }
-        eprintln!();
-        eprintln!("connect with:  zuko <name>");
-        return;
+/// Look up a saved host by name, connect, and on success promote it to the
+/// front of the saved list (so `zuko` with no args surfaces hosts you
+/// actually use). The touch is best-effort: a failure to rewrite the hosts
+/// file must not undo a session that already connected.
+async fn connect_by_name(name: &str) -> Result<()> {
+    let ticket = store::lookup_ticket_or_bail(name)?;
+    let result = client::connect(&ticket).await;
+    if result.is_ok() {
+        let _ = store::touch(name);
     }
-    // Genuine first run: no saved hosts. Lay out the two paths (serve this
-    // machine, or pair with a host) so the user sees both at once.
+    result
+}
+
+/// Bare `zuko` (no subcommand, no shorthand input). An actionable menu whose
+/// shape branches on saved-hosts state and whether we're on a TTY:
+///
+/// - **No saved hosts** → first-run pairing/serve hint (unchanged).
+/// - **Saved hosts, non-TTY** (piped/scripted) → name listing + hint, so
+///   scripts don't hang waiting for picker input.
+/// - **Saved hosts, TTY, exactly one** → connect to it directly (no point
+///   showing a one-item picker).
+/// - **Saved hosts, TTY, two or more** → interactive `inquire::Select`
+///   picker; on cancel (Esc) we exit cleanly without connecting.
+async fn bare_zuko_menu() -> Result<()> {
+    let saved = store::saved_names();
+    if saved.is_empty() {
+        print_first_run_hint();
+        return Ok(());
+    }
+    if !std::io::stdin().is_terminal() || !std::io::stdout().is_terminal() {
+        // Non-interactive (piped/scripted): keep the listing so `zuko` in a
+        // script never blocks on a picker. The user picks the next step.
+        print_saved_hosts_listing(&saved);
+        return Ok(());
+    }
+    if saved.len() == 1 {
+        let name = saved.into_iter().next().expect("len == 1");
+        eprintln!("connecting to {name} (the only saved host)");
+        return connect_by_name(&name).await;
+    }
+    // Interactive TTY with 2+ hosts: arrow-key picker with type-to-filter.
+    match Select::new("Select a host to connect:", saved).prompt() {
+        Ok(name) => connect_by_name(&name).await,
+        Err(InquireError::OperationCanceled) | Err(InquireError::OperationInterrupted) => {
+            eprintln!("cancelled");
+            Ok(())
+        }
+        Err(e) => {
+            // Unexpected (IO error, terminal weirdness). Fall back to the
+            // listing so the user still has a path forward via `zuko <name>`.
+            eprintln!("host picker unavailable: {e:#}");
+            print_saved_hosts_listing(&store::saved_names());
+            Ok(())
+        }
+    }
+}
+
+/// Bare `zuko` with no saved hosts (genuine first run): lay out the two
+/// paths (serve this machine, or pair with a host) so the user sees both.
+fn print_first_run_hint() {
     eprintln!("zuko — reach your machines over Iroh.");
     eprintln!();
     eprintln!("  pair with a host:");
@@ -284,6 +321,19 @@ fn print_bare_zuko_hint() {
     eprintln!("    zuko install                    # set up the daemon + service");
     eprintln!();
     eprintln!("see also:  zuko ls · zuko rm <name> · zuko --help");
+}
+
+/// Bare `zuko` with saved hosts but no TTY (piped/scripted), or as a
+/// fallback when the interactive picker can't run. Lists names — tickets are
+/// deliberately not echoed (long-lived secret) — and reminds the user how to
+/// connect.
+fn print_saved_hosts_listing(saved: &[String]) {
+    eprintln!("saved hosts:");
+    for name in saved {
+        eprintln!("  {name}");
+    }
+    eprintln!();
+    eprintln!("connect with:  zuko <name>");
 }
 
 /// The zuko config dir: `$XDG_CONFIG_HOME` if set, else `$HOME/.config`.

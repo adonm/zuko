@@ -12,6 +12,7 @@
 
 use anyhow::{bail, Context, Result};
 use std::path::PathBuf;
+use std::time::{Duration, Instant};
 
 use crate::secret::write_secret_0600;
 
@@ -44,4 +45,27 @@ pub(crate) fn read_current_ticket() -> Result<String> {
         bail!("{} is empty (is `zuko host` running?)", path.display());
     }
     Ok(ticket)
+}
+
+/// Poll `current_ticket` until it exists with non-empty contents or `timeout`
+/// elapses. Used by `zuko share`'s install-on-offer flow: `service::install`
+/// returns as soon as the unit is started, but the freshly-started host takes
+/// a few seconds to bind, come online, and write the ticket. Polling here
+/// bridges that gap so share can proceed the moment the ticket lands.
+pub(crate) fn wait_for_current_ticket(timeout: Duration) -> Result<String> {
+    let deadline = Instant::now() + timeout;
+    loop {
+        if let Ok(ticket) = read_current_ticket() {
+            return Ok(ticket);
+        }
+        if Instant::now() >= deadline {
+            bail!(
+                "host service started, but {} didn't appear within {:?} \
+                 (check `journalctl --user -u zuko-host` / the launchd log)",
+                current_ticket_path().display(),
+                timeout
+            );
+        }
+        std::thread::sleep(Duration::from_millis(500));
+    }
 }
