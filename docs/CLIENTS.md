@@ -29,14 +29,13 @@ Read [`PROTOCOL.md`](PROTOCOL.md) first — it's short. In brief:
    and read the real ticket off the uni stream. The CLI flow is
    `zuko share` → `zuko <code>` (or `zuko claim <code>` with flags); the same
    UX is the goal for every client.
-   
+
    **Mobile clients:** don't reimplement the Argon2id key derivation — the
    crate ships a [uniffi](https://mozilla.github.io/uniffi.rs/) FFI surface
-   ([`src/ffi.rs`](../src/ffi.rs)) exposing `derive_handoff_key(code)`, which
-   is literally `src/code.rs::derive_key`. Wrap the `staticlib` into an
-   XCFramework (iOS) / AAR (Android) and call it from your client so the
-   derivation is bit-exact with the CLI by construction. The iOS app uses this
-   pattern; see [`ios/Zuko/`](../ios/Zuko).
+   ([`src/ffi.rs`](../src/ffi.rs)) exposing `derive_handoff_key(code)`, so the
+   derivation is bit-exact with the CLI by construction. Wrap the `staticlib`
+   into an XCFramework (iOS) / AAR (Android); see [`ios/Zuko/`](../ios/Zuko)
+   for the reference.
 2. Parse the host's `endpointa…` ticket.
 3. Connect over Iroh on ALPN `zuko/1`, open one bidi stream, and send a
    `HELLO` as the **first frame** (carrying your capability flags, current

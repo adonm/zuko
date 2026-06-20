@@ -130,13 +130,8 @@ app-level heartbeat surfaces a stuck link faster and lets the client show a
 "stalled" state. Both sides send `PING` every ~5 s and answer with `PONG`
 (echoing the nonce). If a client receives no frame at all for ~10 s it flips to
 a `stalled` UI state; the actual reconnect triggers when the QUIC idle timeout
-(15–30 s) errors the recv. The host reaps sessions on shell exit or after the
-grace period regardless of heartbeat state.
-
-There is no authentication beyond possessing the ticket: Iroh authenticates the
-host by its key (the ticket's node id), and the connection is end-to-end
-encrypted. Anyone with the ticket can connect — treat the ticket as the secret
-(see [Security](#security)).
+(15–30 s) errors the recv. The host doesn't gate reaping on heartbeat state —
+it reaps on shell exit or the grace timer.
 
 ## Ticket
 
@@ -255,14 +250,6 @@ app may briefly show a mid-redraw screen, fixed by re-sending the size
 (→ `SIGWINCH` → redraw). Line-oriented output replays cleanly (the snapshot
 starts at the first newline). A future Tier-4 state-sync would remove the
 caveat at the cost of a much larger rewrite.
-
-### Heartbeat vs. transport keepalive
-
-iroh's QUIC keepalive (5 s) already keeps the transport alive; the app-level
-`PING`/`PONG` exists to give the *client* a liveness signal it can surface (a
-"stalled" UI state) faster than the 15–30 s QUIC idle timeout, after which the
-recv errors and the reconnect triggers. The host doesn't gate reaping on
-heartbeat state — it reaps on shell exit or the grace timer.
 
 ## Security
 

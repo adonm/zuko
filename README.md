@@ -12,13 +12,22 @@ pluggable: the iOS app and the CLI are the first two, and Android / a Linux GUI
 [`docs/PROTOCOL.md`](docs/PROTOCOL.md); the client list lives in
 [`docs/CLIENTS.md`](docs/CLIENTS.md).
 
-```
-   any client                                  your host
-  ┌──────────────┐      Iroh (E2E)        ┌──────────────────┐
-  │  iOS app     │  <------------------->  │  zuko host       │
-  │  CLI         │   bidi stream +         │  PTY + your shell│
-  │  Android…    │   zuko/1 frame proto    │  (persistent key)│
-  └──────────────┘                         └──────────────────┘
+```mermaid
+flowchart TB
+    subgraph clients["any client"]
+        direction LR
+        iOS["iOS app"]
+        CLI["CLI"]
+        Android["Android…"]
+    end
+
+    Iroh(["Iroh · end-to-end encrypted"])
+    Zuko["zuko host"]
+    PTY[("PTY + your shell")]
+
+    clients <--> Iroh
+    Iroh <--> Zuko
+    Zuko --- PTY
 ```
 
 - **Pair with a code.** Add a new device with `zuko share` on the host (prints
@@ -97,85 +106,43 @@ zuko ls                            # list saved hosts
 zuko home                          # = zuko connect home (shorthand)
 ```
 
-**iOS** — build the app from source and run it in the Simulator or on a device:
-
-```sh
-mise install             # rust
-mise run setup-ios       # brew install xcodegen + fastlane (macOS)
-mise run build-ios       # generate project + build for the iOS Simulator
-open ios/Zuko/Zuko.xcodeproj
-```
-
-Pick your iPhone and hit Run. In the app: tap **+**, name the host, paste the
-ticket, tap **Add**. (CI builds the same way — grab the `Zuko-app` artifact from
-the [build workflow](.github/workflows/build.yml); it's an unsigned simulator
-build, so for a real device you need to sign it with your own developer
-account.)
+**iOS** — see [`ios/Zuko/README.md`](ios/Zuko/README.md) for building the app
+from source (Simulator or device).
 
 ## Reconnect & resume
 
-A zuko **session** (PTY + shell + a 1 MiB buffer of recent output) outlives any
-single connection, so a dropped link is recoverable rather than fatal:
+A zuko **session** (PTY + shell + a buffer of recent output) outlives any single
+connection: drop wifi, sleep the laptop, switch networks — the client reconnects
+and resumes the same shell (cwd, running command, editor intact). The host keeps
+each session alive for 30 min after you detach, so even an app relaunch can
+resume. Print `exit` in the remote shell to end for real; `kill` the `zuko`
+process to give up.
 
-- **The CLI auto-reconnects.** `zuko connect` keeps running across a network
-  drop — it backs off, redials, and resumes the same shell where you left off
-  (scrollback is replayed from the host's buffer). Print `exit` in the remote
-  shell to end the session for real; `kill` the `zuko` process to give up.
-- **The iOS app shows state.** A brief blip surfaces nothing; a longer stall
-  shows a *Connection stalled — will resume* banner, then *Reconnecting…* as it
-  redials. The session id is saved on the connection, so even force-quitting
-  and relaunching the app resumes the last session.
-- **Full-screen apps redraw.** `vim`/`htop` recover a clean screen on resume —
-  the client re-sends its size, the host resizes the PTY, and the app gets a
-  `SIGWINCH` and redraws.
+If the session wedges hard (keystrokes vanish), **Ctrl-C 3× within ~1 s** with
+no remote output between presses force-exits the client — see
+[`docs/HOST.md`](docs/HOST.md#force-quitting-the-cli) for the detail.
 
-Because the CLI runs the terminal in raw mode (so Ctrl-C reaches the remote
-shell, not the local one), a truly wedged session has no normal escape —
-keystrokes vanish into the frame channel. The escape hatch is **Ctrl-C 3×
-within ~1 s, with no remote output between presses**: that force-exits the
-client (code 130). The "no output" gate is what stops it firing when you're
-just mashing Ctrl-C on a silent-but-healthy remote command. Abrupt exit is
-low-cost: your remote shell is almost always inside `tmux`/`zellij` and
-survives the detach.
-
-The host reaps a session when its shell exits, or after a 30-minute grace
-period with no attached client (mosh-style, so an abandoned `vim` doesn't run
-forever). Restarting `zuko host` ends all sessions (the shells get `SIGHUP`),
-same as restarting a tmux server.
+Full mechanics (ring buffer, SIGWINCH redraw, reaping, the wire flags that make
+resume work) are in [`docs/PROTOCOL.md`](docs/PROTOCOL.md#session-resume).
 
 ## Wire protocol
 
-One bidirectional Iroh stream, ALPN `zuko/1`. Each message is length-prefixed
-so the frame types share an ordering and nothing leaks into the terminal as
-escape codes:
-
-```
-[type: u8][len: u16 big-endian][payload: len bytes]
-  0x00 DATA    payload = raw terminal bytes
-  0x01 RESIZE  payload = [cols: u16 BE][rows: u16 BE]   (client -> host)
-  0x02 HELLO   client -> host, first frame: caps + size + optional resume id
-  0x03 WELCOME host -> client, first frame: caps + session id + resumed bit
-  0x04 PING  / 0x05 PONG   8-byte nonce, bidirectional heartbeat
-```
-
-`HELLO`/`WELCOME` negotiate capabilities (session resume, heartbeat) and mint
-the session id that makes reconnect-and-resume work; `PING`/`PONG` surface a
-stuck link faster than the QUIC idle timeout. The full spec (lifecycle,
-session resume, heartbeat, the ticket-handoff ALPN used by `share`/`claim`)
-is in [`docs/PROTOCOL.md`](docs/PROTOCOL.md). Reference impls:
-[`src/wire.rs`](src/wire.rs) (Rust),
+One bidirectional Iroh stream, ALPN `zuko/1`. The full spec (frame types,
+capability flags, the ticket-handoff ALPN) is in
+[`docs/PROTOCOL.md`](docs/PROTOCOL.md); reference impls in
+[`src/wire.rs`](src/wire.rs) (Rust) and
 [`ios/Zuko/Zuko/Net/Wire.swift`](ios/Zuko/Zuko/Net/Wire.swift) (Swift).
 
 ## What's in here
 
 | Path | What |
 |------|------|
-| `src/`, `Cargo.toml` | The `zuko` crate: a **library** + **binary** + **staticlib with uniffi FFI**. The binary is the **host** (`zuko host`), the **CLI client** (`zuko connect`/`share`/`claim`), and the **service installer** (`zuko install`/`uninstall`); `src/main.rs` is just the dispatcher, the logic lives in `src/lib.rs` + the modules. `src/ffi.rs` exposes `derive_handoff_key` (the Argon2id code-derivation) so mobile clients can reuse it bit-exact rather than reimplementing it — see [`docs/CLIENTS.md`](docs/CLIENTS.md). Wire framing in [`src/wire.rs`](src/wire.rs), handoff in [`src/handoff.rs`](src/handoff.rs), service management in [`src/service.rs`](src/service.rs). |
-| `tests/e2e.rs` | The end-to-end PTY harness (`cargo test --test e2e -- --ignored`): spawns `zuko host`, drives `zuko connect` under a PTY, and exercises the full `share`→`claim` handoff against the live Iroh network. |
-| `scripts/` | The foreground `zuko-host.sh` dev wrapper and `release.sh` (tag + push for releases). |
-| `ios/Zuko/` | The **iOS client** (XcodeGen `project.yml` + Swift sources). Uses the crate's FFI surface (`Zuko.xcframework`) for code-derivation, IrohLib for the network. |
-| `docs/` | [`PROTOCOL.md`](docs/PROTOCOL.md) (wire spec for client authors), [`CLIENTS.md`](docs/CLIENTS.md) (client registry), and [`HOST.md`](docs/HOST.md) (the binary's user guide). |
-| `.github/workflows/` | CI: builds+tests the `zuko` binary (incl. the e2e harness), the iOS app (simulator), and publishes `zuko` release binaries to GitHub Releases. |
+| `src/`, `Cargo.toml` | The `zuko` crate — library + binary + uniffi staticlib. Binary covers host (`zuko host`), CLI client (`zuko connect`/`share`/`claim`), and service installer. `src/ffi.rs` exposes the Argon2id code-derivation for mobile clients. |
+| `tests/e2e.rs` | End-to-end PTY harness — spawns host + client, exercises `share`→`claim` over the live Iroh network. |
+| `scripts/` | `zuko-host.sh` (foreground dev wrapper), `release.sh` (tag + push). |
+| `ios/Zuko/` | The iOS client (XcodeGen + Swift + SwiftTerm, networking via IrohLib). |
+| `docs/` | [`HOST.md`](docs/HOST.md) (user guide), [`PROTOCOL.md`](docs/PROTOCOL.md) (wire spec), [`CLIENTS.md`](docs/CLIENTS.md) (client registry), [`RELEASING.md`](docs/RELEASING.md) (cutting releases). |
+| `.github/workflows/` | CI: build+test `zuko` + iOS app; publish release binaries. |
 
 ## Requirements
 
@@ -188,17 +155,12 @@ is in [`docs/PROTOCOL.md`](docs/PROTOCOL.md). Reference impls:
 ## Security notes
 
 - The host's `endpointa…` ticket is the only long-lived secret. It moves only
-  through `zuko share` → `zuko claim`: an end-to-end-encrypted Iroh stream
-  keyed by a one-time code.
-- `zuko share`/`claim` never weaken the host key: the code derives a
-  *throwaway* key used only to deliver the real ticket once. The host key
-  stays strong. See [`docs/PROTOCOL.md`](docs/PROTOCOL.md#ticket-handoff).
-- Anyone who has the ticket can connect, so treat it like an SSH private key.
+  through `zuko share` → `zuko claim`: an E2E-encrypted Iroh stream keyed by a
+  one-time code; `share`/`claim` never weaken the host key (see
+  [`docs/PROTOCOL.md`](docs/PROTOCOL.md#ticket-handoff)).
+- Anyone with the ticket can connect — treat it like an SSH private key.
   Rotate by deleting `~/.config/zuko/key` and restarting; the node id changes
   and all old tickets stop working.
-- The host runs your `$SHELL` per session (a session survives reconnects; see
-  [Reconnect & resume](#reconnect--resume)). For a specific command, pass
-  `--shell` / `--shell-args` (see `zuko host --help`).
 
 ## Development
 
@@ -215,34 +177,8 @@ mise run run-host         # run `zuko host` in the foreground
 ```
 
 CI uses the same tasks via [`jdx/mise-Action`](https://github.com/jdx/mise-Action),
-so local and CI stay in lockstep.
-
-## Releases & distribution
-
-- **`zuko` binary** — tagging `v*` (or running the `release` workflow)
-  cross-compiles `zuko` for `linux/{x86_64,aarch64}` and
-  `macos/{x86_64,aarch64}` and attaches tarballs to a GitHub Release.
-  `mise use --global github:adonm/zuko` pulls these via mise's `github:`
-  backend; `zuko install` then sets up the service. The release binary is ~9.5
-  MB — built with boring dependencies and standard size-conscious cargo flags
-  (`opt-level="z"`, fat LTO, stripped symbols); no bespoke trimming, on
-  purpose.
-
-  **Cutting a release** is one command — it commits any pending work, pushes
-  the branch, creates an annotated `v*` tag, and pushes the tag (which fires
-  [`release.yml`](.github/workflows/release.yml)):
-
-  ```sh
-  mise run release v0.1.0   # = sh scripts/release.sh v0.1.0
-  ```
-
-  The script refuses to tag a version that doesn't match `Cargo.toml`'s
-  `version`, and refuses to clobber an existing tag.
-
-- **iOS app** — [`ios/DISTRIBUTION.md`](ios/DISTRIBUTION.md) covers building a
-  **signed** `.ipa` and pushing to **TestFlight entirely from GitHub Actions,
-  no Mac required**. Signing material (`.p12` cert + `.mobileprovision`) lives
-  in GitHub secrets on this repo.
+so local and CI stay in lockstep. Cutting a release is documented in
+[`docs/RELEASING.md`](docs/RELEASING.md).
 
 ## License
 

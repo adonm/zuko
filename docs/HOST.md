@@ -79,19 +79,17 @@ resumes the same shell (see [Sessions & resume](#sessions--resume) below).
 ## Pairing: how `share` / `claim` work
 
 The pairing code is a *one-time symmetric secret* (the
-[croc](https://github.com/schollz/croc) model). `zuko share` derives a
-throwaway Iroh key from the code, binds a *second*, ephemeral endpoint with
-it, and uses it solely to deliver the real ticket over an end-to-end encrypted
-connection. The real host key is unrelated and stays strong. The code has ~52
-bits of entropy (a one-time, minutes-long window — far beyond reach for online
-guessing), and `share` exits after the first claim.
+[croc](https://github.com/schollz/croc) model): `zuko share` derives a
+throwaway Iroh key from it, binds an ephemeral endpoint, and uses it solely to
+deliver the real ticket over an E2E-encrypted connection. The host key is
+unrelated and stays strong. `share` exits after the first claim; `claim`
+retries the dial for ~60 s (`--timeout`) while the throwaway endpoint's address
+propagates through Iroh's DNS lookup.
 
-The throwaway endpoint is reached by node id through Iroh's N0 DNS lookup, so
-`claim` retries the dial for a few seconds (`--timeout`, default 60) while that
-address propagates. The handoff runs on its own ALPN (`zuko/handoff/1`).
-
-`zuko share` reads `~/.config/zuko/current_ticket` (which `zuko host` writes);
-override with `--ticket "<ticket>"` to hand off a ticket captured elsewhere.
+Full mechanics (entropy, Argon2id derivation, the `zuko/handoff/1` wire) are in
+[`PROTOCOL.md#ticket-handoff`](PROTOCOL.md#ticket-handoff). `zuko share` reads
+`~/.config/zuko/current_ticket` (which `zuko host` writes); override with
+`--ticket "<ticket>"` to hand off a ticket captured elsewhere.
 
 ## Build from source
 
@@ -183,13 +181,11 @@ rm ~/.config/zuko/key
 
 ## Wire protocol
 
-See the root [`README.md`](../README.md#wire-protocol). ALPN is `zuko/1`. The
-framing code is shared by host and client in [`../src/wire.rs`](../src/wire.rs).
-The ticket handoff uses a separate ALPN `zuko/handoff/1` — see
-[`../src/handoff.rs`](../src/handoff.rs) (with code derivation in
-[`../src/code.rs`](../src/code.rs) and ticket-file I/O in
-[`../src/ticket_file.rs`](../src/ticket_file.rs)). Service install/uninstall
-lives in [`../src/service.rs`](../src/service.rs).
+The full spec is in [`PROTOCOL.md`](PROTOCOL.md) — ALPN `zuko/1` for sessions,
+`zuko/handoff/1` for the ticket handoff. Reference code:
+[`../src/wire.rs`](../src/wire.rs) (framing),
+[`../src/handoff.rs`](../src/handoff.rs) (handoff),
+[`../src/service.rs`](../src/service.rs) (service install/uninstall).
 
 ## Testing
 
