@@ -60,10 +60,10 @@ service but leaves the key + saved hosts in place.
 ```sh
 # once (on the host, foreground):
 zuko share
-#   wowu-hiva-fiki-rufu
+#   iridescent-hilton
 
 # on this machine, once:
-zuko wowu-hiva-fiki-rufu   # = zuko claim wowu-hiva-fiki-rufu
+zuko iridescent-hilton   # = zuko claim iridescent-hilton
 #   fetches the real ticket, saves it, connects
 
 # from then on:

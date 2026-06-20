@@ -98,8 +98,8 @@ code (the [croc](https://github.com/schollz/croc) model). `zuko share` and
   binds a *second*, ephemeral endpoint with that key, and serves the real
   ticket on a separate ALPN.
 - **Handoff ALPN:** `zuko/handoff/1`.
-- The code is a **one-time symmetric secret** for the handoff only — ~52 bits
-  (e.g. `wowu-hiva-fiki-rufu`), plenty for the minutes-long window before
+- The code is a **one-time symmetric secret** for the handoff only — ~28 bits
+  (e.g. `iridescent-hilton`), plenty for the minutes-long window before
   `share` exits after the first claim. The real host key is not derivable from
   it.
 - **Wire:** the host opens a unidirectional stream (`open_uni`) and writes a

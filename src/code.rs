@@ -8,8 +8,10 @@
 //! Iroh [`SecretKey`] from the code, so the host serves it on a per-handoff
 //! endpoint and the claimer dials the derived public key.
 //!
-//! The code has ~52 bits of entropy (4 × CVCV words) — far beyond reach for
-//! **online** guessing during the minutes-long window before `zuko share` exits.
+//! The code has ~28 bits of entropy (one adjective from ~37K × one noun from
+//! ~6K, via the [petname](https://crates.io/crates/petname) large wordlists) —
+//! far beyond reach for **online** guessing during the minutes-long window
+//! before `zuko share` exits.
 //! To also resist **offline** brute-force (in case the ephemeral `NodeId` is
 //! observed via network capture, a DNS-resolver log, or journald), the key is
 //! derived through memory-hard Argon2id rather than a single SHA-256. That

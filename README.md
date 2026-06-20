@@ -77,10 +77,10 @@ Logs go to `journalctl --user -u zuko-host -f` (Linux) or
 ```sh
 # on the host (code is read-once, expires in minutes):
 zuko share
-#   wowu-hiva-fiki-rufu
+#   iridescent-hilton
 
 # on the client:
-zuko wowu-hiva-fiki-rufu   # fetches the ticket, saves it, connects
+zuko iridescent-hilton   # fetches the ticket, saves it, connects
 ```
 
 By default `claim` saves the host under the host's label (override with
