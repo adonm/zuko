@@ -56,7 +56,14 @@ cargo run --bin uniffi-bindgen -- generate \
 
 # Copy the generated Swift into the package source target (committed; matches
 # the iroh-ffi pattern — deterministic output, regenerated when the FFI changes).
-cp "$BINDGEN_OUT/${LIB_NAME}.swift" "$OUT_DIR/Sources/ZukoFFI/ZukoFFI.swift"
+# Rewrite the C module name (`zukoFFI`) to the framework name (`Zuko`) so
+# `#if canImport(Zuko)` / `import Zuko` resolve against the framework's
+# modulemap — mirrors iroh-ffi's `make_swift.sh` line 106. Without this, the
+# generated `canImport(zukoFFI)` check fails (there's no top-level `zukoFFI`
+# module — it's a sub-module of the `Zuko` framework), and RustBuffer /
+# RustCallStatus / the FFI functions all go "not found in scope".
+sed "s/${LIB_NAME}FFI/$FRAMEWORK_NAME/g" "$BINDGEN_OUT/${LIB_NAME}.swift" \
+    > "$OUT_DIR/Sources/ZukoFFI/ZukoFFI.swift"
 
 # 4. Build a fat sim lib (arm64-sim + x86_64-sim) via lipo.
 echo "==> creating fat simulator library"
