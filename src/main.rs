@@ -23,14 +23,22 @@
 //!
 //! ## Wire protocol (single bidirectional Iroh stream, ALPN `zuko/1`)
 //!
-//! Every message is length-prefixed so resize and data stay ordered and nothing
-//! leaks into the terminal as in-band escape sequences:
+//! Every message is length-prefixed so the frame types share an ordering and
+//! nothing leaks into the terminal as in-band escape sequences:
 //!
 //! ```text
 //! [type: u8][len: u16 big-endian][payload: `len` bytes]
-//!   0x00 DATA   payload = raw terminal bytes (keystrokes up, PTY output down)
-//!   0x01 RESIZE payload = [cols: u16 BE][rows: u16 BE]   (client -> host)
+//!   0x00 DATA    payload = raw terminal bytes (keystrokes up, PTY output down)
+//!   0x01 RESIZE  payload = [cols: u16 BE][rows: u16 BE]   (client -> host)
+//!   0x02 HELLO   client -> host, first frame: caps + size + optional resume id
+//!   0x03 WELCOME host -> client, first frame: caps + session id + resumed bit
+//!   0x04 PING    payload = [nonce: u64 BE]   (bidirectional heartbeat)
+//!   0x05 PONG    payload = [nonce: u64 BE]   (bidirectional heartbeat)
 //! ```
+//!
+//! v0.4 adds session resume (the mosh model): a session outlives its
+//! connection, so a reconnect with the session id resumes the same PTY + recent
+//! output. See `docs/PROTOCOL.md`.
 
 use anyhow::Result;
 use clap::{Args, Parser, Subcommand};

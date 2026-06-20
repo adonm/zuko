@@ -23,7 +23,7 @@ The host accepts any connection advertising ALPN `zuko/1` and calls
 
 ## Framing
 
-Every message on the stream is length-prefixed, so the two frame types share an
+Every message on the stream is length-prefixed, so the frame types share an
 ordering and resize never interleaves with data on the wire:
 
 ```
@@ -40,6 +40,10 @@ across QUIC packets; receivers must accumulate bytes and parse greedily (see
 |------|------|-----------|---------|
 | `0x00` | `DATA` | both | raw terminal bytes |
 | `0x01` | `RESIZE` | client → host | `[cols: u16 BE][rows: u16 BE]` |
+| `0x02` | `HELLO` | client → host | `[flags:u8][cols:u16 BE][rows:u16 BE][sid_len:u8][sid]` |
+| `0x03` | `WELCOME` | host → client | `[flags:u8][sid_len:u8][sid]` |
+| `0x04` | `PING` | both | `[nonce: u64 BE]` (may be empty) |
+| `0x05` | `PONG` | both | `[nonce: u64 BE]` (may be empty) |
 
 - **`DATA`** — client→host carries keystrokes; host→client carries PTY output.
   Bytes are forwarded verbatim. There is no encoding, escaping, or
@@ -48,23 +52,86 @@ across QUIC packets; receivers must accumulate bytes and parse greedily (see
 - **`RESIZE`** — tells the host to resize the PTY. May be sent any time the
   client's window changes. Unknown frame types **must be ignored** (forward
   compatibility — future types can be added without breaking old clients).
+- **`HELLO`** — the **first frame** a v0.4+ client sends after `open_bi`. It
+  carries the client's capability `flags`, its current terminal size (so the
+  host spawns/resizes the PTY correctly), and an optional session id to resume
+  (empty `sid_len` = start a fresh session). Subsumes the v0.3 leading `RESIZE`.
+- **`WELCOME`** — the host's **first frame** in reply. Carries the host's
+  capability `flags`, the session id it'll use (newly minted for a fresh
+  session, or the resumed id), and the `RESUMED` flag if this was a resume
+  (meaning a ring-buffer replay follows as `DATA` frames). A v0.3 host doesn't
+  speak `HELLO`/`WELCOME`; a v0.4 client falls back to a fresh session and its
+  first layout-pass `RESIZE` corrects the size.
+- **`PING`/`PONG`** — app-level heartbeat. Either side may send a `PING` at any
+  time; the recipient echoes the nonce back as `PONG`. Used to surface a
+  "stalled" state faster than the QUIC idle timeout (see [Heartbeat](#heartbeat)).
+
+### Capability flags (HELLO/WELCOME `flags`)
+
+| bit | name | meaning |
+|-----|------|---------|
+| `0x01` | `RESUME` | the peer supports session resume (HELLO: client; WELCOME: host) |
+| `0x02` | `HEARTBEAT` | the peer sends/understands PING/PONG |
+| `0x04` | `RESUMED` | WELCOME-only: this connection resumed an existing session |
 
 ## Connection lifecycle
 
 1. **Client dials** the host's ticket (see [Ticket](#ticket)) on ALPN `zuko/1`.
-2. **Client opens** the bidi stream and immediately sends a `RESIZE` with its
-   current size. (The host only spawns the PTY once the stream exists; the
-   opener must write first for the host's `accept_bi` to resolve, so a leading
-   `RESIZE` doubles as the stream-opening write.)
-3. **Host spawns** the user's shell (`$SHELL`) on a PTY at the requested size,
-   with `TERM=xterm-256color`, in `$HOME` (overridable via `--shell`,
-   `--shell-args`, `--cwd`). Each connection gets its own independent PTY + shell.
-4. **Pump:** client keystrokes → `DATA` → host writes to PTY; PTY output →
+2. **Client opens** the bidi stream and sends a `HELLO` with its capability
+   flags, current size, and an optional session id to resume. (The opener must
+   write first for the host's `accept_bi` to resolve, so `HELLO` doubles as the
+   stream-opening write — and carries the initial size, subsuming the v0.3
+   leading `RESIZE`.) A v0.3 client instead sends a bare `RESIZE`; the host
+   treats that as a legacy new-session handshake.
+3. **Host resolves the session:** if the `HELLO` carried a session id and that
+   session is still live, it **resumes** it (same PTY + shell, same cwd/editor/
+   running command); otherwise it **spawns** a fresh shell (`$SHELL`) on a PTY
+   at the requested size, with `TERM=xterm-256color`, in `$HOME` (overridable
+   via `--shell`, `--shell-args`, `--cwd`).
+4. **Host replies `WELCOME`** with its capability flags, the session id, and
+   the `RESUMED` bit set if this was a resume. On a resume, it then replays the
+   session's recent-output ring buffer as `DATA` frames before live output.
+5. **Pump:** client keystrokes → `DATA` → host writes to PTY; PTY output →
    `DATA` → client renders. The client sends `RESIZE` whenever its window
-   changes (e.g. on `SIGWINCH`).
-5. **End:** the session ends when the remote shell exits (the host observes EOF
-   on the PTY and closes the stream) or the connection drops. The host kills
-   the child process for the connection.
+   changes (e.g. on `SIGWINCH`). Either side may send `PING`/`PONG` (see
+   [Heartbeat](#heartbeat)).
+6. **Detach vs. end:** a connection drop is a **detach** — the host keeps the
+   session alive (PTY reader keeps buffering into the ring buffer) so a client
+   can reconnect with the session id and resume. The session ends only when the
+   shell exits (host sees PTY EOF → closes the stream → client sees recv EOF →
+   stops) or the host reaps it after a grace period with no attached client
+   (default 30 min, mosh-style). The host kills the child when the session is
+   reaped.
+
+## Session resume
+
+A **session** is a PTY + shell + a bounded ring buffer of recent output
+(~1 MiB) that outlives any single connection. The host mints an 8-byte session
+id on first connect and returns it in `WELCOME`; the client sends it back in
+`HELLO` on reconnect. The session id is **not a secret** — the ticket already
+gates access, so anyone holding it can resume any of the host's sessions (same
+trust boundary as mosh's key).
+
+On resume the host replays the ring buffer (starting at the first newline, so
+line-oriented output is clean), then live-feeds. The client re-sends its
+current size in `HELLO`, which resizes the PTY and delivers `SIGWINCH` to
+full-screen apps (`vim`, `htop`) — they redraw, so a resume into a full-screen
+app recovers a clean screen despite the raw-byte replay (zuko has no
+server-side terminal emulator; this is the pragmatic alternative to mosh's
+state-sync).
+
+The iOS app persists the session id on the saved `Connection` (`lastSessionID`)
+so a relaunch can resume; the CLI keeps it in-process for the reconnect loop.
+
+## Heartbeat
+
+iroh's QUIC keepalive (5 s) keeps the transport alive across brief idle, but an
+app-level heartbeat surfaces a stuck link faster and lets the client show a
+"stalled" state. Both sides send `PING` every ~5 s and answer with `PONG`
+(echoing the nonce). If a client receives no frame at all for ~10 s it flips to
+a `stalled` UI state; the actual reconnect triggers when the QUIC idle timeout
+(15–30 s) errors the recv. The host reaps sessions on shell exit or after the
+grace period regardless of heartbeat state.
 
 There is no authentication beyond possessing the ticket: Iroh authenticates the
 host by its key (the ticket's node id), and the connection is end-to-end
