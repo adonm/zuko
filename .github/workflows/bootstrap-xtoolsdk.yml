@@ -1,0 +1,82 @@
+name: bootstrap-xtoolsdk
+
+# One-time (or per-xtool-version / per-Xcode-version) workflow that builds
+# the Darwin Swift SDK bundle (.xtoolsdk) on a macOS runner and uploads it
+# as a release asset. The Linux smoke-build workflow (build-ios.yml) then
+# downloads it at runtime — this is the only viable path because:
+#
+#   - xtool's releases don't ship prebuilt .xtoolsdk bundles.
+#   - Xcode.xip download is Apple-ID-gated (no clean CI automation).
+#   - The macOS runner has Xcode.app installed, so `xtool sdk build` can
+#     consume it directly (no .xip needed).
+#
+# When to re-run:
+#   - When bumping xtool (`[tasks.setup-xtool]` in mise.toml).
+#   - When bumping the iOS deployment target in Package.swift.
+#   - When GitHub ships a new macos-latest image with a newer Xcode that
+#     we want to track.
+#
+# After a successful run, the asset lives at:
+#   https://github.com/adonm/zuko/releases/tag/xtoolsdk-vN
+#
+# `build-ios.yml` keys its download on the `XTOOLSDK_TAG` env, so bumping
+# that tag in this workflow AND in build-ios.yml atomically rolls every
+# Linux smoke build forward.
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to attach the SDK to (e.g. xtoolsdk-v1)"
+        required: true
+        default: xtoolsdk-v1
+
+permissions:
+  contents: write  # needed by `gh release upload` below
+
+jobs:
+  build:
+    name: Build .xtoolsdk from installed Xcode
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Select newest Xcode
+        run: |
+          xcode="$(ls -d /Applications/Xcode*.app | sort -V | tail -1)"
+          echo "Selecting $xcode"
+          sudo xcode-select -s "$xcode"
+          echo "XCODE_APP=$xcode" >> "$GITHUB_ENV"
+          xcodebuild -version
+
+      - name: Install xtool (Homebrew tap)
+        run: mise run setup-xtool
+
+      - name: Build Darwin SDK bundle (--arch x86_64 for ubuntu-latest CI)
+        # Hardcoded x86_64 because our Linux CI runner is ubuntu-latest
+        # (x86_64). If we ever switch to arm64 Linux runners, bump this
+        # to `arm64` (or build both and pick at install time).
+        run: |
+          mkdir -p out
+          xtool sdk build "$XCODE_APP" --arch x86_64 out/
+          ls -la out/
+          # xtool emits `out/darwin.xtoolsdk` per SDKBuilder's hardcoded name.
+          # Rename to include the arch so future multi-arch uploads don't clash.
+          mv out/darwin.xtoolsdk "out/darwin-x86_64.xtoolsdk"
+
+      - name: Create or update release + upload asset
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -e
+          tag="${{ inputs.tag }}"
+          if gh release view "$tag" >/dev/null 2>&1; then
+            echo "release $tag exists; uploading asset (clobbers any previous)"
+            gh release upload "$tag" "out/darwin-x86_64.xtoolsdk" --clobber
+          else
+            echo "creating release $tag"
+            gh release create "$tag" "out/darwin-x86_64.xtoolsdk" \
+              --title "$tag" \
+              --notes "Darwin Swift SDK bundle for xtool, built from $(xcodebuild -version | head -1)." \
+              --target main
+          fi
