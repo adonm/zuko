@@ -15,6 +15,16 @@ enum HostSetup {
     /// the pairing protocol yet — pair through the CLI on another machine
     /// (`zuko <code>`) to save the host, then it's available here.
     static let shareCommand = "zuko share"
+
+    /// The string prefix every Iroh `EndpointTicket` starts with. Iroh's
+    /// ticket string form is `<KIND><base32 of bytes>` lowercased, and
+    /// `EndpointTicket::KIND == "endpoint"` (see iroh-tickets 1.0). Used by
+    /// the paste-ticket UI as a hint for what a valid ticket looks like.
+    /// Stable across Iroh 1.x; if a future Iroh bumps the KIND, the host's
+    /// tickets would stop round-tripping through `EndpointTicket.fromString`
+    /// anyway, so this would surface as a parse error rather than silent
+    /// breakage.
+    static let ticketPrefix = "endpoint"
 }
 
 /// Reusable card explaining how to set up a host.
