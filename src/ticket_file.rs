@@ -32,7 +32,7 @@ pub fn write_current_ticket(ticket: &str) -> Result<()> {
 }
 
 /// Read and trim the live ticket. Used by `zuko share`.
-pub(crate) fn read_current_ticket() -> Result<String> {
+pub fn read_current_ticket() -> Result<String> {
     let path = current_ticket_path();
     let ticket = std::fs::read_to_string(&path).with_context(|| {
         format!(
@@ -52,7 +52,7 @@ pub(crate) fn read_current_ticket() -> Result<String> {
 /// returns as soon as the unit is started, but the freshly-started host takes
 /// a few seconds to bind, come online, and write the ticket. Polling here
 /// bridges that gap so share can proceed the moment the ticket lands.
-pub(crate) fn wait_for_current_ticket(timeout: Duration) -> Result<String> {
+pub fn wait_for_current_ticket(timeout: Duration) -> Result<String> {
     let deadline = Instant::now() + timeout;
     loop {
         if let Ok(ticket) = read_current_ticket() {

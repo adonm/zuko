@@ -128,10 +128,10 @@ The full spec (lifecycle, semantics, the ticket-handoff ALPN used by
 
 | Path | What |
 |------|------|
-| `src/`, `Cargo.toml` | The `zuko` binary (Rust): the **host** (`zuko host`), the **CLI client** (`zuko connect`/`share`/`claim`), and the **service installer** (`zuko install`/`uninstall`). Wire framing in [`src/wire.rs`](src/wire.rs), handoff in [`src/handoff.rs`](src/handoff.rs), service management in [`src/service.rs`](src/service.rs). |
+| `src/`, `Cargo.toml` | The `zuko` crate: a **library** + **binary** + **staticlib with uniffi FFI**. The binary is the **host** (`zuko host`), the **CLI client** (`zuko connect`/`share`/`claim`), and the **service installer** (`zuko install`/`uninstall`); `src/main.rs` is just the dispatcher, the logic lives in `src/lib.rs` + the modules. `src/ffi.rs` exposes `derive_handoff_key` (the Argon2id code-derivation) so mobile clients can reuse it bit-exact rather than reimplementing it — see [`docs/CLIENTS.md`](docs/CLIENTS.md). Wire framing in [`src/wire.rs`](src/wire.rs), handoff in [`src/handoff.rs`](src/handoff.rs), service management in [`src/service.rs`](src/service.rs). |
 | `tests/e2e.rs` | The end-to-end PTY harness (`cargo test --test e2e -- --ignored`): spawns `zuko host`, drives `zuko connect` under a PTY, and exercises the full `share`→`claim` handoff against the live Iroh network. |
 | `scripts/` | The foreground `zuko-host.sh` dev wrapper and `release.sh` (tag + push for releases). |
-| `ios/Zuko/` | The **iOS client** (XcodeGen `project.yml` + Swift sources). |
+| `ios/Zuko/` | The **iOS client** (XcodeGen `project.yml` + Swift sources). Uses the crate's FFI surface (`Zuko.xcframework`) for code-derivation, IrohLib for the network. |
 | `docs/` | [`PROTOCOL.md`](docs/PROTOCOL.md) (wire spec for client authors), [`CLIENTS.md`](docs/CLIENTS.md) (client registry), and [`HOST.md`](docs/HOST.md) (the binary's user guide). |
 | `.github/workflows/` | CI: builds+tests the `zuko` binary (incl. the e2e harness), the iOS app (simulator), and publishes `zuko` release binaries to GitHub Releases. |
 

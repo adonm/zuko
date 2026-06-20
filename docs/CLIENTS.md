@@ -1,6 +1,6 @@
 # zuko clients
 
-zuko is **remote terminals over Iroh**: a [host daemon](../zuko/) and a
+zuko is **remote terminals over Iroh**: a [host daemon](../src/) and a
 [tiny wire protocol](PROTOCOL.md). Clients connect to a host and render its
 shell. Anyone can write one — the protocol is one Iroh stream and two frame
 types.
@@ -9,9 +9,9 @@ types.
 
 | Client | Status | Stack | Source |
 |--------|--------|-------|--------|
-| **CLI** | shipped | Rust + [crossterm](https://crates.io/crates/crossterm) | [`zuko/`](../zuko) — `zuko connect` (part of the `zuko` binary) |
+| **CLI** | shipped | Rust + [crossterm](https://crates.io/crates/crossterm) | [`src/`](../src) — `zuko connect` (part of the `zuko` binary) |
 | **iOS** | shipped | Swift + [SwiftTerm](https://github.com/migueldeicaza/SwiftTerm) + [IrohLib](https://github.com/n0-computer/iroh-ffi) | [`ios/Zuko/`](../ios/Zuko) |
-| Android | planned | Kotlin/Rust via [uniffi](https://github.com/mozilla/uniffi-rs)? | — |
+| Android | planned | Kotlin/Rust via the crate's [uniffi](https://mozilla.github.io/uniffi.rs/) FFI surface | — |
 | Linux GUI | planned | Rust + [relm4](https://relm4.org/) | — |
 | Web | idea | — | — |
 
@@ -29,6 +29,14 @@ Read [`PROTOCOL.md`](PROTOCOL.md) first — it's short. In brief:
    and read the real ticket off the uni stream. The CLI flow is
    `zuko share` → `zuko <code>` (or `zuko claim <code>` with flags); the same
    UX is the goal for every client.
+   
+   **Mobile clients:** don't reimplement the Argon2id key derivation — the
+   crate ships a [uniffi](https://mozilla.github.io/uniffi.rs/) FFI surface
+   ([`src/ffi.rs`](../src/ffi.rs)) exposing `derive_handoff_key(code)`, which
+   is literally `src/code.rs::derive_key`. Wrap the `staticlib` into an
+   XCFramework (iOS) / AAR (Android) and call it from your client so the
+   derivation is bit-exact with the CLI by construction. The iOS app uses this
+   pattern; see [`ios/Zuko/`](../ios/Zuko).
 2. Parse the host's `endpointa…` ticket.
 3. Connect over Iroh on ALPN `zuko/1`, open one bidi stream, send an initial
    `RESIZE`.

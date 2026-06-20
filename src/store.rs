@@ -51,7 +51,7 @@ pub fn lookup_ticket_or_bail(name: &str) -> Result<String> {
 /// Used by the bare-`zuko` picker and the first-run menu to surface hosts the
 /// user actually reaches for, without dragging the long-lived tickets along —
 /// they're never printed.
-pub(crate) fn saved_names() -> Vec<String> {
+pub fn saved_names() -> Vec<String> {
     load().into_iter().map(|(n, _)| n).collect()
 }
 
@@ -62,7 +62,7 @@ pub(crate) fn saved_names() -> Vec<String> {
 /// New hosts are inserted at the **front** (most-recent position), matching
 /// the iOS app's move-to-front-on-add. A re-claim of an existing name updates
 /// the ticket *and* promotes the entry to the front.
-pub(crate) fn add(name: &str, ticket: &str) -> Result<()> {
+pub fn add(name: &str, ticket: &str) -> Result<()> {
     let name = name.trim();
     let ticket = ticket.trim();
     validate_name(name)?;
@@ -90,7 +90,7 @@ pub(crate) fn add(name: &str, ticket: &str) -> Result<()> {
 /// No-op if the name isn't saved (e.g. a one-off connect via a path that
 /// didn't save); best-effort — callers swallow errors here so a failed touch
 /// never undoes a successful session.
-pub(crate) fn touch(name: &str) -> Result<()> {
+pub fn touch(name: &str) -> Result<()> {
     let name = name.trim();
     let _guard = HostsLock::acquire()?;
     let mut entries = load();
@@ -129,7 +129,7 @@ pub fn remove(name: &str) -> Result<()> {
 /// distinguish "unknown name, maybe it's a pairing code" from a real lookup
 /// failure — see [`lookup_ticket_or_bail`] for the strict variant used by
 /// `zuko connect <name>`.
-pub(crate) fn lookup(name: &str) -> Option<String> {
+pub fn lookup(name: &str) -> Option<String> {
     load().into_iter().find(|(n, _)| n == name).map(|(_, t)| t)
 }
 

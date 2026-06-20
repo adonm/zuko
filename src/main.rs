@@ -17,6 +17,10 @@
 //! Saved hosts (`zuko ls`/`rm`) live at `~/.config/zuko/hosts`, mirroring the
 //! iOS app's connection list.
 //!
+//! The host/client/handoff/protocol logic lives in the library (`src/lib.rs`);
+//! this file is just the CLI dispatcher. The library also builds an optional
+//! FFI surface (`--features ffi`) for mobile clients — see [`zuko::ffi`].
+//!
 //! ## Wire protocol (single bidirectional Iroh stream, ALPN `zuko/1`)
 //!
 //! Every message is length-prefixed so resize and data stay ordered and nothing
@@ -27,23 +31,13 @@
 //!   0x00 DATA   payload = raw terminal bytes (keystrokes up, PTY output down)
 //!   0x01 RESIZE payload = [cols: u16 BE][rows: u16 BE]   (client -> host)
 //! ```
-//!
-//! See [`wire`], [`host`], [`client`], and [`handoff`] for the implementations.
-
-mod client;
-mod code;
-mod handoff;
-mod host;
-mod secret;
-mod service;
-mod store;
-mod ticket_file;
-mod wire;
 
 use anyhow::Result;
 use clap::{Args, Parser, Subcommand};
 use inquire::{InquireError, Select};
 use std::io::IsTerminal;
+
+use zuko::{client, code, handoff, host, service, store, HostArgs, ShareArgs};
 
 #[derive(Parser)]
 #[command(
@@ -112,48 +106,6 @@ enum Command {
         #[arg(long, default_value_t = 60)]
         timeout: u64,
     },
-}
-
-#[derive(Args, Clone)]
-struct ShareArgs {
-    /// Use this ticket instead of reading `~/.config/zuko/current_ticket`
-    /// (which `zuko host` maintains). Handy for handing off a ticket captured
-    /// elsewhere without the daemon running.
-    #[arg(long)]
-    ticket: Option<String>,
-
-    /// Label shown to the claimer and used as the default save name. Defaults
-    /// to the system hostname.
-    #[arg(long)]
-    label: Option<String>,
-
-    /// Number of claims to serve before exiting (default 1).
-    #[arg(long, default_value_t = 1)]
-    count: usize,
-
-    /// Overall timeout in seconds. 0 = no timeout (default 300).
-    #[arg(long, default_value_t = 300)]
-    timeout: u64,
-}
-
-#[derive(Args, Clone)]
-struct HostArgs {
-    /// Path to the persistent secret key file. A stable key keeps the node id
-    /// stable across restarts so saved connections keep working.
-    #[arg(long)]
-    key: Option<std::path::PathBuf>,
-
-    /// Shell to launch for new connections. Defaults to `$SHELL`.
-    #[arg(long, default_value = "$SHELL")]
-    shell: String,
-
-    /// Extra args passed to the shell.
-    #[arg(long, num_args = 0.., default_values_t = Vec::<String>::new())]
-    shell_args: Vec<String>,
-
-    /// Directory to start the shell in.
-    #[arg(long)]
-    cwd: Option<std::path::PathBuf>,
 }
 
 #[derive(Args, Clone, Debug)]
@@ -334,18 +286,4 @@ fn print_saved_hosts_listing(saved: &[String]) {
     }
     eprintln!();
     eprintln!("connect with:  zuko <name>");
-}
-
-/// The zuko config dir: `$XDG_CONFIG_HOME` if set, else `$HOME/.config`.
-/// All persistent state lives here: the host's secret `key` and the client's
-/// saved `hosts`.
-pub(crate) fn config_dir() -> std::path::PathBuf {
-    if let Some(xdg) = std::env::var_os("XDG_CONFIG_HOME") {
-        return std::path::PathBuf::from(xdg);
-    }
-    let mut h = std::env::var_os("HOME")
-        .map(std::path::PathBuf::from)
-        .unwrap_or_else(|| std::path::PathBuf::from("."));
-    h.push(".config");
-    h
 }

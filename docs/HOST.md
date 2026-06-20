@@ -99,6 +99,11 @@ cargo build --release
 ./target/release/zuko host --key ~/.config/zuko/key
 ```
 
+The same `cargo build` also produces `target/release/libzuko.a` — the Rust
+staticlib wrapped into the `Zuko.xcframework` the iOS app uses for code
+derivation (see [`CLIENTS.md`](CLIENTS.md)). You don't need it for host-only
+use; it's just a side-effect of the crate being a library + binary + staticlib.
+
 ## Run the host in the foreground
 
 ```sh

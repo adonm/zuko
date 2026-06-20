@@ -1,6 +1,6 @@
 [package]
 name = "zuko"
-version = "0.2.1"
+version = "0.2.2"
 edition = "2021"
 license = "Apache-2.0"
 description = "Remote terminals over Iroh: the host daemon and reference CLI client."
@@ -10,6 +10,12 @@ publish = false
 [[bin]]
 name = "zuko"
 path = "src/main.rs"
+
+[lib]
+name = "zuko"
+# `rlib` for the binary + tests; `staticlib` so the iOS app can wrap the
+# FFI surface (src/ffi.rs) into an XCFramework.
+crate-type = ["rlib", "staticlib"]
 
 [dependencies]
 iroh = "1.0"
@@ -33,6 +39,9 @@ fs4 = "0.12"
 # Interactive host picker for bare `zuko` (arrow-key Select with filtering).
 # Builds on crossterm (already a dep), so the marginal weight is small.
 inquire = "0.7"
+# FFI bindings for mobile clients (the iOS app's `zuko-ffi` XCFramework).
+# Pinned to 0.31 to match iroh-ffi so both XCFrameworks link cleanly together.
+uniffi = "0.31"
 
 [dev-dependencies]
 tempfile = "3"

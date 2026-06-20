@@ -32,13 +32,13 @@ use iroh::SecretKey;
 /// Letters used to build pronounceable code words. Dropped: q/x/y (ambiguous
 /// and rarely useful), and the CVCV shape structurally avoids the common
 /// 4-letter offensive words (which are CVCC/CCVC, not CVCV).
-pub(crate) const CONSONANTS: &[u8] = b"bcdfghjklmnprstvwz";
-pub(crate) const VOWELS: &[u8] = b"aeiou";
+pub const CONSONANTS: &[u8] = b"bcdfghjklmnprstvwz";
+pub const VOWELS: &[u8] = b"aeiou";
 
 /// Number of CVCV words in a code. 4 words × ~13 bits = ~52 bits of entropy —
 /// vast overkill for a one-time, minutes-long handoff, and short enough to
 /// read aloud or type once.
-pub(crate) const WORDS_IN_CODE: usize = 4;
+pub const WORDS_IN_CODE: usize = 4;
 
 /// Fixed, non-secret Argon2 salt. Tied to the protocol version so a future
 /// `zuko/handoff/2` can rotate the KDF without colliding with handoff-1 keys.
@@ -62,7 +62,7 @@ fn kdf() -> Argon2<'static> {
 /// Normalise a typed code into its canonical letter sequence: lowercased, with
 /// everything except a–z stripped. Separators are only for readability, so
 /// `Tofa-Mive`, `tofa mive`, and `tofamive` all derive the same key.
-pub(crate) fn normalize_code(code: &str) -> String {
+pub fn normalize_code(code: &str) -> String {
     code.trim()
         .to_lowercase()
         .chars()
@@ -76,7 +76,7 @@ pub(crate) fn normalize_code(code: &str) -> String {
 ///
 /// Memory-hard (Argon2id, ~19 MiB) so the ~52-bit code resists offline
 /// brute-force even if the ephemeral `NodeId` is observed.
-pub(crate) fn derive_key(code: &str) -> Result<SecretKey> {
+pub fn derive_key(code: &str) -> Result<SecretKey> {
     let material = normalize_code(code);
     let mut seed = [0u8; 32];
     // With our const-constructed Argon2 + a 32-byte output buffer the only
@@ -91,7 +91,7 @@ pub(crate) fn derive_key(code: &str) -> Result<SecretKey> {
 /// Generate a fresh, memorable code: `WORD-WORD-WORD-WORD`, each word a
 /// pronounceable CVCV (e.g. `tofa-mive-laru-bedo`). Entropy comes from
 /// [`SecretKey::generate`] (OsRng).
-pub(crate) fn generate_code() -> String {
+pub fn generate_code() -> String {
     let rand = SecretKey::generate().to_bytes();
     let mut idx = 0usize;
     let mut out = Vec::with_capacity(WORDS_IN_CODE * 5 - 1);
@@ -121,7 +121,7 @@ pub(crate) fn generate_code() -> String {
 /// `VOWELS`. Real saved-host names effectively never match this — the
 /// position-constrained alphabet makes a false positive astronomically
 /// unlikely — so the disambiguation is safe in both directions.
-pub(crate) fn looks_like_code(s: &str) -> bool {
+pub fn looks_like_code(s: &str) -> bool {
     let normalized = normalize_code(s);
     if normalized.len() != WORDS_IN_CODE * 4 {
         return false;
@@ -144,7 +144,7 @@ fn pick(alphabet: &[u8], byte: u8) -> u8 {
 
 /// Default handoff label: the system hostname if we can find it cheaply,
 /// otherwise the boring-but-honest `"host"`.
-pub(crate) fn default_label() -> String {
+pub fn default_label() -> String {
     if let Ok(h) = std::env::var("HOSTNAME") {
         let h = h.trim().to_string();
         if !h.is_empty() {
@@ -163,7 +163,7 @@ pub(crate) fn default_label() -> String {
 /// Collapse a user-supplied label to a single safe line: trim, turn whitespace
 /// into `-` (so it round-trips through the newline-delimited payload and the
 /// saved-hosts file). Falls back to `"host"` if empty or comment-like.
-pub(crate) fn sanitize_label(s: &str) -> String {
+pub fn sanitize_label(s: &str) -> String {
     let cleaned: String = s
         .trim()
         .chars()
