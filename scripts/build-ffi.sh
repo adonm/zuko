@@ -36,13 +36,26 @@ done
 #    (main.rs would fail to cross-compile — it imports desktop-only deps).
 #    Target-cfg in Cargo.toml keeps portable-pty/crossterm/clap/etc. out of
 #    the iOS build, so only `code.rs` + `ffi.rs` + their deps compile.
-echo "==> cargo build --lib --release for iOS targets"
-cargo build --lib --release --target aarch64-apple-ios
-cargo build --lib --release --target aarch64-apple-ios-sim
-cargo build --lib --release --target x86_64-apple-ios
+#
+# panic=abort (iOS-only via env override, NOT in Cargo.toml): drops
+# `_rust_eh_personality` from ZukoRust's staticlib so it doesn't collide
+# with the same symbol in iroh-ffi's prebuilt Iroh.framework when both
+# are linked into the iOS app. The CLI keeps panic=unwind (Cargo.toml
+# default) because src/client.rs relies on Drop-guard unwinding to
+# restore the terminal from raw mode on panic. iOS only uses ZukoRust
+# for Argon2id key derivation (code::derive_key — a pure function with
+# no I/O and no reason to panic), so abort-on-panic is correct here.
+echo "==> cargo build --lib --release for iOS targets (panic=abort)"
+CARGO_PROFILE_RELEASE_PANIC=abort cargo build --lib --release --target aarch64-apple-ios
+CARGO_PROFILE_RELEASE_PANIC=abort cargo build --lib --release --target aarch64-apple-ios-sim
+CARGO_PROFILE_RELEASE_PANIC=abort cargo build --lib --release --target x86_64-apple-ios
 
 # 2. Build a host staticlib so uniffi-bindgen can read the crate metadata.
 #    (--library mode works against a staticlib; no cdylib needed.)
+#    No panic=abort here — the host build is for bindgen metadata only,
+#    never linked into the iOS app, so the duplicate-symbol concern
+#    doesn't apply and matching Cargo.toml's release profile keeps the
+#    two builds (iOS and host) bit-compatible for metadata reads.
 echo "==> cargo build --lib --release (host, for bindgen metadata)"
 cargo build --lib --release
 
