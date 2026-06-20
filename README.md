@@ -27,6 +27,11 @@ pluggable: the iOS app and the CLI are the first two, and Android / a Linux GUI
   stays put.
 - **Real PTY.** Bytes flow verbatim between the client and the host's shell, so
   every terminal program behaves exactly as if it were local.
+- **Survives network drops.** A session outlives its connection: drop wifi, put
+  the laptop to sleep, switch networks — the client reconnects and resumes the
+  same shell (cwd, running command, editor intact). The host keeps each session
+  alive for 30 min after you detach, so even an app relaunch can resume. See
+  [Reconnect & resume](#reconnect--resume).
 - **No port forwarding, no relay you run.** Iroh's public relays + NAT
   traversal do the reachability; the connection is end-to-end encrypted by the
   host's key.
@@ -107,20 +112,48 @@ the [build workflow](.github/workflows/build.yml); it's an unsigned simulator
 build, so for a real device you need to sign it with your own developer
 account.)
 
+## Reconnect & resume
+
+A zuko **session** (PTY + shell + a 1 MiB buffer of recent output) outlives any
+single connection, so a dropped link is recoverable rather than fatal:
+
+- **The CLI auto-reconnects.** `zuko connect` keeps running across a network
+  drop — it backs off, redials, and resumes the same shell where you left off
+  (scrollback is replayed from the host's buffer). Print `exit` in the remote
+  shell to end the session for real; `kill` the `zuko` process to give up.
+- **The iOS app shows state.** A brief blip surfaces nothing; a longer stall
+  shows a *Connection stalled — will resume* banner, then *Reconnecting…* as it
+  redials. The session id is saved on the connection, so even force-quitting
+  and relaunching the app resumes the last session.
+- **Full-screen apps redraw.** `vim`/`htop` recover a clean screen on resume —
+  the client re-sends its size, the host resizes the PTY, and the app gets a
+  `SIGWINCH` and redraws.
+
+The host reaps a session when its shell exits, or after a 30-minute grace
+period with no attached client (mosh-style, so an abandoned `vim` doesn't run
+forever). Restarting `zuko host` ends all sessions (the shells get `SIGHUP`),
+same as restarting a tmux server.
+
 ## Wire protocol
 
 One bidirectional Iroh stream, ALPN `zuko/1`. Each message is length-prefixed
-so resize and data stay ordered and nothing leaks into the terminal as escape
-codes:
+so the frame types share an ordering and nothing leaks into the terminal as
+escape codes:
 
 ```
 [type: u8][len: u16 big-endian][payload: len bytes]
-  0x00 DATA   payload = raw terminal bytes
-  0x01 RESIZE payload = [cols: u16 BE][rows: u16 BE]   (client -> host)
+  0x00 DATA    payload = raw terminal bytes
+  0x01 RESIZE  payload = [cols: u16 BE][rows: u16 BE]   (client -> host)
+  0x02 HELLO   client -> host, first frame: caps + size + optional resume id
+  0x03 WELCOME host -> client, first frame: caps + session id + resumed bit
+  0x04 PING  / 0x05 PONG   8-byte nonce, bidirectional heartbeat
 ```
 
-The full spec (lifecycle, semantics, the ticket-handoff ALPN used by
-`share`/`claim`) is in [`docs/PROTOCOL.md`](docs/PROTOCOL.md). Reference impls:
+`HELLO`/`WELCOME` negotiate capabilities (session resume, heartbeat) and mint
+the session id that makes reconnect-and-resume work; `PING`/`PONG` surface a
+stuck link faster than the QUIC idle timeout. The full spec (lifecycle,
+session resume, heartbeat, the ticket-handoff ALPN used by `share`/`claim`)
+is in [`docs/PROTOCOL.md`](docs/PROTOCOL.md). Reference impls:
 [`src/wire.rs`](src/wire.rs) (Rust),
 [`ios/Zuko/Zuko/Net/Wire.swift`](ios/Zuko/Zuko/Net/Wire.swift) (Swift).
 
@@ -154,7 +187,8 @@ The full spec (lifecycle, semantics, the ticket-handoff ALPN used by
 - Anyone who has the ticket can connect, so treat it like an SSH private key.
   Rotate by deleting `~/.config/zuko/key` and restarting; the node id changes
   and all old tickets stop working.
-- The host runs your `$SHELL` per connection. For a specific command, pass
+- The host runs your `$SHELL` per session (a session survives reconnects; see
+  [Reconnect & resume](#reconnect--resume)). For a specific command, pass
   `--shell` / `--shell-args` (see `zuko host --help`).
 
 ## Development

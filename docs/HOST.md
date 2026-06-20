@@ -72,8 +72,9 @@ zuko home                  # = zuko connect home (shorthand)
 ```
 
 The session is a real PTY — `vim`, `htop`, resize, and Ctrl-C all behave like a
-local shell. Disconnect by exiting the remote shell (e.g. `exit` or Ctrl-D),
-which closes the session.
+local shell. Exiting the remote shell (`exit` or Ctrl-D) ends the session for
+real; merely losing the connection does **not** — the client reconnects and
+resumes the same shell (see [Sessions & resume](#sessions--resume) below).
 
 ## Pairing: how `share` / `claim` work
 
@@ -126,12 +127,40 @@ zuko host --help
 | `--shell-args` | _(none)_ | Extra args for the shell. |
 | `--cwd` | `$HOME` | Working directory. |
 
+## Sessions & resume
+
+A zuko session — the PTY, the shell running in it, and a ~1 MiB ring buffer of
+recent output — **outlives the connection**. When a client disconnects (network
+drop, app backgrounded, laptop slept) the host *detaches*: the PTY reader keeps
+running and the ring buffer keeps filling, but nothing is sent over the network.
+A client that reconnects (with the session id the host assigned) resumes the
+same shell — recent output is replayed from the buffer, then live output flows
+again. State (cwd, running command, an open editor) is preserved across the
+blip and even across an app relaunch.
+
+A session ends, and the host reaps it, when:
+
+- the shell exits (the host sees PTY EOF), or
+- no client has been attached for **30 minutes** (mosh-style grace, so an
+  abandoned shell doesn't run forever), or
+- `zuko host` restarts (the shells get `SIGHUP`, same as restarting a tmux
+  server — there's no on-disk session persistence across host restarts yet).
+
+The CLI (`zuko connect`) auto-reconnects with a bounded backoff; the iOS app
+shows *Reconnecting…* / *Connection stalled* states and resumes on its own. The
+session id is **not a secret** — the ticket already gates access, so anyone
+holding it can resume any of the host's sessions (same trust boundary as mosh's
+key).
+
 ## Multiple devices
 
-Each connection gets its own independent PTY + shell, so several phones,
-terminals (or the same one multiple times) can connect at once. They all share
-the host's single stable identity — and because pairing happens through
-one-time codes, you can mint a fresh code per device without rotating anything.
+Each session is its own independent PTY + shell. Several phones, terminals (or
+the same one multiple times) can be attached at once under the host's single
+stable identity — and because pairing happens through one-time codes, you can
+mint a fresh code per device without rotating anything. A second client
+resuming an already-attached session **roams** (takes over; the previous
+connection is dropped), matching the mosh/tmux model rather than mirroring one
+screen to many.
 
 ## Rotate the identity
 

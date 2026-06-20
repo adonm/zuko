@@ -211,6 +211,59 @@ is used on iOS; on Linux, [alacritty_terminal](https://crates.io/crates/alacritt
 or [vte](https://crates.io/crates/vte) are good choices. The host sends bytes
 compatible with `TERM=xterm-256color`.
 
+## Design notes
+
+A few architectural choices worth recording, since they shape what client
+authors can rely on:
+
+### No head-of-line blocking between input and output
+
+QUIC streams have independent send/recv halves, and each endpoint's congestion
+controller governs only its *outgoing* direction — so a saturated host→client
+download (a `cat hugefile`) does **not** consume the client→host keystroke
+budget. The host runs its input and output pumps as separate tasks on a
+multi-threaded runtime, and the iOS app runs its write pump on a background
+task, so output rendering never starves keystroke delivery.
+
+### Backpressure is end-to-end and bounded
+
+Every hop between the shell and the network has a bounded buffer, so a flood
+can't grow memory without limit — it back-pressures all the way back to the
+shell:
+
+- Host output path: PTY reader → bounded channel (128) → iroh send stream. When
+  full, the reader thread blocks → the kernel TTY buffer fills → the shell's
+  own `write(2)` blocks. A verbose command simply *pauses* until the client
+  catches up; it isn't buffered infinitely anywhere.
+- Host input path: iroh recv → bounded channel (128) → PTY writer. Saturation
+  stops the recv read → QUIC flow control chokes the peer.
+- Client output path: same — the receiver accumulates at most one partial
+  frame (~64 KiB, the `u16` wire max) and renders synchronously.
+
+The iOS outbound queue is capped (`bufferingOldest`, 256) so a user typing or
+pasting during a brownout can't grow memory; it drops the impatient tail
+rather than block the UI. The CLI keeps keystrokes in a bounded channel so
+they flush on reconnect.
+
+### Why no server-side terminal emulator
+
+mosh runs the terminal emulator on the server so it can send screen *state* on
+resume. zuko replays raw *bytes* from the ring buffer instead — simpler, and
+keeps the client's terminal emulator (SwiftTerm, your local terminal) as the
+single source of rendering truth. The trade-off: a resume into a full-screen
+app may briefly show a mid-redraw screen, fixed by re-sending the size
+(→ `SIGWINCH` → redraw). Line-oriented output replays cleanly (the snapshot
+starts at the first newline). A future Tier-4 state-sync would remove the
+caveat at the cost of a much larger rewrite.
+
+### Heartbeat vs. transport keepalive
+
+iroh's QUIC keepalive (5 s) already keeps the transport alive; the app-level
+`PING`/`PONG` exists to give the *client* a liveness signal it can surface (a
+"stalled" UI state) faster than the 15–30 s QUIC idle timeout, after which the
+recv errors and the reconnect triggers. The host doesn't gate reaping on
+heartbeat state — it reaps on shell exit or the grace timer.
+
 ## Security
 
 - The ticket is the secret. Anyone holding it can open a shell; store and
