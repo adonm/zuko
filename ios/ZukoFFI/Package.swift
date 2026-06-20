@@ -25,24 +25,25 @@ let package = Package(
     products: [
         .library(
             name: "ZukoFFI",
-            targets: ["ZukoFFI", "Zuko"]),
+            targets: ["ZukoFFI", "ZukoRust"]),
     ],
     dependencies: [],
     targets: [
         // The binary target wraps the prebuilt XCFramework (the Rust staticlib
-        // + C headers + modulemap). Named `Zuko` to match the framework name
-        // inside the XCFramework, so the `import zukoFFI` sub-module resolves
-        // through its modulemap.
+        // + C headers + modulemap). Named `ZukoRust` (not `Zuko`) to avoid a
+        // module dependency cycle with the iOS app target, which is also named
+        // `Zuko`. The `import ZukoRust` sub-module resolves through its
+        // framework modulemap.
         .binaryTarget(
-            name: "Zuko",
-            path: "Zuko.xcframework"),
+            name: "ZukoRust",
+            path: "ZukoRust.xcframework"),
         // The source target compiles the uniffi-generated Swift bindings
         // (`ZukoFFI.swift`), which call the C FFI functions from the binary
         // target. This is what the iOS app imports: `import ZukoFFI`.
         .target(
             name: "ZukoFFI",
             dependencies: [
-                .byName(name: "Zuko"),
+                .byName(name: "ZukoRust"),
             ],
             path: "Sources/ZukoFFI",
             linkerSettings: [

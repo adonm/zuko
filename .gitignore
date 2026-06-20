@@ -22,7 +22,7 @@ ios/Zuko/Zuko.xcodeproj/
 # Built by scripts/build-ffi.sh — the Rust staticlib wrapped as an XCFramework.
 # Regenerate with `sh scripts/build-ffi.sh` (macOS) or the build-ios CI step.
 # The Swift bindings (Sources/ZukoFFI/ZukoFFI.swift) ARE committed (deterministic).
-ios/ZukoFFI/Zuko.xcframework/
+ios/ZukoFFI/ZukoRust.xcframework/
 
 # Rust / host
 target/

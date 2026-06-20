@@ -15,7 +15,10 @@ set -eu
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 
-FRAMEWORK_NAME="Zuko"
+FRAMEWORK_NAME="ZukoRust"  # not "Zuko" — the iOS app target is also `Zuko`,
+                           # so a framework of the same name creates a module
+                           # dependency cycle. Distinct name, same pattern as
+                           # iroh-ffi (framework `Iroh` ≠ consumer app name).
 LIB_NAME="zuko"
 OUT_DIR="$ROOT/ios/ZukoFFI"
 TARGET_DIR=$(cargo metadata --format-version 1 --no-deps | python3 -c 'import json,sys;print(json.load(sys.stdin)["target_directory"])')
