@@ -49,14 +49,20 @@ jobs:
         with:
           key: ios-sim
 
-      - name: Install iOS tooling (xcodegen via mise/brew)
-        run: mise run setup-ios
+      - name: Install iOS tooling (xcodegen + fastlane via mise/brew; xtool via setup-xtool)
+        # xtool drives the build now (replaces xcodegen + xcodebuild for the
+        # smoke build). xcodegen + fastlane stay installed because release-ios
+        # still uses them — `mise run setup-ios` is the canonical "everything
+        # iOS" task, `mise run setup-xtool` layers xtool on top.
+        run: |
+          mise run setup-ios
+          mise run setup-xtool
 
-      # Build the Rust staticlib into a Zuko.xcframework + regenerate the
-      # Swift bindings. The iOS app's project.yml references the local
-      # ZukoFFI package (../ZukoFFI), which expects Zuko.xcframework to
-      # exist at resolve time — so this must run before `xcodegen`.
-      - name: Build Zuko.xcframework (Rust FFI for iOS)
+      # Build the Rust staticlib into a ZukoRust.xcframework + regenerate the
+      # Swift bindings. The Package.swift references the local ZukoFFI
+      # package, which expects ZukoRust.xcframework to exist at SwiftPM
+      # resolve time — so this must run before `xtool dev build`.
+      - name: Build ZukoRust.xcframework (Rust FFI for iOS)
         run: sh scripts/build-ffi.sh
 
       # Resolve the same version env release-ios uses so the simulator
@@ -68,7 +74,14 @@ jobs:
           echo "ZUKO_VERSION=$(sh scripts/version.sh)" >> "$GITHUB_ENV"
           echo "ZUKO_BUILD_NUMBER=$(date -u +%s)" >> "$GITHUB_ENV"
 
-      - name: Generate + resolve + build
+      # `mise run build-ios` now drives xtool (see mise.toml). The task:
+      #   1. Patches Info.plist with the resolved version (xtool has no
+      #      xcargs equivalent).
+      #   2. Runs `xtool dev build --configuration debug` (builds Zuko.app).
+      #   3. Restores Info.plist placeholders (clean working tree).
+      #   4. Patches embedded frameworks' MinimumOSVersion (the iroh-ffi
+      #      packaging bug the legacy postBuildScripts step fixed inline).
+      - name: xtool build
         env:
           ZUKO_VERSION: ${{ env.ZUKO_VERSION }}
           ZUKO_BUILD_NUMBER: ${{ env.ZUKO_BUILD_NUMBER }}
@@ -76,10 +89,11 @@ jobs:
 
       - name: Locate .app
         id: app
-        working-directory: ios/Zuko
+        working-directory: ios
         run: |
-          # Absolute path — upload-artifact resolves paths from the repo root.
-          app="$(find "$(pwd)/build/Build/Products" -name 'Zuko.app' -type d | head -1)"
+          # xtool emits Zuko.app somewhere under .build/ or the working
+          # dir (path varies — find by name is the most stable contract).
+          app="$(find "$(pwd)" -name 'Zuko.app' -type d -not -path '*/.build/checkouts/*' | head -1)"
           echo "path=$app" >> "$GITHUB_OUTPUT"
           echo "Found $app"
 
