@@ -53,11 +53,24 @@ run = "sh scripts/build-ffi.sh"
 [tasks.build-ios]
 description = "Generate the Xcode project and build the iOS app (iOS Simulator, unsigned). macOS only. Run `setup-ios` + `build-ffi` first."
 dir = "ios/Zuko"
-run = [
-    "xcodegen generate",
-    "xcodebuild -resolvePackageDependencies -project Zuko.xcodeproj -scheme Zuko",
-    "xcodebuild build -project Zuko.xcodeproj -scheme Zuko -destination 'generic/platform=iOS Simulator' -derivedDataPath build CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO",
-]
+# ZUKO_VERSION (defaults to Cargo.toml via scripts/version.sh) and
+# ZUKO_BUILD_NUMBER (defaults to "1") are surfaced to xcodebuild via
+# xcargs so the simulator .app reports the synced marketing version +
+# a build number — matching what release-ios.yml's signed build will
+# produce. CI sets both explicitly; local dev gets the Cargo-derived
+# version + "1" so manual builds don't drift from `cargo run -- --version`.
+run = """
+v="${ZUKO_VERSION:-$(sh "$(git rev-parse --show-toplevel)/scripts/version.sh")}"
+b="${ZUKO_BUILD_NUMBER:-1}"
+echo "Building Zuko $v (build $b) for simulator"
+xcodegen generate
+xcodebuild -resolvePackageDependencies -project Zuko.xcodeproj -scheme Zuko
+xcodebuild build -project Zuko.xcodeproj -scheme Zuko \
+    -destination 'generic/platform=iOS Simulator' \
+    -derivedDataPath build \
+    CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO \
+    MARKETING_VERSION="$v" CURRENT_PROJECT_VERSION="$b"
+"""
 
 [tasks.setup-ios]
 description = "Install iOS tooling (xcodegen, fastlane) via Homebrew. macOS only."

@@ -17,12 +17,20 @@ APP_IDENTIFIER = "dev.adonm.zuko"
 # `fastlane/` when running a lane (see runner.rb's chdir around lane
 # execution), so relative paths would resolve against `fastlane/` and miss
 # `Zuko/` and `Zuko/Zuko.xcodeproj` next door. `__dir__` is this Fastfile's
-# directory; one level up is `ios/`.
+# directory; one level up is `ios/`, two is the repo root.
 IOS_DIR = File.expand_path("..", __dir__)
+ROOT_DIR = File.expand_path("../..", __dir__)
 XCODEPROJ = File.join(IOS_DIR, "Zuko", "Zuko.xcodeproj")
 PROJECT_SPEC = File.join(IOS_DIR, "Zuko", "project.yml")
+VERSION_SH = File.join(ROOT_DIR, "scripts", "version.sh")
 
 default_platform(:ios)
+
+# CI-only privacy: don't send fastlane analytics from our pipeline. The
+# banner appears at the top of every run ("Sending anonymous analytics
+# information… disable by adding opt_out_usage"); this is the recommended
+# opt-out for non-interactive environments.
+opt_out_usage
 
 # App Store Connect API key for TestFlight upload (assembled from secrets).
 def asc_api_key
@@ -76,6 +84,27 @@ platform :ios do
       project.save
     end
 
+    # MARKETING_VERSION + CURRENT_PROJECT_VERSION: keep both in lockstep
+    # with Cargo.toml + ASC's strict-monotonic-build-number rule. The iOS
+    # app's project.yml carries hand-maintained fallbacks for local dev; CI
+    # overrides both via xcargs so every signed build reports the binary's
+    # real version and a never-repeating build number.
+    #
+    # - MARKETING_VERSION: read from Cargo.toml via scripts/version.sh so
+    #   the .ipa's CFBundleShortVersionString always matches `cargo run
+    #   -- --version`. A second source of truth here is exactly how we
+    #   drifted to 0.2.0 on device while the CLI shipped 0.4.3.
+    # - CURRENT_PROJECT_VERSION: ASC rejects any upload whose build number
+    #   isn't strictly higher than the previous one for the same marketing
+    #   version. Locally we default to "1" (matches project.yml); CI sets
+    #   ZUKO_BUILD_NUMBER to Unix seconds (`date -u +%s`) so every upload is
+    #   unique and monotonic while fitting in Int32 (older Xcode tooling's
+    #   ceiling — see release-ios.yml's "Resolve build number" step).
+    marketing_version = `#{VERSION_SH}`.strip
+    UI.user_error!("couldn't read MARKETING_VERSION from #{VERSION_SH}") if marketing_version.empty?
+    build_number = ENV.fetch("ZUKO_BUILD_NUMBER", "1")
+    UI.message("building Zuko #{marketing_version} (build #{build_number})")
+
     gym(
       project: XCODEPROJ,
       scheme: "Zuko",
@@ -83,9 +112,15 @@ platform :ios do
       export_method: "app-store",
       # Only the safe, project-wide settings go through xcargs now — the
       # target-specific signing bits were written into the pbxproj above.
+      # MARKETING_VERSION / CURRENT_PROJECT_VERSION are per-target settings
+      # but xcargs surfaces them as command-line overrides, which win over
+      # anything in the pbxproj, so the project.yml fallbacks stay correct
+      # for local `mise run build-ios` and CI overrides them here.
       xcargs: {
         "DEVELOPMENT_TEAM" => ENV.fetch("TEAM_ID", ""),
         "CODE_SIGNING_REQUIRED" => "YES",
+        "MARKETING_VERSION" => marketing_version,
+        "CURRENT_PROJECT_VERSION" => build_number
       }
     )
   end

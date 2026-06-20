@@ -9,9 +9,14 @@ on:
 jobs:
   build:
     name: Build iOS app (simulator)
-    runs-on: macos-15
+    # macos-latest (currently macos-15) — the *Xcode* version is what we
+    # care about, and the explicit "Select newest Xcode" step below pins
+    # that, so the runner macOS version is just the host OS for brew +
+    # xcodebuild. Tracking macos-latest keeps us off stale runner images
+    # without changing which Xcode we build with.
+    runs-on: macos-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       # Fast lint pass — fails in seconds on style/correctness issues, before
       # the ~10 min FFI compile + xcodebuild. SwiftLint is on Homebrew, so the
@@ -54,7 +59,19 @@ jobs:
       - name: Build Zuko.xcframework (Rust FFI for iOS)
         run: sh scripts/build-ffi.sh
 
+      # Resolve the same version env release-ios uses so the simulator
+      # .app's CFBundleShortVersionString matches Cargo.toml. Lets us
+      # verify the version is correctly threaded before cutting a release
+      # — without it, only the TestFlight upload enforces sync.
+      - name: Resolve version env
+        run: |
+          echo "ZUKO_VERSION=$(sh scripts/version.sh)" >> "$GITHUB_ENV"
+          echo "ZUKO_BUILD_NUMBER=$(date -u +%s)" >> "$GITHUB_ENV"
+
       - name: Generate + resolve + build
+        env:
+          ZUKO_VERSION: ${{ env.ZUKO_VERSION }}
+          ZUKO_BUILD_NUMBER: ${{ env.ZUKO_BUILD_NUMBER }}
         run: mise run build-ios
 
       - name: Locate .app
@@ -67,7 +84,7 @@ jobs:
           echo "Found $app"
 
       - name: Upload app
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: Zuko-app
           path: ${{ steps.app.outputs.path }}

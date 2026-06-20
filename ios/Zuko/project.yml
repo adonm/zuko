@@ -40,7 +40,15 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: dev.adonm.zuko
         PRODUCT_NAME: Zuko
-        MARKETING_VERSION: "0.2.0"
+        # Local-dev fallback. CI overrides both via xcargs (see
+        # fastlane/Fastfile + .github/workflows/*-ios.yml): MARKETING_VERSION
+        # always comes from Cargo.toml via scripts/version.sh, and
+        # CURRENT_PROJECT_VERSION comes from a per-build monotonic value
+        # (Unix seconds via `date -u +%s`) so App Store Connect sees a
+        # strictly-increasing build number on every upload. Bump these
+        # defaults when you cut a release so a fresh `mise run build-ios`
+        # matches the binary version.
+        MARKETING_VERSION: "0.4.3"
         CURRENT_PROJECT_VERSION: "1"
         TARGETED_DEVICE_FAMILY: "1"  # iPhone only — avoids iPad multitasking
         # orientation requirements that need UISupportedInterfaceOrientations~ipad

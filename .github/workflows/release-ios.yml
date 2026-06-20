@@ -1,13 +1,30 @@
 name: release-ios
 
-# Build a SIGNED iOS app and (optionally) upload to TestFlight — entirely in CI,
-# no Mac required. Signing material lives in GitHub secrets on THIS repo (the
-# .p12 cert + .mobileprovision profile). See ios/DISTRIBUTION.md for the
-# one-time setup to obtain them.
+# Build a SIGNED iOS app and upload it to TestFlight — entirely in CI, no Mac
+# required. Signing material lives in GitHub secrets on THIS repo (the .p12
+# cert + .mobileprovision profile). See ios/DISTRIBUTION.md for the one-time
+# setup to obtain them.
 #
 # Tools come from mise (rust) + `mise run setup-ios` (brew: xcodegen, fastlane).
+#
+# Triggers:
+#   - push tag v*       → tag-driven release (lane=beta, version from the tag)
+#   - release published → GitHub-Release-driven release (lane=beta)
+#   - workflow_dispatch → manual, pick lane (beta = TestFlight, build = .ipa only)
+#
+# MARKETING_VERSION is always read from Cargo.toml via scripts/version.sh
+# (the canonical source) and CURRENT_PROJECT_VERSION is a UTC timestamp so
+# App Store Connect sees a strictly-increasing build number on every upload
+# — `bundle version must be higher than the previously uploaded version` is
+# what happens when this regresses (it did, at MARKETING_VERSION=0.2.0 /
+# CURRENT_PROJECT_VERSION=1 stuck while the CLI shipped 0.4.3).
 
 on:
+  push:
+    tags:
+      - 'v*'
+  release:
+    types: [published]
   workflow_dispatch:
     inputs:
       lane:
@@ -23,10 +40,39 @@ permissions:
 
 jobs:
   build:
-    name: signed build (${{ inputs.lane }})
-    runs-on: macos-15
+    name: signed build (${{ (github.event_name == 'workflow_dispatch' && inputs.lane) || 'beta' }})
+    # Skip duplicate runs: when a release is published immediately after the
+    # tag push that created it, both events fire for the same SHA. The tag
+    # push is enough; the release event becomes redundant. `release.created`
+    # lags the tag push by seconds, so the concurrency group naturally
+    # collapses the second one.
+    concurrency:
+      group: release-ios-${{ github.ref }}
+      cancel-in-progress: false
+    # macos-latest (currently macos-15) — same reasoning as build-ios.yml:
+    # the *Xcode* version is what we care about for signed builds, pinned
+    # explicitly by the "Select newest Xcode" step below, so the runner
+    # macOS version is just the host OS. Tracking macos-latest keeps us
+    # off stale runner images without changing which Xcode builds the .ipa.
+    runs-on: macos-latest
+    env:
+      # Always beta on tag/release events; respect the dropdown on dispatch.
+      LANE: ${{ (github.event_name == 'workflow_dispatch' && inputs.lane) || 'beta' }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
+
+      # Resolve a build number that's strictly monotonic per marketing
+      # version AND fits in Int32. App Store Connect requires every upload
+      # of the same `MARKETING_VERSION` to carry a strictly-greater
+      # `CFBundle_VERSION`; failure shows up as
+      # "The bundle version must be higher than the previously uploaded
+      # version (-19232)". Unix seconds (currently ~1.75e9) fit Int32 with
+      # headroom until 2038, are unique per second in practice (builds take
+      # minutes), and are universally accepted by ASC. Larger schemes like
+      # `github.run_id` (~2.8e10 today) work for current ASC but trip the
+      # Int32 limit that older Xcode tooling still enforces.
+      - name: Resolve build number
+        run: echo "ZUKO_BUILD_NUMBER=$(date -u +%s)" >> "$GITHUB_ENV"
 
       - name: Select newest Xcode
         run: |
@@ -50,8 +96,18 @@ jobs:
         with:
           key: ios-release
 
-      - name: Install iOS tooling (xcodegen + fastlane via mise/brew)
+      - name: Install iOS tooling (xcodegen via brew; fastlane via bundler)
         run: mise run setup-ios
+
+      # Resolve the bundler-driven fastlane from ios/fastlane/Gemfile so the
+      # build is reproducible against the pinned gem versions (instead of
+      # whatever Homebrew bottled that week, which had been shadowing itself
+      # with the runner's pre-installed 3.3-gem copy).
+      - name: bundle install (fastlane + xcodeproj from Gemfile)
+        working-directory: ios
+        run: |
+          bundle config set path 'vendor/bundle'
+          bundle install --jobs 4 --retry 3
 
       # Build the Rust staticlib into a ZukoRust.xcframework + regenerate the
       # Swift bindings. The app's project.yml references the local ZukoFFI
@@ -85,7 +141,7 @@ jobs:
           echo "APP_PROFILE_UUID=$uuid" >> "$GITHUB_ENV"
           echo "APP_PROFILE_NAME=$name" >> "$GITHUB_ENV"
 
-      - name: fastlane ${{ inputs.lane }}
+      - name: fastlane ${{ env.LANE }}
         working-directory: ios
         env:
           ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
@@ -94,7 +150,7 @@ jobs:
           TEAM_ID: ${{ secrets.TEAM_ID }}
           LANG: en_US.UTF-8
           LC_ALL: en_US.UTF-8
-        run: fastlane ${{ inputs.lane }}
+        run: bundle exec fastlane $LANE
 
       - name: Locate .ipa
         id: ipa
@@ -104,7 +160,7 @@ jobs:
           echo "Found $ipa"
 
       - name: Upload .ipa
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: Zuko-ipa
           path: ${{ steps.ipa.outputs.path }}
