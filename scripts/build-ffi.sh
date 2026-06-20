@@ -37,18 +37,49 @@ done
 #    Target-cfg in Cargo.toml keeps portable-pty/crossterm/clap/etc. out of
 #    the iOS build, so only `code.rs` + `ffi.rs` + their deps compile.
 #
-# panic=abort (iOS-only via env override, NOT in Cargo.toml): drops
-# `_rust_eh_personality` from ZukoRust's staticlib so it doesn't collide
-# with the same symbol in iroh-ffi's prebuilt Iroh.framework when both
-# are linked into the iOS app. The CLI keeps panic=unwind (Cargo.toml
-# default) because src/client.rs relies on Drop-guard unwinding to
-# restore the terminal from raw mode on panic. iOS only uses ZukoRust
-# for Argon2id key derivation (code::derive_key — a pure function with
-# no I/O and no reason to panic), so abort-on-panic is correct here.
-echo "==> cargo build --lib --release for iOS targets (panic=abort)"
-CARGO_PROFILE_RELEASE_PANIC=abort cargo build --lib --release --target aarch64-apple-ios
-CARGO_PROFILE_RELEASE_PANIC=abort cargo build --lib --release --target aarch64-apple-ios-sim
-CARGO_PROFILE_RELEASE_PANIC=abort cargo build --lib --release --target x86_64-apple-ios
+# Symbol localization (the real fix for the iroh-ffi link conflict):
+# iroh-ffi ships Iroh.framework as a static archive that includes Rust's
+# std library object files (containing `_rust_eh_personality`, `_rust_alloc`,
+# etc.). Our libzuko.a ALSO pulls in std for `code::derive_key`. When both
+# archives are linked into the iOS app, Apple's linker sees duplicate
+# definitions and errors out:
+#     duplicate symbol '_rust_eh_personality' in:
+#         ZukoRust.framework/ZukoRust[...](std-...rcgu.o)
+#         Iroh.framework/Iroh[...](iroh_ffi...-cgu.12.rcgu.o)
+#
+# panic=abort on our side doesn't help — std itself is compiled with
+# unwind regardless of our crate's panic strategy. llvm-objcopy's
+# --wildcard-localize-symbol='_rust_*' is the principled fix: it marks
+# every Rust-internal std symbol in OUR archive as local (non-exported),
+# so the linker resolves them all from iroh-ffi's archive. Safe because
+# ZukoRust's FFI surface (code::derive_key) only exchanges byte arrays
+# — no complex Rust types cross the boundary, so allocator/object-file
+# representation mismatches between two std copies can't bite.
+#
+# Our own `zuko_*` exports (the uniffi-generated FFI surface in ffi.rs)
+# don't match the `_rust_*` glob, so they stay externally visible.
+echo "==> cargo build --lib --release for iOS targets + localize std symbols"
+OBJCOPY="$(rustup which --toolchain "$(rustup show active-toolchain | cut -d' ' -f1)" llvm-objcopy 2>/dev/null || true)"
+if [ -z "$OBJCOPY" ]; then
+    rustup component add llvm-tools-preview >/dev/null
+    OBJCOPY="$(find "$(rustup show home)/toolchains" -name llvm-objcopy -type f | head -1)"
+fi
+echo "    using: $OBJCOPY"
+
+build_and_localize() {
+    target="$1"
+    cargo build --lib --release --target "$target"
+    lib="target/$target/release/lib${LIB_NAME}.a"
+    # Wildcard-localize requires llvm-objcopy 13+ (Rust 1.96 ships LLVM 19, so fine).
+    "$OBJCOPY" --wildcard-localize-symbol='_rust_*' "$lib"
+    # Verify: nm should show 'r' (relocatable/local) for _rust_eh_personality,
+    # 'T' (text/external) for our zuko_* exports. Quick sanity check.
+    nm "$lib" 2>/dev/null | grep -E ' (_rust_eh_personality|_zuko_derive_handoff_key)$' | head -5 || true
+}
+
+build_and_localize aarch64-apple-ios
+build_and_localize aarch64-apple-ios-sim
+build_and_localize x86_64-apple-ios
 
 # 2. Build a host staticlib so uniffi-bindgen can read the crate metadata.
 #    (--library mode works against a staticlib; no cdylib needed.)
