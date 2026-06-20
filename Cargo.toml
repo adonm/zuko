@@ -65,6 +65,12 @@ fs4 = "0.12"
 # Interactive host picker for bare `zuko` (arrow-key Select with filtering).
 # Builds on crossterm (already a dep), so the marginal weight is small.
 inquire = "0.7"
+# Memorable 2-word pairing codes (adjective-noun from petname's large
+# wordlist) for `zuko share`. `default-features = false` drops clap + default
+# RNG; `default-words` brings in the embedded wordlists (small/medium/large).
+petname = { version = "3", default-features = false, features = ["default-words"] }
+# RNG for generate_code (petname's generate_into takes a &mut dyn Rng).
+rand = "0.10"
 
 [dev-dependencies]
 tempfile = "3"
