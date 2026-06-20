@@ -153,6 +153,15 @@ jobs:
           TEAM_ID: ${{ secrets.TEAM_ID }}
           LANG: en_US.UTF-8
           LC_ALL: en_US.UTF-8
+          # The Fastfile already calls `opt_out_usage`, but fastlane logs
+          # the "Sending anonymous analytics information… disable by adding
+          # opt_out_usage" banner BEFORE parsing the Fastfile. Setting the
+          # env var suppresses the banner at boot — actual upload was
+          # already disabled by the Fastfile call, this is purely cosmetic.
+          FASTLANE_OPT_OUT_USAGE: "1"
+          # Skip the interactive "fastlane update available" prompt and any
+          # related prompts; CI is non-interactive.
+          FASTLANE_SKIP_NEWEST_CHECK: "1"
         run: bundle exec fastlane $LANE
 
       - name: Locate .ipa
