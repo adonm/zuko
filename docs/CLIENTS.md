@@ -38,8 +38,8 @@ Read [`PROTOCOL.md`](PROTOCOL.md) first — it's short. In brief:
 
 The reference implementations are deliberately small and worth cribbing from:
 
-- **Rust:** [`zuko/src/wire.rs`](../zuko/src/wire.rs) +
-  [`client.rs`](../zuko/src/client.rs).
+- **Rust:** [`src/wire.rs`](../src/wire.rs) +
+  [`client.rs`](../src/client.rs).
 - **Swift:** [`Wire.swift`](../ios/Zuko/Zuko/Net/Wire.swift) +
   [`IrohSession.swift`](../ios/Zuko/Zuko/Net/IrohSession.swift).
 

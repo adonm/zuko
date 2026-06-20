@@ -70,7 +70,7 @@ Logs go to `journalctl --user -u zuko-host -f` (Linux) or
 `~/.config/zuko/zuko-host.out.log` (macOS).
 
 > Manual / no service manager? Run `zuko host` in the foreground, or
-> [`zuko/scripts/zuko-host.sh`](zuko/scripts/zuko-host.sh) from a checkout.
+> [`scripts/zuko-host.sh`](scripts/zuko-host.sh) from a checkout.
 
 ### 2. Pair a client
 
@@ -121,17 +121,18 @@ codes:
 
 The full spec (lifecycle, semantics, the ticket-handoff ALPN used by
 `share`/`claim`) is in [`docs/PROTOCOL.md`](docs/PROTOCOL.md). Reference impls:
-[`zuko/src/wire.rs`](zuko/src/wire.rs) (Rust),
+[`src/wire.rs`](src/wire.rs) (Rust),
 [`ios/Zuko/Zuko/Net/Wire.swift`](ios/Zuko/Zuko/Net/Wire.swift) (Swift).
 
 ## What's in here
 
 | Path | What |
 |------|------|
-| `zuko/` | The `zuko` binary (Rust): the **host** (`zuko host`), the **CLI client** (`zuko connect`/`share`/`claim`), and the **service installer** (`zuko install`/`uninstall`). Wire framing in [`zuko/src/wire.rs`](zuko/src/wire.rs), handoff in [`zuko/src/handoff.rs`](zuko/src/handoff.rs), service management in [`zuko/src/service.rs`](zuko/src/service.rs). |
-| `zuko/scripts/` | The foreground `zuko-host.sh` dev wrapper and [`e2e_test.py`](zuko/scripts/e2e_test.py) (the end-to-end PTY harness). |
+| `src/`, `Cargo.toml` | The `zuko` binary (Rust): the **host** (`zuko host`), the **CLI client** (`zuko connect`/`share`/`claim`), and the **service installer** (`zuko install`/`uninstall`). Wire framing in [`src/wire.rs`](src/wire.rs), handoff in [`src/handoff.rs`](src/handoff.rs), service management in [`src/service.rs`](src/service.rs). |
+| `tests/e2e.rs` | The end-to-end PTY harness (`cargo test --test e2e -- --ignored`): spawns `zuko host`, drives `zuko connect` under a PTY, and exercises the full `share`→`claim` handoff against the live Iroh network. |
+| `scripts/` | The foreground `zuko-host.sh` dev wrapper and `release.sh` (tag + push for releases). |
 | `ios/Zuko/` | The **iOS client** (XcodeGen `project.yml` + Swift sources). |
-| `docs/` | [`PROTOCOL.md`](docs/PROTOCOL.md) (wire spec for client authors) and [`CLIENTS.md`](docs/CLIENTS.md) (client registry). |
+| `docs/` | [`PROTOCOL.md`](docs/PROTOCOL.md) (wire spec for client authors), [`CLIENTS.md`](docs/CLIENTS.md) (client registry), and [`HOST.md`](docs/HOST.md) (the binary's user guide). |
 | `.github/workflows/` | CI: builds+tests the `zuko` binary (incl. the e2e harness), the iOS app (simulator), and publishes `zuko` release binaries to GitHub Releases. |
 
 ## Requirements
@@ -189,10 +190,10 @@ so local and CI stay in lockstep.
   [`release.yml`](.github/workflows/release.yml)):
 
   ```sh
-  mise run release v0.1.0   # = sh zuko/scripts/release.sh v0.1.0
+  mise run release v0.1.0   # = sh scripts/release.sh v0.1.0
   ```
 
-  The script refuses to tag a version that doesn't match `zuko/Cargo.toml`'s
+  The script refuses to tag a version that doesn't match `Cargo.toml`'s
   `version`, and refuses to clobber an existing tag.
 
 - **iOS app** — [`ios/DISTRIBUTION.md`](ios/DISTRIBUTION.md) covers building a

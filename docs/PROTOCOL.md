@@ -2,7 +2,7 @@
 
 zuko connects a **client** to a remote shell on a **host** over a single
 Iroh bidirectional stream. This document is the spec for client authors — the
-CLI (`zuko/src/`) and the iOS app (`ios/Zuko/`) are reference implementations.
+CLI (`src/`) and the iOS app (`ios/Zuko/`) are reference implementations.
 
 zuko is **not** an RPC or a terminal emulator protocol. It is deliberately
 tiny: one stream, two frame types, raw bytes. The host runs a real PTY; the
@@ -32,7 +32,7 @@ ordering and resize never interleaves with data on the wire:
 
 `len` is the payload length only (max 65535). Frames may be coalesced or split
 across QUIC packets; receivers must accumulate bytes and parse greedily (see
-[`try_parse_frame` in `wire.rs`](../zuko/src/wire.rs)).
+[`try_parse_frame` in `wire.rs`](../src/wire.rs)).
 
 ## Frame types
 
@@ -133,9 +133,9 @@ A minimal client, in any language with Iroh bindings (Rust `iroh`, Swift
 
 Reference code:
 
-- **Rust:** [`zuko/src/wire.rs`](../zuko/src/wire.rs) (framing),
-  [`zuko/src/client.rs`](../zuko/src/client.rs) (the connect loop),
-  [`zuko/src/handoff.rs`](../zuko/src/handoff.rs) (the claim side of pairing).
+- **Rust:** [`src/wire.rs`](../src/wire.rs) (framing),
+  [`src/client.rs`](../src/client.rs) (the connect loop),
+  [`src/handoff.rs`](../src/handoff.rs) (the claim side of pairing).
 - **Swift:** [`ios/Zuko/Zuko/Net/Wire.swift`](../ios/Zuko/Zuko/Net/Wire.swift),
   [`ios/Zuko/Zuko/Net/IrohSession.swift`](../ios/Zuko/Zuko/Net/IrohSession.swift).
 

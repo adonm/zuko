@@ -183,11 +183,17 @@ async fn serve_handoff(
     send.finish()?;
     drop(send);
 
-    // Hold the connection open until the client disconnects (or QUIC's idle
-    // timeout fires). Returning here immediately would tear down the endpoint
-    // and race the client's `accept_uni`, sometimes aborting the stream before
-    // the payload is read — manifesting as a spurious "timed out".
-    let _ = conn.closed().await;
+    // Hold the connection open briefly so the client has time to read the
+    // payload. The client closes the connection as soon as it finishes
+    // reading (see `claim`); once it does, this resolves immediately.
+    // Returning immediately would tear down the endpoint and race the
+    // client's `accept_uni`, sometimes aborting the stream before the
+    // payload is read — manifesting as a spurious "timed out". The bound
+    // is defense-in-depth: without it, a buggy or hostile peer that holds
+    // the connection open (or a future regression in `claim`'s close)
+    // would hang `share` indefinitely. Five seconds is far longer than
+    // the few-hundred-byte payload needs to be ack'd across any link.
+    let _ = tokio::time::timeout(Duration::from_secs(5), conn.closed()).await;
     Ok(())
 }
 
@@ -226,6 +232,15 @@ pub async fn claim(
 
     let mut recv = conn.accept_uni().await.context("accept handoff stream")?;
     let payload = read_to_end(&mut recv, MAX_HANDOFF_PAYLOAD).await?;
+    // We have the payload; actively close the handoff connection so the host's
+    // `serve_handoff` returns and `share` can exit (or serve the next claim).
+    // Without this, `conn` is held in scope by `claim` until it returns — and
+    // when connecting that's when the user logs out of the terminal. Iroh's
+    // keepalive pings keep the connection alive in the meantime, so the host
+    // never sees a close and `share` hangs for the whole session. (The e2e
+    // test misses this because it uses `--no-connect`, so `claim` returns
+    // immediately and `conn` drops.)
+    conn.close(0u32.into(), b"claimed");
     let payload = String::from_utf8(payload).context("handoff payload wasn't utf-8")?;
 
     let (label, ticket) = payload

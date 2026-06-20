@@ -2,9 +2,9 @@
 
 The `zuko` binary is the **host daemon** (the machine you shell into), the
 **reference CLI client**, and the **service installer** — in a single binary.
-zuko is remote terminals over Iroh; the [wire protocol](../docs/PROTOCOL.md)
+zuko is remote terminals over Iroh; the [wire protocol](PROTOCOL.md)
 and the other clients (iOS, future Android/relm4) are documented in
-[`../docs/`](../docs).
+[`./`](.) (this `docs/` folder).
 
 ```
 zuko host              serve this machine (writes a key + current_ticket)
@@ -95,14 +95,14 @@ override with `--ticket "<ticket>"` to hand off a ticket captured elsewhere.
 ## Build from source
 
 ```sh
-cargo build --release --manifest-path zuko/Cargo.toml
-./zuko/target/release/zuko host --key ~/.config/zuko/key
+cargo build --release
+./target/release/zuko host --key ~/.config/zuko/key
 ```
 
 ## Run the host in the foreground
 
 ```sh
-./zuko/scripts/zuko-host.sh
+./scripts/zuko-host.sh
 ```
 
 Useful for one-off sessions or debugging; prints the node id + pairing
@@ -138,12 +138,12 @@ rm ~/.config/zuko/key
 ## Wire protocol
 
 See the root [`README.md`](../README.md#wire-protocol). ALPN is `zuko/1`. The
-framing code is shared by host and client in [`src/wire.rs`](src/wire.rs). The
-ticket handoff uses a separate ALPN `zuko/handoff/1` — see
-[`src/handoff.rs`](src/handoff.rs) (with code derivation in
-[`src/code.rs`](src/code.rs) and ticket-file I/O in
-[`src/ticket_file.rs`](src/ticket_file.rs)). Service install/uninstall lives
-in [`src/service.rs`](src/service.rs).
+framing code is shared by host and client in [`../src/wire.rs`](../src/wire.rs).
+The ticket handoff uses a separate ALPN `zuko/handoff/1` — see
+[`../src/handoff.rs`](../src/handoff.rs) (with code derivation in
+[`../src/code.rs`](../src/code.rs) and ticket-file I/O in
+[`../src/ticket_file.rs`](../src/ticket_file.rs)). Service install/uninstall
+lives in [`../src/service.rs`](../src/service.rs).
 
 ## Testing
 
@@ -152,12 +152,15 @@ mise run test        # clippy + unit tests
 mise run test-e2e    # end-to-end: host<->connect + share<->claim over the real Iroh net
 ```
 
-The end-to-end harness ([`scripts/e2e_test.py`](scripts/e2e_test.py)) spawns
-`zuko host`, seeds the saved-hosts file under a temp `XDG_CONFIG_HOME`, drives
-`zuko connect <name>` under a PTY (the client's raw-mode path needs a
-controlling terminal), and exercises the full `share`→`claim` handoff,
-asserting the claimed ticket matches. All state is isolated; requires network
-(Iroh's public relays) and `python3`.
+The end-to-end harness ([`../tests/e2e.rs`](../tests/e2e.rs)) is a
+`#[ignore]`'d Rust integration test (so `cargo test` stays fast and offline).
+It spawns `zuko host`, seeds the saved-hosts file under a temp
+`XDG_CONFIG_HOME`, drives `zuko connect <name>` under a PTY via `portable-pty`
+(the client's raw-mode path needs a controlling terminal), and exercises the
+full `share`→`claim` handoff — asserting the claimed ticket matches and that
+`share` exits on its own after the claim. All state is isolated; requires
+network (Iroh's public relays). Run it with
+`cargo test --release --test e2e -- --ignored --nocapture`.
 
 ## License
 

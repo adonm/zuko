@@ -92,19 +92,31 @@ final class ConnectionStore: ObservableObject {
 
         // Migration: a pre-Keychain build wrote to UserDefaults. If the
         // Keychain is empty but a legacy blob exists, move it over and clear
-        // the legacy entry.
+        // the legacy entry. The legacy entry is only deleted *after* the
+        // Keychain write succeeds — otherwise a transient Keychain failure
+        // (device locked, item locked, quota, etc.) would silently and
+        // permanently lose every saved connection. A failed migration is
+        // retried on the next launch instead.
         guard let data = defaults.data(forKey: Self.legacyStorageKey) else {
             return []
         }
+        let decoded: [Connection]
         do {
-            let decoded = try JSONDecoder().decode([Connection].self, from: data)
-            try? ConnectionKeychain.save(decoded)
-            defaults.removeObject(forKey: Self.legacyStorageKey)
-            return decoded
+            decoded = try JSONDecoder().decode([Connection].self, from: data)
         } catch {
             logger.error("Legacy UserDefaults blob failed to decode; leaving it in place for recovery: \(String(describing: error))")
             return []
         }
+        do {
+            try ConnectionKeychain.save(decoded)
+        } catch {
+            logger.error("Migration to Keychain failed; keeping legacy entry for retry on next launch: \(String(describing: error))")
+            // Return the decoded list so the current session still works,
+            // but leave the legacy blob on disk so we retry next time.
+            return decoded
+        }
+        defaults.removeObject(forKey: Self.legacyStorageKey)
+        return decoded
     }
 
     private func save() {

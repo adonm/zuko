@@ -9,11 +9,11 @@
 #
 # Usage:
 #   mise run release v0.1.0
-#   sh zuko/scripts/release.sh v0.1.0
+#   sh scripts/release.sh v0.1.0
 #
 # What this does, in order:
 #   1. Normalise the argument to `vX.Y.Z`.
-#   2. Check it matches the version in zuko/Cargo.toml (so we never tag a
+#   2. Check it matches the version in Cargo.toml (so we never tag a
 #      version the binary doesn't report).
 #   3. Refuse if the tag already exists locally or on the remote.
 #   4. Warn (but proceed) if the working tree is dirty or the branch isn't
@@ -22,9 +22,9 @@
 #   6. Print the Actions run URL so you can watch the build.
 set -eu
 
-# Locate the repo root (this script lives in zuko/scripts/).
+# Locate the repo root (this script lives in scripts/).
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 cd "$ROOT"
 
 if [ "$#" -ne 1 ]; then
@@ -42,10 +42,10 @@ VERSION="${TAG#v}"  # strip the leading v for the Cargo.toml comparison
 
 # Verify the tag matches the version cargo would report. Catches the classic
 # "tagged v0.1.0 but forgot to bump Cargo.toml from 0.0.9" mistake.
-CARGO_VERSION="$(sed -n 's/^version = "\(.*\)"$/\1/p' "$ROOT/zuko/Cargo.toml" | head -1)"
+CARGO_VERSION="$(sed -n 's/^version = "\(.*\)"$/\1/p' "$ROOT/Cargo.toml" | head -1)"
 if [ "$VERSION" != "$CARGO_VERSION" ]; then
-    echo "error: requested tag $TAG but zuko/Cargo.toml has version \"$CARGO_VERSION\"" >&2
-    echo "       bump zuko/Cargo.toml to version = \"$VERSION\" before tagging, or pass" >&2
+    echo "error: requested tag $TAG but Cargo.toml has version \"$CARGO_VERSION\"" >&2
+    echo "       bump Cargo.toml to version = \"$VERSION\" before tagging, or pass" >&2
     echo "       v$CARGO_VERSION to tag the current version." >&2
     exit 1
 fi
@@ -78,7 +78,7 @@ if [ -n "$(git status --porcelain)" ]; then
     git add -A
     git commit -m "release $TAG
 
-Bundle pending work for the $TAG release. Cut by zuko/scripts/release.sh;
+Bundle pending work for the $TAG release. Cut by scripts/release.sh;
 the tag push triggers .github/workflows/release.yml, which publishes
 linux/{x86_64,aarch64} + macos/{x86_64,aarch64} binaries to the GitHub
 Release attached to $TAG."
