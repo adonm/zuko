@@ -70,11 +70,26 @@ build_and_localize() {
     target="$1"
     cargo build --lib --release --target "$target"
     lib="target/$target/release/lib${LIB_NAME}.a"
-    # Wildcard-localize requires llvm-objcopy 13+ (Rust 1.96 ships LLVM 19, so fine).
-    "$OBJCOPY" --wildcard-localize-symbol='_rust_*' "$lib"
-    # Verify: nm should show 'r' (relocatable/local) for _rust_eh_personality,
-    # 'T' (text/external) for our zuko_* exports. Quick sanity check.
-    nm "$lib" 2>/dev/null | grep -E ' (_rust_eh_personality|_zuko_derive_handoff_key)$' | head -5 || true
+    # llvm-objcopy uses `--wildcard` as a separate flag to enable glob
+    # matching in the other arguments (NOT a `--wildcard-` prefix on
+    # each flag, which the tool rejects as unknown). Wildcards need LLVM
+    # 10+; Rust 1.96 ships LLVM 19, so plenty of headroom.
+    "$OBJCOPY" --wildcard \
+        --localize-symbol='_rust_*' \
+        --localize-symbol='__rust_*' \
+        "$lib"
+    # Sanity check: nm should now show 'r' (relocatable/local) for
+    # _rust_eh_personality and 'T' (text/external) for our uniffi exports.
+    # If localizing silently fails (e.g. Mach-O feature gap), we'd see
+    # 'T' for _rust_eh_personality — surface that loudly so we don't
+    # ship a broken archive that re-trips the link error in CI.
+    syms="$(nm "$lib" 2>/dev/null | grep -E ' _rust_eh_personality$' | awk '{print $1}' | sort -u)"
+    if [ "$syms" = "t" ] || [ "$syms" = "r" ]; then
+        echo "    $target: _rust_eh_personality localized ($syms)"
+    else
+        echo "    $target: WARNING — _rust_eh_personality visibility unexpected: '$syms'" >&2
+        echo "    (linker may still emit 'duplicate symbol' — check llvm-objcopy Mach-O support)" >&2
+    fi
 }
 
 build_and_localize aarch64-apple-ios
