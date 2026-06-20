@@ -22,7 +22,7 @@
 //! - the claimer dials the throwaway node id (= the derived public key) and
 //!   reads the ticket off a single unidirectional stream.
 //!
-//! Whoever has the code can claim — that's the point. The code has ~52 bits of
+//! Whoever has the code can claim — that's the point. The code has ~28 bits of
 //! entropy, memory-hardened through Argon2id (see [`crate::code`]), which is
 //! far beyond reach for online guessing during the minutes-long window before
 //! `zuko share` exits after the first claim.

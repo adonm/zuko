@@ -8,8 +8,10 @@
 //! Iroh [`SecretKey`] from the code, so the host serves it on a per-handoff
 //! endpoint and the claimer dials the derived public key.
 //!
-//! The code has ~52 bits of entropy (4 × CVCV words) — far beyond reach for
-//! **online** guessing during the minutes-long window before `zuko share` exits.
+//! The code has ~28 bits of entropy (one adjective from ~37K × one noun from
+//! ~6K, via the [petname](https://crates.io/crates/petname) large wordlists) —
+//! far beyond reach for **online** guessing during the minutes-long window
+//! before `zuko share` exits.
 //! To also resist **offline** brute-force (in case the ephemeral `NodeId` is
 //! observed via network capture, a DNS-resolver log, or journald), the key is
 //! derived through memory-hard Argon2id rather than a single SHA-256. That
@@ -28,17 +30,6 @@
 use anyhow::Result;
 use argon2::{Algorithm, Argon2, Params, Version};
 use iroh::SecretKey;
-
-/// Letters used to build pronounceable code words. Dropped: q/x/y (ambiguous
-/// and rarely useful), and the CVCV shape structurally avoids the common
-/// 4-letter offensive words (which are CVCC/CCVC, not CVCV).
-pub const CONSONANTS: &[u8] = b"bcdfghjklmnprstvwz";
-pub const VOWELS: &[u8] = b"aeiou";
-
-/// Number of CVCV words in a code. 4 words × ~13 bits = ~52 bits of entropy —
-/// vast overkill for a one-time, minutes-long handoff, and short enough to
-/// read aloud or type once.
-pub const WORDS_IN_CODE: usize = 4;
 
 /// Fixed, non-secret Argon2 salt. Tied to the protocol version so a future
 /// `zuko/handoff/2` can rotate the KDF without colliding with handoff-1 keys.
@@ -61,7 +52,8 @@ fn kdf() -> Argon2<'static> {
 
 /// Normalise a typed code into its canonical letter sequence: lowercased, with
 /// everything except a–z stripped. Separators are only for readability, so
-/// `Tofa-Mive`, `tofa mive`, and `tofamive` all derive the same key.
+/// `Iridescent-Sardine`, `iridescent sardine`, and `iridescentsardine` all
+/// derive the same key.
 pub fn normalize_code(code: &str) -> String {
     code.trim()
         .to_lowercase()
@@ -74,8 +66,11 @@ pub fn normalize_code(code: &str) -> String {
 /// run exactly this, so they converge on the same key (and thus the same node
 /// id) without ever exchanging secret material.
 ///
-/// Memory-hard (Argon2id, ~19 MiB) so the ~52-bit code resists offline
-/// brute-force even if the ephemeral `NodeId` is observed.
+/// Memory-hard (Argon2id, ~19 MiB) so the code resists offline brute-force
+/// even if the ephemeral `NodeId` is observed. The code itself carries ~28 bits
+/// of entropy (one adjective from ~37K × one noun from ~6K), which is far
+/// beyond reach for **online** guessing during the minutes-long share window,
+/// and the Argon2id KDF raises each **offline** guess to ~200 ms.
 pub fn derive_key(code: &str) -> Result<SecretKey> {
     let material = normalize_code(code);
     let mut seed = [0u8; 32];
@@ -88,58 +83,38 @@ pub fn derive_key(code: &str) -> Result<SecretKey> {
     Ok(SecretKey::from_bytes(&seed))
 }
 
-/// Generate a fresh, memorable code: `WORD-WORD-WORD-WORD`, each word a
-/// pronounceable CVCV (e.g. `tofa-mive-laru-bedo`). Entropy comes from
-/// [`SecretKey::generate`] (OsRng).
+/// Generate a fresh, memorable code: `<adjective>-<noun>` from petname's large
+/// wordlists (~37K adjectives × ~6K nouns ≈ 28 bits of entropy). Example:
+/// `iridescent-sardine`.
+///
+/// Desktop-only (the iOS app never generates codes — it only claims with
+/// `derive_handoff_key`).
+#[cfg(not(target_os = "ios"))]
 pub fn generate_code() -> String {
-    let rand = SecretKey::generate().to_bytes();
-    let mut idx = 0usize;
-    let mut out = Vec::with_capacity(WORDS_IN_CODE * 5 - 1);
-    for w in 0..WORDS_IN_CODE {
-        if w > 0 {
-            out.push(b'-');
-        }
-        out.push(pick(CONSONANTS, rand[idx]));
-        idx += 1;
-        out.push(pick(VOWELS, rand[idx]));
-        idx += 1;
-        out.push(pick(CONSONANTS, rand[idx]));
-        idx += 1;
-        out.push(pick(VOWELS, rand[idx]));
-        idx += 1;
-    }
-    // idx == 4*WORDS_IN_CODE == 16 <= 32 bytes available; no wraparound.
-    String::from_utf8(out).expect("code is ascii-only")
+    let pn = petname::Petnames::large();
+    let mut buf = String::new();
+    pn.namer(2, "-").generate_into(&mut buf, &mut rand::rng());
+    buf
 }
 
 /// Heuristic: does this string look like a pairing code? Used by the
 /// bare-`zuko <input>` shortcut to tell a one-time code apart from a saved
-/// host name without making the user remember which subcommand to type.
+/// host name. A code is exactly two dash-separated words where the first is
+/// in petname's adjective list and the second is in the noun list. Real
+/// saved-host names effectively never match.
 ///
-/// A code normalises to exactly `WORDS_IN_CODE * 4` lowercase letters (16)
-/// in strict CVCV-×-4 position: even indices in `CONSONANTS`, odd indices in
-/// `VOWELS`. Real saved-host names effectively never match this — the
-/// position-constrained alphabet makes a false positive astronomically
-/// unlikely — so the disambiguation is safe in both directions.
+/// Desktop-only (the iOS app has a dedicated code-entry field).
+#[cfg(not(target_os = "ios"))]
 pub fn looks_like_code(s: &str) -> bool {
-    let normalized = normalize_code(s);
-    if normalized.len() != WORDS_IN_CODE * 4 {
+    let pn = petname::Petnames::large();
+    let Some((adj, noun)) = s.trim().split_once('-') else {
         return false;
+    };
+    if noun.contains('-') {
+        return false; // codes are exactly 2 words
     }
-    let bytes = normalized.as_bytes();
-    // The code is CVCV CVCV CVCV CVCV — so even byte positions are consonants
-    // and odd positions are vowels. One pass, no allocations.
-    bytes.iter().enumerate().all(|(i, b)| {
-        if i % 2 == 0 {
-            CONSONANTS.contains(b)
-        } else {
-            VOWELS.contains(b)
-        }
-    })
-}
-
-fn pick(alphabet: &[u8], byte: u8) -> u8 {
-    alphabet[(byte as usize) % alphabet.len()]
+    pn.adjectives.contains(&adj.to_lowercase().as_str())
+        && pn.nouns.contains(&noun.to_lowercase().as_str())
 }
 
 /// Default handoff label: the system hostname if we can find it cheaply,
@@ -183,57 +158,30 @@ mod tests {
 
     #[test]
     fn normalize_is_separator_and_case_agnostic() {
-        assert_eq!(normalize_code("tofa-mive-laru-bedo"), "tofamivelarubedo");
-        assert_eq!(normalize_code("Tofa Mive LarU beDo"), "tofamivelarubedo");
+        assert_eq!(normalize_code("Iridescent-Sardine"), "iridescentsardine");
+        assert_eq!(normalize_code("IRIDESCENT SARDINE"), "iridescentsardine");
         assert_eq!(
-            normalize_code("  tofa_mive.laru+bedo  "),
-            "tofamivelarubedo"
+            normalize_code("  iridescent_sardine  "),
+            "iridescentsardine"
         );
-        assert_eq!(normalize_code("TOFAMIVELARUBEDO"), "tofamivelarubedo");
         // Non-letters are dropped entirely.
-        assert_eq!(normalize_code("t0f4-m!v3"), "tfmv");
+        assert_eq!(normalize_code("ir1d3sc3nt-s4rd1n3"), "irdscntsrdn");
     }
 
     #[test]
     fn derive_key_is_deterministic_and_input_sensitive() {
         // Same logical code -> same key, regardless of formatting.
-        let a = derive_key("tofa-mive-laru-bedo").unwrap();
-        let b = derive_key("TOFA MIVE LARU BEDO").unwrap();
+        let a = derive_key("iridescent-sardine").unwrap();
+        let b = derive_key("IRIDESCENT SARDINE").unwrap();
         assert_eq!(a.to_bytes(), b.to_bytes());
 
         // Different code -> different key.
-        let c = derive_key("tofa-mive-laru-beee").unwrap();
+        let c = derive_key("iridescent-whale").unwrap();
         assert_ne!(a.to_bytes(), c.to_bytes());
 
         // public() is a stable function of the key, so both sides also agree
         // on the node id they're dialing / serving as.
         assert_eq!(a.public(), b.public());
-    }
-
-    #[test]
-    fn generate_code_is_well_formed() {
-        // Argon2 makes each derive_key() ~tens of ms, so the structural check
-        // (CVCV shape, lowercase, alphabet) runs on a modest sample and a
-        // single derive_key round-trip is asserted once after the loop.
-        for _ in 0..32 {
-            let code = generate_code();
-            let words: Vec<&str> = code.split('-').collect();
-            assert_eq!(words.len(), WORDS_IN_CODE, "code: {code}");
-            for w in &words {
-                assert_eq!(w.len(), 4, "word must be CVCV: {w} in {code}");
-                assert!(
-                    w.bytes().all(|b| b.is_ascii_lowercase()),
-                    "code must be lowercase: {w}"
-                );
-                let b = w.as_bytes();
-                assert!(CONSONANTS.contains(&b[0]), "pos0 consonant: {w}");
-                assert!(VOWELS.contains(&b[1]), "pos1 vowel: {w}");
-                assert!(CONSONANTS.contains(&b[2]), "pos2 consonant: {w}");
-                assert!(VOWELS.contains(&b[3]), "pos3 vowel: {w}");
-            }
-        }
-        // A generated code must round-trip through derive_key without error.
-        let _ = derive_key(&generate_code()).unwrap().public();
     }
 
     #[test]
@@ -247,48 +195,54 @@ mod tests {
         assert_eq!(sanitize_label("plain"), "plain");
     }
 
+    // --- generate_code / looks_like_code tests (desktop only) ---
+    #[cfg(not(target_os = "ios"))]
     #[test]
-    fn looks_like_code_accepts_real_codes_in_any_format() {
-        // The exact CVCV-×-4 shape, in every separator/case variant a user
-        // might type.
-        assert!(looks_like_code("tofa-mive-laru-bedo"));
-        assert!(looks_like_code("TOFA MIVE LARU BEDO"));
-        assert!(looks_like_code("tofamivelarubedo"));
-        assert!(looks_like_code("  tofa_mive.laru+bedo  "));
+    fn generate_code_is_well_formed() {
+        for _ in 0..32 {
+            let code = generate_code();
+            let words: Vec<&str> = code.split('-').collect();
+            assert_eq!(words.len(), 2, "code must be adj-noun: {code}");
+            assert!(
+                words.iter().all(|w| !w.is_empty()),
+                "no empty words: {code}"
+            );
+        }
+        // A generated code must round-trip through derive_key without error.
+        let _ = derive_key(&generate_code()).unwrap().public();
     }
 
+    #[cfg(not(target_os = "ios"))]
     #[test]
-    fn looks_like_code_rejects_wrong_shape_or_alphabet() {
-        // Wrong length: too short / too long / empty.
-        assert!(!looks_like_code("tofa-mive-laru"));
-        assert!(!looks_like_code("tofa-mive-laru-bedo-extra"));
-        assert!(!looks_like_code(""));
-        // Right length, wrong alphabet (q / y aren't in CONSONANTS, o is fine
-        // but only at vowel positions).
-        assert!(!looks_like_code("qqqq-qqqq-qqqq-qqqq"));
-        // Right length, wrong CVCV pattern: consonant where a vowel belongs.
-        assert!(!looks_like_code("tttt-tttt-tttt-tttt"));
-        // Realistic saved-host names must not be misread as codes.
+    fn looks_like_code_accepts_real_codes() {
+        // Known adjective-noun combos from petname's large wordlists.
+        assert!(looks_like_code("iridescent-hilton"));
+        assert!(looks_like_code("languorous-davis"));
+        assert!(looks_like_code("LANGUOROUS-DAVIS")); // case-insensitive
+    }
+
+    #[cfg(not(target_os = "ios"))]
+    #[test]
+    fn looks_like_code_rejects_non_codes() {
+        // Single word, three words, empty.
         assert!(!looks_like_code("home"));
-        assert!(!looks_like_code("workstation"));
+        assert!(!looks_like_code("a-b-c"));
+        assert!(!looks_like_code(""));
+        // Two words but not in the wordlists.
         assert!(!looks_like_code("my-server"));
         assert!(!looks_like_code("prod-1"));
+        assert!(!looks_like_code("foo-bar"));
     }
 
+    #[cfg(not(target_os = "ios"))]
     #[test]
     fn generated_codes_are_detected_as_codes() {
-        // Round-trip: a freshly-generated code must look like one. Catches
-        // drift between `generate_code` and `looks_like_code` (e.g. if the
-        // alphabet or word count ever changes in one but not the other).
-        for _ in 0..64 {
+        // Round-trip: a freshly-generated code must look like one.
+        for _ in 0..32 {
             let code = generate_code();
             assert!(
                 looks_like_code(&code),
                 "generated code not detected: {code}"
-            );
-            assert!(
-                looks_like_code(code.replace('-', " ").as_str()),
-                "space form: {code}"
             );
         }
     }

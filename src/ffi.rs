@@ -21,6 +21,16 @@
 //! iOS app, and mismatched uniffi runtimes can produce duplicate-symbol errors
 //! at link time.
 
+/// Error from the FFI handoff-key derivation. uniffi requires a proper Error
+/// enum (not a bare `String`) so the Swift side gets a typed error to switch
+/// on. Kept to a single variant for now — the derivation either works or it
+/// doesn't, and the message carries the detail.
+#[derive(Debug, thiserror::Error, uniffi::Error)]
+pub enum DeriveKeyError {
+    #[error("handoff key derivation failed: {message}")]
+    DerivationFailed { message: String },
+}
+
 /// Derive the 32-byte handoff seed from a pairing code.
 ///
 /// This is literally [`crate::code::derive_key`]: it normalises the code,
@@ -33,30 +43,32 @@
 /// The seed is returned as a `Vec<u8>` (not a fixed array) because uniffi's
 /// Swift codegen maps `Vec<u8>` to `Data`, which is what the iOS side wants.
 #[uniffi::export]
-pub fn derive_handoff_key(code: String) -> Result<Vec<u8>, String> {
+pub fn derive_handoff_key(code: String) -> Result<Vec<u8>, DeriveKeyError> {
     crate::code::derive_key(&code)
         .map(|sk| sk.to_bytes().to_vec())
-        .map_err(|e| format!("{e:#}"))
+        .map_err(|e| DeriveKeyError::DerivationFailed {
+            message: format!("{e:#}"),
+        })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    /// Bit-exact regression guard: the seed for `tofa-mive-laru-bedo` is a
-    /// fixed value computed from `src/code.rs`'s Argon2id params (OWASP
-    /// defaults: m=19456 KiB, t=2, p=1, v0x13, salt `zuko-share-handoff-v1`).
-    /// Captured from the Rust `argon2` crate directly, so the FFI surface —
-    /// which calls the same function — must agree bit-for-bit. If this fails,
-    /// the iOS app would dial the wrong NodeId and the handoff would silently
-    /// never connect.
+    /// Bit-exact regression guard: the seed for `iridescent-hilton` (a valid
+    /// petname large adjective+noun code) is a fixed value computed from
+    /// `src/code.rs`'s Argon2id params (OWASP defaults: m=19456 KiB, t=2,
+    /// p=1, v0x13, salt `zuko-share-handoff-v1`). Captured from the Rust
+    /// `argon2` crate directly, so the FFI surface — which calls the same
+    /// function — must agree bit-for-bit. If this fails, the iOS app would
+    /// dial the wrong NodeId and the handoff would silently never connect.
     #[test]
     fn derive_handoff_key_matches_known_vector() {
-        let seed = derive_handoff_key("tofa-mive-laru-bedo".into()).unwrap();
+        let seed = derive_handoff_key("iridescent-hilton".into()).unwrap();
         let expected: [u8; 32] = [
-            0x8a, 0x4c, 0xb4, 0x96, 0x5b, 0x4b, 0x69, 0xb2, 0x76, 0x71, 0xcd, 0x82, 0x5a, 0xa3,
-            0xe1, 0x75, 0x36, 0xe4, 0xba, 0x90, 0xeb, 0xf3, 0x91, 0x00, 0x42, 0x83, 0x9c, 0xf3,
-            0x8b, 0x16, 0x49, 0x8e,
+            0x52, 0x83, 0xf4, 0xc1, 0x4a, 0xfc, 0xfa, 0xb6, 0x36, 0x41, 0xcd, 0x2e, 0x49, 0x61,
+            0xe9, 0x31, 0x88, 0x89, 0xde, 0xe8, 0xce, 0x65, 0x07, 0x8b, 0x56, 0xd3, 0x7d, 0x82,
+            0x41, 0x18, 0x80, 0x8e,
         ];
         assert_eq!(
             seed, expected,
@@ -68,8 +80,8 @@ mod tests {
     /// (case, separators), because `normalize_code` strips all of that.
     #[test]
     fn derive_handoff_key_is_separator_and_case_agnostic() {
-        let canonical = derive_handoff_key("tofa-mive-laru-bedo".into()).unwrap();
-        let messy = derive_handoff_key("TOFA MIVE LARU BEDO".into()).unwrap();
+        let canonical = derive_handoff_key("iridescent-hilton".into()).unwrap();
+        let messy = derive_handoff_key("IRIDESCENT HILTON".into()).unwrap();
         assert_eq!(canonical, messy);
     }
 }

@@ -1,6 +1,6 @@
 [package]
 name = "zuko"
-version = "0.2.2"
+version = "0.3.0"
 edition = "2021"
 license = "Apache-2.0"
 description = "Remote terminals over Iroh: the host daemon and reference CLI client."
@@ -11,6 +11,14 @@ publish = false
 name = "zuko"
 path = "src/main.rs"
 
+# One-liner wrapper around `uniffi::uniffi_bindgen_main()`, so the Swift
+# bindings can be generated with `cargo run --bin uniffi-bindgen -- generate
+# --language swift ...` without a separate `cargo install` step. Only used at
+# XCFramework build time; not part of the `zuko` CLI.
+[[bin]]
+name = "uniffi-bindgen"
+path = "uniffi-bindgen.rs"
+
 [lib]
 name = "zuko"
 # `rlib` for the binary + tests; `staticlib` so the iOS app can wrap the
@@ -19,19 +27,37 @@ crate-type = ["rlib", "staticlib"]
 
 [dependencies]
 iroh = "1.0"
-iroh-tickets = "1.0"
-# Just the tokio features we actually use.
-tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "io-util", "signal", "time"] }
-portable-pty = "0.8"
-crossterm = "0.28"
-anyhow = "1"
-clap = { version = "4", features = ["derive"] }
-tracing = "0.1"
-tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+# Just the tokio features we actually use. Target-cfg'd below for non-iOS,
+# because the iOS FFI build (code.rs + ffi.rs) is fully synchronous — no
+# async runtime needed on device.
 # Memory-hard KDF for deriving the throwaway handoff key from a memorable code
 # (`zuko share`/`claim`). Replaces a single unsalted SHA-256 so the ~52-bit
 # code resists offline brute-force if the ephemeral NodeId leaks.
 argon2 = "0.5"
+anyhow = "1"
+# `#[derive(thiserror::Error)]` for the FFI error enum (uniffi requires a
+# proper Error type, not a bare String).
+thiserror = "1"
+# FFI bindings for mobile clients (the iOS app's `Zuko.xcframework`).
+# Pinned to 0.31 to match iroh-ffi so both XCFrameworks link cleanly together.
+# `cli` feature provides `uniffi_bindgen_main()`, used by the `uniffi-bindgen`
+# binary wrapper (see [[bin]] above) to generate Swift bindings at build time.
+uniffi = { version = "0.31", features = ["cli"] }
+
+# Host/client-only deps — NOT compiled for iOS (the FFI build only needs
+# `code.rs` + `ffi.rs`, which are synchronous and pull in none of these).
+# `portable-pty` uses Linux/macOS ioctl symbols that don't exist on iOS;
+# `crossterm` + `inquire` are interactive-terminal-only; etc. Target-cfg
+# keeps the CLI build unchanged while letting `cargo build --lib --target
+# *-apple-ios*` succeed.
+[target.'cfg(not(target_os = "ios"))'.dependencies]
+iroh-tickets = "1.0"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "io-util", "signal", "time"] }
+portable-pty = "0.8"
+crossterm = "0.28"
+clap = { version = "4", features = ["derive"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 # Retry/backoff for `zuko claim`'s dial (N0 DNS lookup lags `zuko share` online).
 backon = "1"
 # Cross-process advisory locking for the saved-hosts file (`zuko add`/`rm`).
@@ -39,9 +65,12 @@ fs4 = "0.12"
 # Interactive host picker for bare `zuko` (arrow-key Select with filtering).
 # Builds on crossterm (already a dep), so the marginal weight is small.
 inquire = "0.7"
-# FFI bindings for mobile clients (the iOS app's `zuko-ffi` XCFramework).
-# Pinned to 0.31 to match iroh-ffi so both XCFrameworks link cleanly together.
-uniffi = "0.31"
+# Memorable 2-word pairing codes (adjective-noun from petname's large
+# wordlist) for `zuko share`. `default-features = false` drops clap + default
+# RNG; `default-words` brings in the embedded wordlists (small/medium/large).
+petname = { version = "3", default-features = false, features = ["default-words"] }
+# RNG for generate_code (petname's generate_into takes a &mut dyn Rng).
+rand = "0.10"
 
 [dev-dependencies]
 tempfile = "3"

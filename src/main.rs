@@ -47,7 +47,8 @@ use zuko::{client, code, handoff, host, service, store, HostArgs, ShareArgs};
 )]
 struct Cli {
     /// Shortcut: a saved host name to connect to, or a `zuko share` pairing
-    /// code (4 short words) to claim. zuko tells them apart by shape.
+    /// code (an adjective-noun pair like `iridescent-hilton`) to claim. zuko
+    /// tells them apart by shape.
     name: Option<String>,
 
     #[command(subcommand)]
@@ -181,8 +182,8 @@ async fn main() -> Result<()> {
             // Bare `zuko <input>`: the power-user shortcut. Distinguish a
             // saved-host name (the common case after the first claim) from a
             // raw `zuko share` code (the first-run case) by shape — saved
-            // names never look like a 4×CVCV code, so the disambiguation is
-            // unambiguous. See [`code::looks_like_code`] for the rule.
+            // names never look like a petname adjective-noun code, so the
+            // disambiguation is unambiguous. See [`code::looks_like_code`] for the rule.
             Some(input) => match store::lookup(input.trim()) {
                 Some(_) => connect_by_name(input.trim()).await,
                 None if code::looks_like_code(&input) => {
@@ -267,7 +268,7 @@ fn print_first_run_hint() {
     eprintln!();
     eprintln!("  pair with a host:");
     eprintln!("    on the host:    zuko share");
-    eprintln!("    then here:      zuko <code>     # e.g. zuko wowu-hiva-fiki-rufu");
+    eprintln!("    then here:      zuko <code>     # e.g. zuko iridescent-hilton");
     eprintln!();
     eprintln!("  serve THIS machine's shell:");
     eprintln!("    zuko install                    # set up the daemon + service");

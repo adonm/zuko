@@ -20,18 +20,32 @@
 // submodules looks for `crate::UniFfiTag` which the macro generates here.
 uniffi::setup_scaffolding!();
 
-pub mod client;
+// `code` and `ffi` are the only modules the iOS FFI build needs. Everything
+// else (host/client/handoff/service/store) pulls in desktop-only deps
+// (portable-pty, crossterm, clap, inquire, etc.) that either don't compile
+// for iOS or are pointless there. Target-cfg'ing them keeps the CLI build
+// unchanged while letting `cargo build --lib --target *-apple-ios*` succeed
+// with just the key-derivation surface.
 pub mod code;
 pub mod ffi;
+
+#[cfg(not(target_os = "ios"))]
+pub mod client;
+#[cfg(not(target_os = "ios"))]
 pub mod handoff;
+#[cfg(not(target_os = "ios"))]
 pub mod host;
+#[cfg(not(target_os = "ios"))]
 pub mod secret;
+#[cfg(not(target_os = "ios"))]
 pub mod service;
+#[cfg(not(target_os = "ios"))]
 pub mod store;
+#[cfg(not(target_os = "ios"))]
 pub mod ticket_file;
+#[cfg(not(target_os = "ios"))]
 pub mod wire;
 
-use clap::Args;
 use std::path::PathBuf;
 
 /// The zuko config dir: `$XDG_CONFIG_HOME` if set, else `$HOME/.config`.
@@ -50,8 +64,9 @@ pub fn config_dir() -> PathBuf {
 
 /// `zuko share` configuration. Lives in the library (not just the CLI) because
 /// [`handoff::share`] consumes it directly — the binary passes clap-parsed
-/// args straight through.
-#[derive(Args, Clone)]
+/// args straight through. Desktop-only (clap is target-cfg'd out of iOS).
+#[cfg(not(target_os = "ios"))]
+#[derive(clap::Args, Clone)]
 pub struct ShareArgs {
     /// Use this ticket instead of reading `~/.config/zuko/current_ticket`
     /// (which `zuko host` maintains). Handy for handing off a ticket captured
@@ -74,8 +89,9 @@ pub struct ShareArgs {
 }
 
 /// `zuko host` configuration. Lives in the library because [`host::run`]
-/// consumes it directly.
-#[derive(Args, Clone)]
+/// consumes it directly. Desktop-only (same target-cfg reason as `ShareArgs`).
+#[cfg(not(target_os = "ios"))]
+#[derive(clap::Args, Clone)]
 pub struct HostArgs {
     /// Path to the persistent secret key file. A stable key keeps the node id
     /// stable across restarts so saved connections keep working.
