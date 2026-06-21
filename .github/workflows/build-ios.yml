@@ -53,6 +53,22 @@ jobs:
       - name: mise bootstrap (brew:swift + brew:llvm)
         run: mise bootstrap packages install --yes
 
+      # Source Homebrew's env so swift + llvm-lipo + llvm-objcopy (all
+      # installed by the bootstrap step above) land on PATH for every
+      # subsequent step. We persist via $GITHUB_ENV so each step inherits
+      # the brew-augmented PATH without re-running shellenv.
+      - name: Put Homebrew tools on PATH
+        run: |
+          BREW_PREFIX="$(/home/linuxbrew/.linuxbrew/bin/brew --prefix)"
+          echo "${BREW_PREFIX}/bin" >> "$GITHUB_PATH"
+          echo "${BREW_PREFIX}/sbin" >> "$GITHUB_PATH"
+          # Persist brew's full env (PATH + LDFLAGS + CPPFLAGS etc.) for
+          # any step that wants to source it explicitly.
+          /home/linuxbrew/.linuxbrew/bin/brew shellenv >> "$GITHUB_ENV"
+          swift --version
+          llvm-lipo --version
+          llvm-objcopy --version
+
       - name: Install Rust iOS targets
         run: rustup target add aarch64-apple-ios aarch64-apple-ios-sim x86_64-apple-ios
 
@@ -67,7 +83,7 @@ jobs:
         id: sdk-cache
         uses: actions/cache@v4
         with:
-          path: ${{ runner.temp }}/darwin-x86_64.xtoolsdk
+          path: ${{ runner.temp }}/darwin-x86_64
           key: xtoolsdk-${{ env.XTOOLSDK_TAG }}-x86_64
 
       - name: Download .xtoolsdk (cache miss only)
@@ -76,33 +92,39 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -e
-          mkdir -p "${{ runner.temp }}"
-          cd "${{ runner.temp }}"
-          # Pull the tarball from the bootstrap-xtoolsdk workflow's release,
-          # extract to the cache path. Subsequent runs hit the cache and
-          # skip this step entirely.
+          mkdir -p "${{ runner.temp }}/darwin-x86_64"
+          cd "${{ runner.temp }}/darwin-x86_64"
+          # Tarball contains a single directory whose name tracks xtool's
+          # evolution (darwin.artifactbundle on 1.17.0, darwin.xtoolsdk on
+          # main). Extract verbatim — we don't rename because the install
+          # tools on each side are extension-picky in opposite ways.
           gh release download "$XTOOLSDK_TAG" \
             --repo "$GITHUB_REPOSITORY" \
-            --pattern 'darwin-x86_64.xtoolsdk.tar.gz' \
-            --output darwin-x86_64.xtoolsdk.tar.gz
-          tar -xzf darwin-x86_64.xtoolsdk.tar.gz
-          rm darwin-x86_64.xtoolsdk.tar.gz
-          ls -la "${{ runner.temp }}/darwin-x86_64.xtoolsdk"
+            --pattern 'darwin-x86_64.tar.gz' \
+            --output darwin-x86_64.tar.gz
+          tar -xzf darwin-x86_64.tar.gz
+          rm darwin-x86_64.tar.gz
+          ls -la "${{ runner.temp }}/darwin-x86_64"
 
       - name: Install .xtoolsdk into SwiftPM
         # xtool 1.17.0's `sdk install` doesn't recognize the `.xtoolsdk`
-        # shortcut (added post-release on main HEAD) — it tries to interpret
-        # the bundle as an Xcode.app dir and fails looking for Contents/Developer.
-        # The underlying command xtool invokes is `swift sdk install`, which
-        # works directly against an artifactbundle. Bypass the xtool wrapper
-        # until we bump to a release that supports `.xtoolsdk` natively.
-        # Idempotent — `swift sdk install` skips if the same bundle is already
-        # registered.
+        # shortcut (added post-release on main HEAD). The underlying
+        # command xtool wraps is `swift sdk install`, which works directly
+        # against an artifactbundle — but strictly requires the
+        # `.artifactbundle` extension (renames break its format detection).
+        # Bypass xtool until we bump to a release with native .xtoolsdk
+        # support. Idempotent — `swift sdk install` skips if the same
+        # bundle is already registered.
         run: |
           set -e
-          # brew's swift puts the toolchain at /home/linuxbrew/.linuxbrew/bin.
-          eval "$(brew shellenv)"
-          swift sdk install "${{ runner.temp }}/darwin-x86_64.xtoolsdk"
+          bundle_dir="$(find "${{ runner.temp }}/darwin-x86_64" -maxdepth 1 -type d \( -name 'darwin.artifactbundle' -o -name 'darwin.xtoolsdk' \) | head -1)"
+          if [ -z "$bundle_dir" ]; then
+            echo "ERROR: no darwin.*bundle found in cache dir" >&2
+            ls -la "${{ runner.temp }}/darwin-x86_64/" >&2
+            exit 1
+          fi
+          echo "Installing: $bundle_dir"
+          swift sdk install "$bundle_dir"
           xtool sdk status
 
       # Build the Rust staticlib into ZukoRust.xcframework + regenerate the
