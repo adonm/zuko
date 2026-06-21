@@ -50,36 +50,46 @@ jobs:
       # Opt-in via `mise bootstrap packages install` so rust-only
       # contributors don't pull the 1.5 GB Swift toolchain when they don't
       # need it.
-      - name: mise bootstrap (brew:swift + brew:llvm)
+      - name: mise bootstrap (apt packages — Rust cross-linker)
+        # mise's bootstrap on Ubuntu picks apt as the primary backend and
+        # SKIPS brew: entries (we saw only `apt-get install gcc-aarch64-linux-gnu`
+        # in production). Swift + llvm need to be installed via the explicit
+        # brew call below — mise's bootstrap won't do it on Debian-derivatives.
+        # We keep this step for the apt-based entry.
         run: mise bootstrap packages install --yes
 
-      # Source Homebrew's env so swift + llvm-lipo + llvm-objcopy (all
-      # installed by the bootstrap step above) land on PATH for every
-      # subsequent step. We persist via $GITHUB_ENV so each step inherits
-      # the brew-augmented PATH without re-running shellenv.
-      - name: Put Homebrew tools on PATH
-        # `brew install llvm` (from mise bootstrap above) kegs to
-        # $BREW_PREFIX/opt/llvm/bin to avoid clashing with the system LLVM.
-        # `brew shellenv` only puts $BREW_PREFIX/bin on PATH, so we layer
-        # the opt/llvm path explicitly for llvm-lipo + llvm-objcopy.
-        # swift is in the standard brew bin/.
+      - name: Install swift + llvm via Homebrew
+        # Explicit `brew install` because mise bootstrap above skips brew on
+        # Ubuntu. /home/linuxbrew/.linuxbrew is preinstalled on ubuntu-latest
+        # GitHub runners; we just have to call brew by full path because
+        # shellenv hasn't been sourced yet.
         #
-        # GITHUB_PATH only applies to subsequent steps, so the verification
-        # commands below use the absolute brew prefix directly to confirm
-        # the install landed where we expect.
+        # swift 6.x provides the cross-compile toolchain for the iOS SDK;
+        # llvm provides llvm-lipo (fat-lib assembly) + llvm-objcopy (symbol
+        # localization in build-ffi.sh).
+        run: |
+          /home/linuxbrew/.linuxbrew/bin/brew install swift llvm
+
+      - name: Put Homebrew tools on PATH
+        # GITHUB_PATH writes affect every SUBSEQUENT step; this step uses
+        # absolute paths for verification because its own PATH mutation
+        # hasn't taken effect yet.
+        #
+        # `brew install llvm` kegs to $BREW_PREFIX/opt/llvm/bin (separate
+        # from $BREW_PREFIX/bin) to avoid clashing with system LLVM.
+        # swift lives in the standard brew bin/.
         run: |
           BREW_PREFIX="$(/home/linuxbrew/.linuxbrew/bin/brew --prefix)"
-          echo "${BREW_PREFIX}/bin" >> "$GITHUB_PATH"
-          echo "${BREW_PREFIX}/sbin" >> "$GITHUB_PATH"
-          echo "${BREW_PREFIX}/opt/llvm/bin" >> "$GITHUB_PATH"
-          /home/linuxbrew/.linuxbrew/bin/brew shellenv >> "$GITHUB_ENV"
-          # Verify with absolute paths — GITHUB_PATH hasn't taken effect yet
-          # for THIS step. Also surfaces what mise's bootstrap actually
-          # installed in case the formula layout differs.
-          echo "--- swift ---"; "${BREW_PREFIX}/bin/swift" --version
-          echo "--- llvm tools ---"
-          ls -la "${BREW_PREFIX}/opt/llvm/bin/" 2>&1 | grep -E "(llvm-lipo|llvm-objcopy)" || ls -la "${BREW_PREFIX}/bin/" | grep -E "llvm-"
-          "${BREW_PREFIX}/opt/llvm/bin/llvm-lipo" --version 2>&1 || "${BREW_PREFIX}/bin/llvm-lipo" --version
+          {
+            echo "${BREW_PREFIX}/bin"
+            echo "${BREW_PREFIX}/sbin"
+            echo "${BREW_PREFIX}/opt/llvm/bin"
+          } >> "$GITHUB_PATH"
+          # Verify with absolute paths — surfaces a clear error here rather
+          # than 5 steps later in build-ffi.sh.
+          "${BREW_PREFIX}/bin/swift" --version
+          "${BREW_PREFIX}/opt/llvm/bin/llvm-lipo" --version
+          "${BREW_PREFIX}/opt/llvm/bin/llvm-objcopy" --version
 
       - name: Install Rust iOS targets
         run: rustup target add aarch64-apple-ios aarch64-apple-ios-sim x86_64-apple-ios
