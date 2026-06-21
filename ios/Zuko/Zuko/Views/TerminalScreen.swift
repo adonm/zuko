@@ -50,6 +50,7 @@ struct TerminalScreen: View {
             ToolbarItemGroup(placement: .topBarTrailing) {
                 fontMenu
                 themeMenu
+                refreshButton
                 Button("Disconnect") {
                     session.disconnect()
                     dismiss()
@@ -172,10 +173,43 @@ struct TerminalScreen: View {
         .accessibilityLabel("Color theme")
     }
 
+    /// Force-clear the local surface and trigger a redraw on the host. Use
+    /// after a garbled resume replay (fullscreen TUI apps like `btop` leave
+    /// the snapshot mid-ANSI-sequence) or any time the display looks stuck.
+    ///
+    /// Two-step:
+    ///   1. RIS (`\x1b c`) straight to the local ghostty surface via
+    ///      `receive(...)` — bypasses the wire, resets all terminal state
+    ///      (screen, scrollback, SGR attributes, alternate buffer) so any
+    ///      half-rendered frame is wiped before the redraw arrives.
+    ///   2. Ctrl-L (`\x0c`, form feed) up the wire to the host shell/TUI.
+    ///      Universal "redraw" key: bash/readline clears + redraws the
+    ///      prompt; vim/less/btop/man redraw their UI. Apps that don't
+    ///      intercept it just see a form feed — terminal clears the screen
+    ///      and the cursor jumps home, which is also what we want.
+    private var refreshButton: some View {
+        Button {
+            // Local hard reset. Goes to the surface only — not the wire.
+            session.inMemorySession.receive(Data("\u{1B}c".utf8))
+            // Ctrl-L up the wire. writeHandler's LF→CR translation doesn't
+            // affect 0x0C, so bypass via sendInput (skips the libghostty
+            // surface callback path; identical bytes either way).
+            session.inMemorySession.sendInput(Data([0x0C]))
+        } label: {
+            Image(systemName: "arrow.clockwise")
+        }
+        .accessibilityLabel("Refresh terminal")
+    }
+
     private var statusMessage: String? {
         switch session.status {
         case .connecting:
-            return "Connecting to host…"
+            // Distinguish a fresh connect from a resume so the user knows
+            // their prior session (and PTY on the host) is being picked
+            // back up, not started from scratch.
+            return connection.lastSessionID != nil
+                ? "Resuming session…"
+                : "Connecting to host…"
         case .reconnecting:
             return "Reconnecting…"
         case .stalled:

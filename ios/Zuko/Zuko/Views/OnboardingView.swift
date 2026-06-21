@@ -77,6 +77,14 @@ struct OnboardingView: View {
                     "Pinch the terminal to zoom font size live — coarse adjustment without leaving the session."
                 )
                 tip(
+                    icon: "arrow.clockwise",
+                    "Tap the refresh icon in the top bar to clear and redraw the screen — handy after a reconnect that garbles a fullscreen app like `btop` or `vim`."
+                )
+                tip(
+                    icon: "arrow.uturn.left.circle",
+                    "Force-quit or background the app any time — the host keeps your session alive and resumes it (with recent output) on next connect."
+                )
+                tip(
                     icon: "paintpalette",
                     "Tap the palette icon in the top bar for quick theme switching (Dracula, Catppuccin, Nord, …) or \"Browse all\" for the full 485-theme catalog with live preview."
                 )
