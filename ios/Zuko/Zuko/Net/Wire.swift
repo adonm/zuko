@@ -121,11 +121,22 @@ enum Wire {
     /// Returns nil when there aren't enough bytes yet.
     static func parse(_ buffer: inout Data) -> Frame? {
         guard buffer.count >= 3 else { return nil }
-        let type = buffer[0]
-        let len = (Int(buffer[1]) << 8) | Int(buffer[2])
+
+        // `Data.removeFirst` does not guarantee that future valid indices start
+        // at integer 0. TestFlight crash CDCE664B showed `buffer[0]` trapping
+        // here after at least one frame had been drained. Always walk from
+        // `startIndex` instead of using absolute integer subscripts.
+        let typeIndex = buffer.startIndex
+        let lenHighIndex = buffer.index(after: typeIndex)
+        let lenLowIndex = buffer.index(after: lenHighIndex)
+
+        let type = buffer[typeIndex]
+        let len = (Int(buffer[lenHighIndex]) << 8) | Int(buffer[lenLowIndex])
         guard buffer.count >= 3 + len else { return nil }
-        let payload = Array(buffer[3..<(3 + len)])
-        buffer.removeFirst(3 + len)
+        let payloadStart = buffer.index(after: lenLowIndex)
+        let payloadEnd = buffer.index(payloadStart, offsetBy: len)
+        let payload = Array(buffer[payloadStart..<payloadEnd])
+        buffer.removeSubrange(typeIndex..<payloadEnd)
         return Frame(type: type, payload: payload)
     }
 }

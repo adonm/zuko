@@ -48,7 +48,7 @@ targets:
         # strictly-increasing build number on every upload. Bump these
         # defaults when you cut a release so a fresh `mise run build-ios`
         # matches the binary version.
-        MARKETING_VERSION: "0.4.5"
+        MARKETING_VERSION: "0.4.6"
         CURRENT_PROJECT_VERSION: "1"
         TARGETED_DEVICE_FAMILY: "1"  # iPhone only — avoids iPad multitasking
         # orientation requirements that need UISupportedInterfaceOrientations~ipad
