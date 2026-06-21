@@ -77,6 +77,14 @@ export ZUKO_BUILD_NUMBER="$b"
 echo "Building Zuko $v (build $b) for iOS via xtool"
 sh "$(git rev-parse --show-toplevel)/scripts/patch-ios-plist.sh"
 
+# Resolve first so SwiftTerm is checked out, then patch its manifest for
+# xtool's Linux→iOS cross-compile. SwiftTerm 1.13.0 excludes Apple/iOS
+# sources whenever Package.swift is evaluated on Linux, even if the target
+# triple is iOS; that drops the TerminalView definition. The patch is a tiny
+# checked-out-dependency edit and is idempotent.
+swift package resolve
+sh "$(git rev-parse --show-toplevel)/scripts/patch-swiftterm-xtool.sh"
+
 # xtool dev build emits either an .app (default) or a .ipa (--ipa). For the
 # smoke build we want the .app so we can patch embedded frameworks in place
 # before any packaging. xtool prints `Wrote to /path/Zuko.app` on success.
