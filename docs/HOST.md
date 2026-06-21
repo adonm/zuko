@@ -85,13 +85,15 @@ The pairing code is a *one-time symmetric secret* (the
 throwaway Iroh key from it, binds an ephemeral endpoint, and uses it solely to
 deliver the real ticket over an E2E-encrypted connection. The host key is
 unrelated and stays strong. `share` exits after the first claim; `claim`
-retries the dial for ~60 s (`--timeout`) while the throwaway endpoint's address
-propagates through Iroh's DNS lookup.
+retries the dial for ~60 s (`--timeout`, a hard overall wall-clock cap) while
+the throwaway endpoint's address propagates through Iroh's DNS lookup.
 
 Full mechanics (entropy, Argon2id derivation, the `zuko/handoff/1` wire) are in
 [`PROTOCOL.md#ticket-handoff`](PROTOCOL.md#ticket-handoff). `zuko share` reads
-`~/.config/zuko/current_ticket` (which `zuko host` writes); override with
-`--ticket "<ticket>"` to hand off a ticket captured elsewhere.
+`~/.config/zuko/current_ticket` (which `zuko host` writes and refreshes every
+30 s); stale files are rejected so a stopped host doesn't hand out a dead
+ticket. Override with `--ticket "<ticket>"` to hand off a ticket captured
+elsewhere.
 
 ## Build from source
 

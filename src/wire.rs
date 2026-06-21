@@ -28,7 +28,7 @@
 //! it as an unknown type and ignores it (then defaults to 80×24 until the
 //! first `RESIZE` arrives).
 
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 
 /// ALPN used for every zuko stream.
 pub const ALPN: &[u8] = b"zuko/1";

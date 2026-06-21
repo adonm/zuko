@@ -117,6 +117,9 @@ If the session wedges hard (keystrokes vanish), **Ctrl-C 3× within ~1 s** with
 no remote output between presses force-exits the CLI — see
 [`docs/HOST.md`](docs/HOST.md#force-quitting-the-cli) for the detail.
 
+`zuko share` reads the live `current_ticket` refreshed by `zuko host`; stale
+ticket files are rejected so pairing fails closed if the host service is gone.
+
 ## Wire protocol
 
 One bidirectional Iroh stream, ALPN `zuko/1`. The full spec (frame types,

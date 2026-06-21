@@ -24,7 +24,7 @@
 //! `zuko claim <code>` (the OTP-style pairing in [`crate::handoff`]); from then
 //! on, `zuko connect <name>` / bare `zuko <name>` look the ticket up here.
 
-use anyhow::{bail, Result};
+use anyhow::{Result, bail};
 use std::fs;
 
 use crate::config_dir;
@@ -95,11 +95,12 @@ pub fn touch(name: &str) -> Result<()> {
     let _guard = HostsLock::acquire()?;
     let mut entries = load();
     if let Some(idx) = entries.iter().position(|(n, _)| n == name)
-        && idx != 0 {
-            let entry = entries.remove(idx);
-            entries.insert(0, entry);
-            store(&entries)?;
-        }
+        && idx != 0
+    {
+        let entry = entries.remove(idx);
+        entries.insert(0, entry);
+        store(&entries)?;
+    }
     // If the name isn't found, no-op rather than inserting — `touch` only
     // reorders existing entries; it never adds.
     Ok(())

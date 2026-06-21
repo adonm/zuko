@@ -63,6 +63,11 @@ that bit the existing clients (so you don't have to):
 - The stream **opener must write first** — Iroh only surfaces a stream to the
   peer once the initiator sends data. Send `RESIZE` (with your size) right
   after `open_bi`; it's the entire v0.6 handshake.
+- Clamp reported terminal dimensions to at least `1×1` before sending `RESIZE`.
+  Terminal APIs can transiently report zero during resize/minimize; forwarding
+  that to a PTY confuses fullscreen TUIs.
+- Answer `PING` with `PONG` carrying the same nonce. v0.6+ doesn't initiate
+  app-level heartbeats, but replying keeps older/future peers compatible.
 - Forward keystrokes **verbatim** (Ctrl-C is `0x03`, etc.) — don't trap
   signals locally; the host's PTY handles them. The corollary: a client in
   raw mode has no built-in escape from a wedged session, so consider an

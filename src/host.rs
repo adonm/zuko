@@ -55,6 +55,9 @@ enum OutItem {
     /// An already-framed control frame (PONG replies to client PINGs) —
     /// written as-is.
     Frame(Vec<u8>),
+    /// PTY reader hit EOF (shell exited). Drain any earlier output, then finish
+    /// the send stream so the client exits instead of waiting for more input.
+    End,
 }
 
 const DEFAULT_COLS: u16 = 80;
@@ -178,14 +181,7 @@ async fn serve(
     let mut acc: Vec<u8> = Vec::with_capacity(16 * 1024);
     let mut tmp = vec![0u8; 16 * 1024];
     let first = read_one_frame(&mut recv, &mut acc, &mut tmp).await?;
-    let (cols, rows) = match first.typ {
-        TYPE_RESIZE if first.payload.len() == 4 => {
-            let cols = u16::from_be_bytes([first.payload[0], first.payload[1]]);
-            let rows = u16::from_be_bytes([first.payload[2], first.payload[3]]);
-            (cols.max(1), rows.max(1))
-        }
-        _ => (DEFAULT_COLS, DEFAULT_ROWS),
-    };
+    let (cols, rows, pending_first) = initial_size_and_pending(first);
 
     // ── Spawn the PTY + shell. ──
     let Pty {
@@ -227,18 +223,21 @@ async fn serve(
                         ascii = %String::from_utf8_lossy(&chunk),
                         "pty output"
                     );
-                    if out_tx_for_reader.blocking_send(OutItem::Pty(chunk)).is_err() {
+                    if out_tx_for_reader
+                        .blocking_send(OutItem::Pty(chunk))
+                        .is_err()
+                    {
                         // Network side gone — stop reading.
                         break;
                     }
                 }
             }
         }
-        // Reader saw EOF (shell exited) or the network dropped. Either way,
-        // close the outbound so `pty_to_net` drains + finishes the send
-        // stream → the client sees EOF → stops rather than reconnecting a
-        // dead session.
-        drop(out_tx_for_reader);
+        // Reader saw EOF (shell exited) or the network dropped. Tell the
+        // outbound pump to drain prior PTY output and finish the send stream;
+        // channel close alone is not enough because PONG senders may still be
+        // alive while the network side waits for client input.
+        let _ = out_tx_for_reader.blocking_send(OutItem::End);
     });
 
     // PTY writer: dedicated thread, takes commands from `pty_tx` and applies
@@ -285,11 +284,12 @@ async fn serve(
     // PTY output (via the out channel) + control frames -> network.
     // Ends when all senders are dropped (reader thread done) or the send
     // errors (connection dropped).
-    let pty_to_net = tokio::spawn(async move {
+    let mut pty_to_net = tokio::spawn(async move {
         while let Some(item) = out_rx.recv().await {
             let frame = match item {
                 OutItem::Pty(bytes) => wire::data_frame(&bytes),
                 OutItem::Frame(pre) => pre,
+                OutItem::End => break,
             };
             if send.write_all(&frame).await.is_err() {
                 break;
@@ -302,7 +302,12 @@ async fn serve(
     // frame was already consumed above; `acc` may still hold buffered bytes
     // from a coalesced read, so the pump continues from `acc`/`tmp`. PONGs
     // for inbound PINGs are routed back via `pong_tx`.
-    let net_to_pty: tokio::task::JoinHandle<()> = tokio::spawn(async move {
+    let mut net_to_pty: tokio::task::JoinHandle<()> = tokio::spawn(async move {
+        if let Some(frame) = pending_first
+            && !handle_client_frame(&frame, &pty_tx, &pong_tx).await
+        {
+            return;
+        }
         loop {
             // Parse any bytes already in `acc` first (from the handshake
             // read), then top up from the stream.
@@ -321,11 +326,12 @@ async fn serve(
 
     // Host-side heartbeat removed in v0.6 — see note on out_tx above.
 
-    // Wait for the network side to end. The PTY→net side ends on its own when
-    // `out_rx` closes (reader thread done), the send errors, or the shell
-    // exited (reader saw EOF, dropped its sender, pty_to_net drains + finishes).
-    let _ = net_to_pty.await;
-    pty_to_net.abort();
+    // End the session when either side ends: client/network EOF or PTY EOF
+    // (shell exit). The other task is then cancelled and the PTY is killed.
+    tokio::select! {
+        _ = &mut net_to_pty => pty_to_net.abort(),
+        _ = &mut pty_to_net => net_to_pty.abort(),
+    }
 
     // Always kill the PTY — there's no resume to preserve it for. Best-effort:
     // the shell may already be gone (ESRCH from `kill`).
@@ -361,7 +367,7 @@ async fn handle_client_frame(
         TYPE_RESIZE if frame.payload.len() == 4 => {
             let cols = u16::from_be_bytes([frame.payload[0], frame.payload[1]]);
             let rows = u16::from_be_bytes([frame.payload[2], frame.payload[3]]);
-            let _ = pty_tx.send(PtyCmd::Resize(cols, rows)).await;
+            let _ = pty_tx.send(PtyCmd::Resize(cols.max(1), rows.max(1))).await;
             true
         }
         TYPE_PING => {
@@ -372,6 +378,18 @@ async fn handle_client_frame(
             true
         }
         _ => true, // ignore unknown types (forward compat — PONG, legacy HELLO/WELCOME, etc.)
+    }
+}
+
+fn initial_size_and_pending(first: wire::ParsedFrame) -> (u16, u16, Option<wire::ParsedFrame>) {
+    if first.typ == TYPE_RESIZE && first.payload.len() == 4 {
+        let cols = u16::from_be_bytes([first.payload[0], first.payload[1]]);
+        let rows = u16::from_be_bytes([first.payload[2], first.payload[3]]);
+        (cols.max(1), rows.max(1), None)
+    } else {
+        // Non-conforming/newer/older peers may send something else first. Spawn
+        // at a safe default size, but don't discard real DATA/PING frames.
+        (DEFAULT_COLS, DEFAULT_ROWS, Some(first))
     }
 }
 
@@ -531,6 +549,30 @@ impl Drop for KeyLock {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn initial_resize_is_clamped_and_consumed() {
+        let frame = wire::ParsedFrame {
+            typ: TYPE_RESIZE,
+            payload: vec![0, 0, 0, 0],
+        };
+        let (cols, rows, pending) = initial_size_and_pending(frame);
+        assert_eq!((cols, rows), (1, 1));
+        assert!(pending.is_none());
+    }
+
+    #[test]
+    fn non_resize_first_frame_is_preserved() {
+        let frame = wire::ParsedFrame {
+            typ: TYPE_DATA,
+            payload: b"x".to_vec(),
+        };
+        let (cols, rows, pending) = initial_size_and_pending(frame);
+        assert_eq!((cols, rows), (DEFAULT_COLS, DEFAULT_ROWS));
+        let pending = pending.expect("DATA first frame must be replayed");
+        assert_eq!(pending.typ, TYPE_DATA);
+        assert_eq!(pending.payload, b"x");
+    }
 
     // Two concurrent `load_or_create_key` calls on a fresh path must converge
     // on the *same* key — `create_new` is the gatekeeper, so the loser reads

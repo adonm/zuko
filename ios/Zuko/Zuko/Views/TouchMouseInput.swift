@@ -111,6 +111,26 @@ final class InputView: UIView {
     private var tapGesture: UITapGestureRecognizer?
     private weak var attachedTerminal: UITerminalView?
 
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        commonInit()
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    private func commonInit() {
+        backgroundColor = .clear
+        // This representable only installs a recognizer on the real
+        // `UITerminalView`; it must not win hit-testing itself, or taps stop
+        // focusing the terminal / showing the software keyboard.
+        isUserInteractionEnabled = false
+        accessibilityElementsHidden = true
+        isAccessibilityElement = false
+    }
+
     override func didMoveToWindow() {
         super.didMoveToWindow()
         tryAttach()

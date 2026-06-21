@@ -39,15 +39,15 @@
 //! `label` has no newlines (sanitised), and tickets never contain whitespace,
 //! so splitting on the first `\n` is unambiguous.
 
-use anyhow::{anyhow, bail, Context, Result};
-use iroh::{endpoint::presets, Endpoint};
+use anyhow::{Context, Result, anyhow, bail};
+use iroh::{Endpoint, endpoint::presets};
 use std::io::IsTerminal;
 use std::time::Duration;
 use tracing::{info, warn};
 
+use crate::ShareArgs;
 use crate::code::{default_label, derive_key, generate_code, sanitize_label};
 use crate::ticket_file::{read_current_ticket, wait_for_current_ticket};
-use crate::ShareArgs;
 
 /// ALPN for the throwaway handoff endpoint (distinct from the terminal `zuko/1`).
 const HANDOFF_ALPN: &[u8] = b"zuko/handoff/1";
@@ -87,8 +87,10 @@ fn ensure_current_ticket() -> Result<String> {
             .prompt();
             let accepted = match install {
                 Ok(yes) => yes,
-                Err(inquire::InquireError::OperationCanceled |
-inquire::InquireError::OperationInterrupted) => false,
+                Err(
+                    inquire::InquireError::OperationCanceled
+                    | inquire::InquireError::OperationInterrupted,
+                ) => false,
                 Err(e) => {
                     // Picker infra itself failed (rare). Surface and bail
                     // rather than guessing intent.
@@ -162,9 +164,10 @@ pub async fn share(args: &ShareArgs) -> Result<()> {
     info!(%node_id, "serving handoff on alpn {:?}", String::from_utf8_lossy(HANDOFF_ALPN));
 
     let max = args.count.max(1);
+    let deadline = share_deadline(args.timeout);
     let mut claims = 0usize;
     loop {
-        let incoming = match accept_with_timeout(&endpoint, args.timeout).await? {
+        let incoming = match accept_with_timeout(&endpoint, deadline).await? {
             AcceptOutcome::Incoming(i) => i,
             AcceptOutcome::Closed => break,
             AcceptOutcome::TimedOut => {
@@ -205,16 +208,26 @@ enum AcceptOutcome {
     TimedOut,
 }
 
-/// Wrap `endpoint.accept()` in an optional overall timeout. `timeout_secs == 0`
-/// means wait forever (until the endpoint closes or Ctrl-C).
-async fn accept_with_timeout(endpoint: &Endpoint, timeout_secs: u64) -> Result<AcceptOutcome> {
-    if timeout_secs == 0 {
+fn share_deadline(timeout_secs: u64) -> Option<tokio::time::Instant> {
+    (timeout_secs > 0).then(|| tokio::time::Instant::now() + Duration::from_secs(timeout_secs))
+}
+
+/// Wrap `endpoint.accept()` in an optional overall timeout. `None` means wait
+/// forever (until the endpoint closes or Ctrl-C).
+async fn accept_with_timeout(
+    endpoint: &Endpoint,
+    deadline: Option<tokio::time::Instant>,
+) -> Result<AcceptOutcome> {
+    let Some(deadline) = deadline else {
         return Ok(endpoint.accept().await.map_or_else(
             || AcceptOutcome::Closed,
             |i| AcceptOutcome::Incoming(Box::new(i)),
         ));
-    }
-    match tokio::time::timeout(Duration::from_secs(timeout_secs), endpoint.accept()).await {
+    };
+    let Some(remaining) = deadline.checked_duration_since(tokio::time::Instant::now()) else {
+        return Ok(AcceptOutcome::TimedOut);
+    };
+    match tokio::time::timeout(remaining, endpoint.accept()).await {
         Ok(Some(i)) => Ok(AcceptOutcome::Incoming(Box::new(i))),
         Ok(None) => Ok(AcceptOutcome::Closed),
         Err(_) => Ok(AcceptOutcome::TimedOut),
@@ -358,15 +371,32 @@ async fn dial_throwaway(
     };
 
     loop {
-        match endpoint.connect(node_id, HANDOFF_ALPN).await {
+        let connect = endpoint.connect(node_id, HANDOFF_ALPN);
+        let attempt = if let Some(deadline) = deadline {
+            let Some(remaining) = deadline.checked_duration_since(tokio::time::Instant::now())
+            else {
+                anyhow::bail!("timed out after {timeout_secs}s");
+            };
+            match tokio::time::timeout(remaining, connect).await {
+                Ok(result) => result.map_err(anyhow::Error::from),
+                Err(_) => anyhow::bail!("timed out after {timeout_secs}s"),
+            }
+        } else {
+            connect.await.map_err(anyhow::Error::from)
+        };
+        match attempt {
             Ok(conn) => return Ok(conn),
             Err(_) => {
-                if let Some(deadline) = deadline
-                    && tokio::time::Instant::now() >= deadline
-                {
-                    anyhow::bail!("timed out after {timeout_secs}s");
+                if let Some(deadline) = deadline {
+                    let Some(remaining) =
+                        deadline.checked_duration_since(tokio::time::Instant::now())
+                    else {
+                        anyhow::bail!("timed out after {timeout_secs}s");
+                    };
+                    tokio::time::sleep(DELAY.min(remaining)).await;
+                } else {
+                    tokio::time::sleep(DELAY).await;
                 }
-                tokio::time::sleep(DELAY).await;
             }
         }
     }

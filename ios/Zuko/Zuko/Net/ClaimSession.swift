@@ -102,6 +102,7 @@ final class ClaimSession {
                 endpoint: endpoint, addr: addr, alpn: Self.alpn, timeout: 60
             )
         } catch {
+            try? await endpoint.close()
             let msg = "couldn't reach the sharing host — is `zuko share` still running and the code correct?"
             status = .failed(msg)
             throw ClaimError.dialFailed(msg)
@@ -124,18 +125,7 @@ final class ClaimSession {
             status = .failed("payload wasn't UTF-8")
             throw ClaimError.handoffFailed("payload wasn't UTF-8")
         }
-        // Split on the first newline: `<label>\n<ticket>`. Labels have no
-        // newlines (sanitised by `zuko share`), and tickets never contain
-        // whitespace, so the split is unambiguous.
-        let label: String
-        let ticket: String
-        if let nl = payload.firstIndex(of: "\n") {
-            label = String(payload[..<nl])
-            ticket = String(payload[payload.index(after: nl)...]).trimmingCharacters(in: .whitespacesAndNewlines)
-        } else {
-            label = "host"
-            ticket = payload.trimmingCharacters(in: .whitespacesAndNewlines)
-        }
+        let (label, ticket) = Self.parsePayload(payload)
         guard !ticket.isEmpty else {
             status = .failed("host sent an empty ticket")
             throw ClaimError.handoffFailed("empty ticket")
@@ -143,6 +133,18 @@ final class ClaimSession {
 
         status = .idle
         return (label: label, ticket: ticket)
+    }
+
+    /// Split `<label>\n<ticket>` on the first newline. Labels are newline-free
+    /// (sanitised by `zuko share`), and tickets never contain whitespace.
+    private static func parsePayload(_ payload: String) -> (label: String, ticket: String) {
+        guard let nl = payload.firstIndex(of: "\n") else {
+            return ("host", payload.trimmingCharacters(in: .whitespacesAndNewlines))
+        }
+        let label = String(payload[..<nl])
+        let ticket = String(payload[payload.index(after: nl)...])
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        return (label, ticket)
     }
 
     func reset() {

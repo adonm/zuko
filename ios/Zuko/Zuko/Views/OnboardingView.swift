@@ -29,6 +29,11 @@ enum HostSetup {
 
 /// Reusable card explaining how to set up a host.
 struct OnboardingView: View {
+    private static let introText = "Run this once on the Mac/Linux box you want to shell into. "
+        + "`zuko install` sets up a background daemon (systemd on Linux, launchd on macOS) "
+        + "that keeps a persistent, end-to-end-encrypted Iroh session. Prerequisite: "
+        + "[mise](https://mise.jdx.dev) on the host (`curl https://mise.run | sh`)."
+
     @State private var copiedStep: Int?
 
     var body: some View {
@@ -40,7 +45,7 @@ struct OnboardingView: View {
                     .foregroundStyle(Color.accentColor)
             }
 
-            Text("Run this once on the Mac/Linux box you want to shell into. `zuko install` sets up a background daemon (systemd on Linux, launchd on macOS) that keeps a persistent, end-to-end-encrypted Iroh session. Prerequisite: [mise](https://mise.jdx.dev) on the host (`curl https://mise.run | sh`).")
+            Text(Self.introText)
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
 
@@ -126,7 +131,7 @@ struct OnboardingView: View {
 /// A monospaced, copyable single-line command box.
 struct CopyableCommand: View {
     let command: String
-    var onCopy: (() -> Void)? = nil
+    var onCopy: (() -> Void)?
     @State private var copied = false
 
     var body: some View {

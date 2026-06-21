@@ -39,7 +39,7 @@
 //! - **Other platforms:** `install` refuses with a clear message; the host
 //!   can still be run in the foreground with `zuko host`.
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -129,7 +129,9 @@ pub fn install(args: &InstallArgs) -> Result<()> {
         args.key.display()
     );
     if args.no_start {
-        eprintln!("  (--no-start: service enabled but not started; start it with the platform tool when ready)");
+        eprintln!(
+            "  (--no-start: service enabled but not started; start it with the platform tool when ready)"
+        );
     }
     match svc {
         Service::Systemd if !args.no_start => {
@@ -157,7 +159,9 @@ pub fn install(args: &InstallArgs) -> Result<()> {
         }
         Service::Launchd => {
             eprintln!();
-            eprintln!("start later with:    launchctl load ~/Library/LaunchAgents/dev.adonm.zuko.host.plist");
+            eprintln!(
+                "start later with:    launchctl load ~/Library/LaunchAgents/dev.adonm.zuko.host.plist"
+            );
             eprintln!("pair a device with:  zuko share   (after starting)");
         }
     }

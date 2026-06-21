@@ -40,8 +40,8 @@ across QUIC packets; receivers must accumulate bytes and parse greedily (see
 |------|------|-----------|---------|
 | `0x00` | `DATA` | both | raw terminal bytes |
 | `0x01` | `RESIZE` | client → host | `[cols: u16 BE][rows: u16 BE]` |
-| `0x04` | `PING` | both | `[nonce: u64 BE]` (legacy, ignored by v0.6+) |
-| `0x05` | `PONG` | both | `[nonce: u64 BE]` (legacy, ignored by v0.6+) |
+| `0x04` | `PING` | both | `[nonce: u64 BE]` (legacy compatibility) |
+| `0x05` | `PONG` | both | `[nonce: u64 BE]` (legacy compatibility) |
 
 - **`DATA`** — client→host carries keystrokes; host→client carries PTY output.
   Bytes are forwarded verbatim. There is no encoding, escaping, or
@@ -51,9 +51,10 @@ across QUIC packets; receivers must accumulate bytes and parse greedily (see
   client's window changes. **The first frame** the client sends after
   `open_bi` must be a `RESIZE` carrying the initial size — that doubles as the
   entire handshake (see [Connection lifecycle](#connection-lifecycle)).
-- **`PING`/`PONG`** — legacy heartbeat from v0.4–v0.5, kept reserved so old
-  peers don't confuse a v0.6 host. v0.6 clients and hosts ignore them (iroh's
-  QUIC keepalive handles transport-level liveness).
+- **`PING`/`PONG`** — legacy heartbeat from v0.4–v0.5. v0.6+ does not initiate
+  application heartbeats (iroh's QUIC keepalive handles transport-level
+  liveness), but peers should answer `PING` with `PONG` carrying the same nonce
+  for compatibility.
 - **Unknown types** — must be ignored (forward compatibility — future types
   can be added without breaking old clients). Frame types `0x02` (`HELLO`)
   and `0x03` (`WELCOME`) were used by v0.4–v0.5 for the session-resume
@@ -64,7 +65,9 @@ across QUIC packets; receivers must accumulate bytes and parse greedily (see
 1. **Client dials** the host's ticket (see [Ticket](#ticket)) on ALPN `zuko/1`.
 2. **Client opens** the bidi stream and sends a single `RESIZE` with its
    current terminal size. That's the entire handshake. (The opener must write
-   first for the host's `accept_bi` to resolve.)
+   first for the host's `accept_bi` to resolve.) A host should clamp zero
+   dimensions to at least `1×1`; if a non-`RESIZE` arrives first, it may spawn
+   at `80×24` but must still process that frame rather than discard input.
 3. **Host spawns** a fresh shell (`$SHELL`) on a PTY at the requested size,
    with `TERM=xterm-256color`, in the directory chosen by `zuko host --cwd`
    (default `$HOME`).
@@ -90,9 +93,10 @@ string starting with `endpointa`. It encodes:
 
 Because the secret key is persistent, the node id is stable across restarts and
 IP changes; Iroh's discovery resolves the current address on dial, so a saved
-ticket keeps working. The host writes the ticket to
-`~/.config/zuko/current_ticket` for `zuko share` to read; clients receive it
-exclusively through the [handoff](#ticket-handoff) flow.
+ticket keeps working. The host writes and refreshes the ticket at
+`~/.config/zuko/current_ticket` for `zuko share` to read; `share` rejects stale
+files rather than handing out a ticket from a stopped host. Clients receive the
+ticket exclusively through the [handoff](#ticket-handoff) flow.
 
 ## Ticket handoff
 
@@ -120,7 +124,7 @@ code (the [croc](https://github.com/schollz/croc) model). `zuko share` and
 
 The throwaway endpoint is reached by node id through Iroh's N0 DNS address
 lookup, which can lag a couple of seconds behind `share` coming online, so a
-claimer retries the dial for a short window.
+claimer retries the dial until its overall timeout expires.
 
 ## Implementing a client
 
