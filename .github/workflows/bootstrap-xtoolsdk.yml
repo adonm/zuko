@@ -83,16 +83,25 @@ jobs:
       - name: Create or update release + upload asset
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        # `gh release upload` only accepts files, not directories, so
+        # tarball the .xtoolsdk bundle. (~700 MB compressed — large but
+        # unavoidable: it's a full iOS SDK.) Smoke builds download once,
+        # then `actions/cache` skips the re-download on subsequent runs.
         run: |
           set -e
           tag="${{ inputs.tag }}"
+          # Resolve the Xcode version once, outside command substitution,
+          # so xcodebuild's stdout pipe doesn't get SIGPIPE'd.
+          xcode_version="$(xcodebuild -version 2>/dev/null | head -1 | tr -d '\n')"
+          tar -C out -czf out/darwin-x86_64.xtoolsdk.tar.gz darwin-x86_64.xtoolsdk
+          ls -lh out/darwin-x86_64.xtoolsdk.tar.gz
           if gh release view "$tag" >/dev/null 2>&1; then
             echo "release $tag exists; uploading asset (clobbers any previous)"
-            gh release upload "$tag" "out/darwin-x86_64.xtoolsdk" --clobber
+            gh release upload "$tag" "out/darwin-x86_64.xtoolsdk.tar.gz" --clobber
           else
             echo "creating release $tag"
-            gh release create "$tag" "out/darwin-x86_64.xtoolsdk" \
+            gh release create "$tag" "out/darwin-x86_64.xtoolsdk.tar.gz" \
               --title "$tag" \
-              --notes "Darwin Swift SDK bundle for xtool, built from $(xcodebuild -version | head -1)." \
+              --notes "Darwin Swift SDK bundle for xtool, built from ${xcode_version}." \
               --target main
           fi
