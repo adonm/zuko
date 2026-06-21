@@ -233,6 +233,7 @@ else
     # Manual assembly — mirrors xcodebuild's output structure byte-for-byte
     # (verified by diffing a macOS-built XCFramework with this layout on
     # Linux). SwiftPM and Xcode both consume it without complaint.
+    mkdir -p "$XCFW/ios-arm64" "$XCFW/ios-arm64_x86_64-simulator"
     cp -R "$STAGE/ios-arm64/$FRAMEWORK_NAME.framework" \
           "$XCFW/ios-arm64/$FRAMEWORK_NAME.framework"
     cp -R "$STAGE/ios-arm64_x86_64-simulator/$FRAMEWORK_NAME.framework" \
