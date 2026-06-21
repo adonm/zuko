@@ -137,7 +137,10 @@ impl Hello {
             bail!("HELLO sid_len {sid_len} is neither 0 nor {SESSION_ID_LEN}");
         }
         if payload.len() != 6 + sid_len {
-            bail!("HELLO length mismatch: header says {sid_len}, got {}", payload.len() - 6);
+            bail!(
+                "HELLO length mismatch: header says {sid_len}, got {}",
+                payload.len() - 6
+            );
         }
         let session_id = if sid_len == 0 {
             None
@@ -146,7 +149,12 @@ impl Hello {
             id.copy_from_slice(&payload[6..6 + SESSION_ID_LEN]);
             Some(id)
         };
-        Ok(Self { flags, cols, rows, session_id })
+        Ok(Self {
+            flags,
+            cols,
+            rows,
+            session_id,
+        })
     }
 }
 
@@ -185,7 +193,10 @@ impl Welcome {
             bail!("WELCOME sid_len {sid_len} is neither 0 nor {SESSION_ID_LEN}");
         }
         if payload.len() != 2 + sid_len {
-            bail!("WELCOME length mismatch: header says {sid_len}, got {}", payload.len() - 2);
+            bail!(
+                "WELCOME length mismatch: header says {sid_len}, got {}",
+                payload.len() - 2
+            );
         }
         let session_id = if sid_len == 0 {
             None
@@ -235,7 +246,8 @@ pub fn try_parse_frame(buf: &mut Vec<u8>) -> Option<ParsedFrame> {
 /// Read exactly one complete frame from `buf`, returning an error if the buffer
 /// doesn't hold a full frame (used for the must-have-first-frame handshake).
 pub fn parse_one(buf: &mut Vec<u8>) -> Result<ParsedFrame> {
-    try_parse_frame(buf).ok_or_else(|| anyhow!("expected a complete frame, have {} bytes", buf.len()))
+    try_parse_frame(buf)
+        .ok_or_else(|| anyhow!("expected a complete frame, have {} bytes", buf.len()))
 }
 
 #[cfg(test)]
@@ -278,7 +290,12 @@ mod tests {
 
     #[test]
     fn hello_round_trip_new_session() {
-        let h = Hello { flags: FLAG_RESUME | FLAG_HEARTBEAT, cols: 200, rows: 50, session_id: None };
+        let h = Hello {
+            flags: FLAG_RESUME | FLAG_HEARTBEAT,
+            cols: 200,
+            rows: 50,
+            session_id: None,
+        };
         let f = h.frame();
         assert_eq!(f[0], TYPE_HELLO);
         let parsed = Hello::decode(&parse_one(&mut f.clone()).unwrap().payload).unwrap();
@@ -291,7 +308,12 @@ mod tests {
     #[test]
     fn hello_round_trip_resume() {
         let id: SessionId = [0xAB; 8];
-        let h = Hello { flags: FLAG_RESUME, cols: 80, rows: 24, session_id: Some(id) };
+        let h = Hello {
+            flags: FLAG_RESUME,
+            cols: 80,
+            rows: 24,
+            session_id: Some(id),
+        };
         let mut buf = h.frame();
         let frame = try_parse_frame(&mut buf).unwrap();
         assert_eq!(frame.typ, TYPE_HELLO);
@@ -302,7 +324,10 @@ mod tests {
     #[test]
     fn welcome_round_trip_and_resumed_bit() {
         let id: SessionId = [0x11; 8];
-        let w = Welcome { flags: FLAG_RESUME | FLAG_HEARTBEAT | FLAG_RESUMED, session_id: Some(id) };
+        let w = Welcome {
+            flags: FLAG_RESUME | FLAG_HEARTBEAT | FLAG_RESUMED,
+            session_id: Some(id),
+        };
         let mut buf = w.frame();
         assert_eq!(buf[0], TYPE_WELCOME);
         let parsed = Welcome::decode(&try_parse_frame(&mut buf).unwrap().payload).unwrap();
@@ -314,7 +339,10 @@ mod tests {
     #[test]
     fn welcome_without_session_id_for_legacy_host() {
         // A host that doesn't support resume sends WELCOME with sid_len=0.
-        let w = Welcome { flags: 0, session_id: None };
+        let w = Welcome {
+            flags: 0,
+            session_id: None,
+        };
         let mut buf = w.frame();
         let parsed = Welcome::decode(&try_parse_frame(&mut buf).unwrap().payload).unwrap();
         assert!(parsed.session_id.is_none());

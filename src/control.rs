@@ -73,11 +73,7 @@ pub fn parse_session_id_hex(s: &str) -> Option<SessionId> {
     }
     let mut out = [0u8; 8];
     for (i, chunk) in bytes.chunks_exact(2).enumerate() {
-        out[i] = u8::from_str_radix(
-            std::str::from_utf8(chunk).ok()?,
-            16,
-        )
-        .ok()?;
+        out[i] = u8::from_str_radix(std::str::from_utf8(chunk).ok()?, 16).ok()?;
     }
     Some(out)
 }

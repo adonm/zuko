@@ -39,10 +39,10 @@ jobs:
     name: Build .xtoolsdk from installed Xcode
     runs-on: macos-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
 
       - name: mise install (rust — needed by mise to run any task)
-        uses: jdx/mise-action@v4
+        uses: jdx/mise-action@e6a8b3978addb5a52f2b4cd9d91eafa7f0ab959d # v4.2.0
         with:
           cache: true
 
@@ -63,44 +63,47 @@ jobs:
         # to `arm64` (or build both and pick at install time).
         #
         # xtool emits either `darwin.artifactbundle` (1.17.0) or
-        # `darwin.xtoolsdk` (newer main). The installer accepts both as
-        # `.xtoolsdk`. We rename to a fixed name including the arch so
-        # future multi-arch uploads don't clash.
+        # `darwin.xtoolsdk` (newer main). Keep whichever extension xtool
+        # produces — `swift sdk install` on the Linux side strictly
+        # requires `.artifactbundle`, and xtool 1.17.0's installer
+        # requires `.xtoolsdk`. Tarball preserves the original name and
+        # we extract verbatim on the consumer side.
         run: |
           mkdir -p out
           xtool sdk build "$XCODE_APP" --arch x86_64 out/
           ls -la out/
-          # Find whatever xtool emitted (.artifactbundle on 1.17.0, .xtoolsdk on main)
-          # and normalize the name to darwin-x86_64.xtoolsdk.
+          # Find whatever xtool emitted and tarball it preserving the name.
           emitted="$(find out -maxdepth 1 -type d \( -name 'darwin.artifactbundle' -o -name 'darwin.xtoolsdk' \) | head -1)"
           if [ -z "$emitted" ]; then
             echo "ERROR: no SDK bundle found in out/" >&2
             ls -la out/ >&2
             exit 1
           fi
-          mv "$emitted" "out/darwin-x86_64.xtoolsdk"
+          # Rename the tarball to a fixed consumer-facing name; the inner
+          # directory keeps its real extension so installer picks correctly.
+          name="$(basename "$emitted")"
+          tar -C out -czf "out/darwin-x86_64.tar.gz" "$name"
+          ls -lh out/darwin-x86_64.tar.gz
 
       - name: Create or update release + upload asset
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        # `gh release upload` only accepts files, not directories, so
-        # tarball the .xtoolsdk bundle. (~700 MB compressed — large but
-        # unavoidable: it's a full iOS SDK.) Smoke builds download once,
-        # then `actions/cache` skips the re-download on subsequent runs.
+        # The build step above already produced `out/darwin-x86_64.tar.gz`
+        # (~700 MB compressed — large but unavoidable: it's a full iOS SDK).
+        # Smoke builds download once, then `actions/cache` skips the
+        # re-download on subsequent runs.
         run: |
           set -e
           tag="${{ inputs.tag }}"
           # Resolve the Xcode version once, outside command substitution,
           # so xcodebuild's stdout pipe doesn't get SIGPIPE'd.
           xcode_version="$(xcodebuild -version 2>/dev/null | head -1 | tr -d '\n')"
-          tar -C out -czf out/darwin-x86_64.xtoolsdk.tar.gz darwin-x86_64.xtoolsdk
-          ls -lh out/darwin-x86_64.xtoolsdk.tar.gz
           if gh release view "$tag" >/dev/null 2>&1; then
             echo "release $tag exists; uploading asset (clobbers any previous)"
-            gh release upload "$tag" "out/darwin-x86_64.xtoolsdk.tar.gz" --clobber
+            gh release upload "$tag" "out/darwin-x86_64.tar.gz" --clobber
           else
             echo "creating release $tag"
-            gh release create "$tag" "out/darwin-x86_64.xtoolsdk.tar.gz" \
+            gh release create "$tag" "out/darwin-x86_64.tar.gz" \
               --title "$tag" \
               --notes "Darwin Swift SDK bundle for xtool, built from ${xcode_version}." \
               --target main

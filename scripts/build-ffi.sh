@@ -1,9 +1,9 @@
 #!/bin/sh
 # Build ZukoRust.xcframework + regenerate the Swift bindings for the iOS app.
 # Cross-platform: runs on macOS (uses xcodebuild when available) and on
-# Linux (manual XCFramework assembly + llvm-lipo via Homebrew's `llvm`).
-# On Linux, install Rust iOS targets first: `rustup target add
-# aarch64-apple-ios aarch64-apple-ios-sim x86_64-apple-ios`.
+# Linux (manual XCFramework assembly; simulator slices require llvm-lipo).
+# `scripts/build-ios-xtool.sh` sets ZUKO_FFI_DEVICE_ONLY=1 for xtool's default
+# device build, keeping local/Linux smoke builds small and avoiding llvm-lipo.
 #
 # Run locally before opening Xcode, or in CI (build-ios.yml runs this before
 # `xtool dev build`). Produces:
@@ -29,10 +29,13 @@ TARGET_DIR=$(cargo metadata --format-version 1 --no-deps | python3 -c 'import js
 # iroh-ffi's (17.5). The N0 relay stack (nw_path_is_ultra_constrained) needs it.
 export IPHONEOS_DEPLOYMENT_TARGET="26.0"
 
+DEVICE_ONLY="${ZUKO_FFI_DEVICE_ONLY:-0}"
+
 # Ensure the iOS targets are installed (no-op if already present).
-for target in aarch64-apple-ios x86_64-apple-ios aarch64-apple-ios-sim; do
-    rustup target add "$target" 2>/dev/null || true
-done
+rustup target add aarch64-apple-ios 2>/dev/null || true
+if [ "$DEVICE_ONLY" != "1" ]; then
+    rustup target add x86_64-apple-ios aarch64-apple-ios-sim 2>/dev/null || true
+fi
 
 # 1. Build staticlibs for each iOS slice. `--lib` skips the binary target
 #    (main.rs would fail to cross-compile — it imports desktop-only deps).
@@ -86,7 +89,7 @@ build_and_localize() {
     # Both are success states for localization. If nm still shows 'T'
     # (global text), the localization silently failed and the linker
     # will re-trip the duplicate-symbol error in CI — surface it loudly.
-    syms="$(nm "$lib" 2>/dev/null | grep -E ' _rust_eh_personality$' | awk '{print $1}' | sort -u)"
+    syms="$(nm "$lib" 2>/dev/null | grep -E ' _rust_eh_personality$' | awk '{ if ($3 == "_rust_eh_personality") print $2; else if ($2 == "_rust_eh_personality") print $1 }' | sort -u)"
     case "$syms" in
         U|t|r|"t r"|"r t") echo "    $target: _rust_eh_personality localized ($syms)" ;;
         T|"T U"|"U T") echo "    $target: ERROR — _rust_eh_personality still global (T); localization failed" >&2; exit 1 ;;
@@ -95,8 +98,12 @@ build_and_localize() {
 }
 
 build_and_localize aarch64-apple-ios
-build_and_localize aarch64-apple-ios-sim
-build_and_localize x86_64-apple-ios
+if [ "$DEVICE_ONLY" != "1" ]; then
+    build_and_localize aarch64-apple-ios-sim
+    build_and_localize x86_64-apple-ios
+else
+    echo "==> ZUKO_FFI_DEVICE_ONLY=1: skipping simulator Rust slices"
+fi
 
 # 2. Build a host staticlib so uniffi-bindgen can read the crate metadata.
 #    (--library mode works against a staticlib; no cdylib needed.)
@@ -129,22 +136,29 @@ cargo run --bin uniffi-bindgen -- generate \
 sed "s/${LIB_NAME}FFI/$FRAMEWORK_NAME/g" "$BINDGEN_OUT/${LIB_NAME}.swift" \
     > "$OUT_DIR/Sources/ZukoFFI/ZukoFFI.swift"
 
-# 4. Build a fat sim lib (arm64-sim + x86_64-sim) via lipo.
-#    `lipo` is Apple-only; Linux CI uses `llvm-lipo` from LLVM (shipped via
-#    Homebrew on the runner — `brew install llvm`). Drop-in compatible.
-echo "==> creating fat simulator library"
-LIPO="$(command -v lipo || command -v llvm-lipo || true)"
-if [ -z "$LIPO" ]; then
-    echo "build-ffi: neither 'lipo' nor 'llvm-lipo' found on PATH" >&2
-    echo "           macOS ships lipo; Linux needs 'brew install llvm' for llvm-lipo." >&2
-    exit 1
+if [ "$DEVICE_ONLY" != "1" ]; then
+    # 4. Build a fat sim lib (arm64-sim + x86_64-sim) via lipo.
+    #    `lipo` is Apple-only; Linux CI uses `llvm-lipo` from LLVM. Must be a
+    #    recent LLVM that can read Rust's object files (LLVM 22 for Rust 1.96);
+    #    old distro llvm-lipo (e.g. Ubuntu 22.04's LLVM 14) fails with opaque
+    #    pointer errors. The Linux smoke build sets ZUKO_FFI_DEVICE_ONLY=1 and
+    #    avoids simulator slices entirely, so this full-fat path is macOS/release.
+    echo "==> creating fat simulator library"
+    LIPO="$(command -v lipo || command -v llvm-lipo || true)"
+    if [ -z "$LIPO" ]; then
+        echo "build-ffi: neither 'lipo' nor 'llvm-lipo' found on PATH" >&2
+        echo "           macOS ships lipo; Linux full XCFramework needs Homebrew llvm's llvm-lipo." >&2
+        exit 1
+    fi
+    echo "    using: $LIPO"
+    SIM_UNIVERSAL="$TARGET_DIR/sim-universal-${LIB_NAME}.a"
+    "$LIPO" -create \
+        "$TARGET_DIR/aarch64-apple-ios-sim/release/lib${LIB_NAME}.a" \
+        "$TARGET_DIR/x86_64-apple-ios/release/lib${LIB_NAME}.a" \
+        -output "$SIM_UNIVERSAL"
+else
+    echo "==> ZUKO_FFI_DEVICE_ONLY=1: skipping fat simulator library"
 fi
-echo "    using: $LIPO"
-SIM_UNIVERSAL="$TARGET_DIR/sim-universal-${LIB_NAME}.a"
-"$LIPO" -create \
-    "$TARGET_DIR/aarch64-apple-ios-sim/release/lib${LIB_NAME}.a" \
-    "$TARGET_DIR/x86_64-apple-ios/release/lib${LIB_NAME}.a" \
-    -output "$SIM_UNIVERSAL"
 
 # 5. Assemble .framework bundles for each slice. The structure mirrors
 #    iroh-ffi's: an umbrella Export.h + module.modulemap that turns the FFI
@@ -217,26 +231,39 @@ echo "==> assembling framework slices"
 create_framework \
     "$STAGE/ios-arm64/$FRAMEWORK_NAME.framework" \
     "$TARGET_DIR/aarch64-apple-ios/release/lib${LIB_NAME}.a"
-create_framework \
-    "$STAGE/ios-arm64_x86_64-simulator/$FRAMEWORK_NAME.framework" \
-    "$SIM_UNIVERSAL"
+if [ "$DEVICE_ONLY" != "1" ]; then
+    create_framework \
+        "$STAGE/ios-arm64_x86_64-simulator/$FRAMEWORK_NAME.framework" \
+        "$SIM_UNIVERSAL"
+fi
 
 mkdir -p "$XCFW"
 
 if command -v xcodebuild >/dev/null 2>&1; then
-    xcodebuild -create-xcframework \
-        -framework "$STAGE/ios-arm64/$FRAMEWORK_NAME.framework" \
-        -framework "$STAGE/ios-arm64_x86_64-simulator/$FRAMEWORK_NAME.framework" \
-        -output "$XCFW" \
-        >/dev/null
+    if [ "$DEVICE_ONLY" = "1" ]; then
+        xcodebuild -create-xcframework \
+            -framework "$STAGE/ios-arm64/$FRAMEWORK_NAME.framework" \
+            -output "$XCFW" \
+            >/dev/null
+    else
+        xcodebuild -create-xcframework \
+            -framework "$STAGE/ios-arm64/$FRAMEWORK_NAME.framework" \
+            -framework "$STAGE/ios-arm64_x86_64-simulator/$FRAMEWORK_NAME.framework" \
+            -output "$XCFW" \
+            >/dev/null
+    fi
 else
     # Manual assembly — mirrors xcodebuild's output structure byte-for-byte
     # (verified by diffing a macOS-built XCFramework with this layout on
     # Linux). SwiftPM and Xcode both consume it without complaint.
+    mkdir -p "$XCFW/ios-arm64"
     cp -R "$STAGE/ios-arm64/$FRAMEWORK_NAME.framework" \
           "$XCFW/ios-arm64/$FRAMEWORK_NAME.framework"
-    cp -R "$STAGE/ios-arm64_x86_64-simulator/$FRAMEWORK_NAME.framework" \
-          "$XCFW/ios-arm64_x86_64-simulator/$FRAMEWORK_NAME.framework"
+    if [ "$DEVICE_ONLY" != "1" ]; then
+        mkdir -p "$XCFW/ios-arm64_x86_64-simulator"
+        cp -R "$STAGE/ios-arm64_x86_64-simulator/$FRAMEWORK_NAME.framework" \
+              "$XCFW/ios-arm64_x86_64-simulator/$FRAMEWORK_NAME.framework"
+    fi
     cat > "$XCFW/Info.plist" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -258,6 +285,9 @@ else
 			<key>SupportedPlatform</key>
 			<string>ios</string>
 		</dict>
+EOF
+    if [ "$DEVICE_ONLY" != "1" ]; then
+        cat >> "$XCFW/Info.plist" <<EOF
 		<dict>
 			<key>BinaryPath</key>
 			<string>$FRAMEWORK_NAME</string>
@@ -275,6 +305,9 @@ else
 			<key>SupportedPlatformVariant</key>
 			<string>simulator</string>
 		</dict>
+EOF
+    fi
+    cat >> "$XCFW/Info.plist" <<EOF
 	</array>
 	<key>CFBundlePackageType</key>
 	<string>XFWK</string>
@@ -289,4 +322,4 @@ echo "  XCFramework:  $XCFW"
 echo "  Swift source: $OUT_DIR/Sources/ZukoFFI/ZukoFFI.swift"
 echo
 echo "The XCFramework is gitignored (rebuilt on demand). The Swift bindings"
-echo "are committed (deterministic output). Next: open Xcode / run xcodegen."
+echo "are committed (deterministic output). Next: run 'mise run build-ios'."

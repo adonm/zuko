@@ -42,8 +42,8 @@ use tokio::io::AsyncWriteExt as _;
 use tokio::sync::{mpsc, Notify};
 
 use crate::wire::{
-    decode_nonce, ping_frame, pong_frame, resize_frame, try_parse_frame, Hello, Welcome,
-    FLAG_HEARTBEAT, FLAG_RESUME, TYPE_DATA, TYPE_PING, TYPE_WELCOME, ALPN,
+    decode_nonce, ping_frame, pong_frame, resize_frame, try_parse_frame, Hello, Welcome, ALPN,
+    FLAG_HEARTBEAT, FLAG_RESUME, TYPE_DATA, TYPE_PING, TYPE_WELCOME,
 };
 
 /// Reconnect backoff: starts here, doubles, caps here.
@@ -208,7 +208,10 @@ pub async fn connect(ticket_str: &str) -> Result<()> {
         let conn = match endpoint.connect(addr.clone(), ALPN).await {
             Ok(c) => c,
             Err(_) => {
-                status_line(&format!("can't reach host, retrying in {:.1}s…", backoff.as_secs_f64()));
+                status_line(&format!(
+                    "can't reach host, retrying in {:.1}s…",
+                    backoff.as_secs_f64()
+                ));
                 tokio::time::sleep(backoff).await;
                 backoff = (backoff * 2).min(BACKOFF_MAX);
                 continue;
@@ -217,7 +220,10 @@ pub async fn connect(ticket_str: &str) -> Result<()> {
         let (mut send, recv) = match conn.open_bi().await {
             Ok(bi) => bi,
             Err(_) => {
-                status_line(&format!("stream open failed, retrying in {:.1}s…", backoff.as_secs_f64()));
+                status_line(&format!(
+                    "stream open failed, retrying in {:.1}s…",
+                    backoff.as_secs_f64()
+                ));
                 tokio::time::sleep(backoff).await;
                 backoff = (backoff * 2).min(BACKOFF_MAX);
                 continue;
@@ -357,7 +363,8 @@ pub async fn connect(ticket_str: &str) -> Result<()> {
                                     stdout_seq_for_read.fetch_add(1, Ordering::Relaxed);
                                 }
                                 TYPE_PING => {
-                                    let _ = pong_tx.send(pong_frame(decode_nonce(&f.payload))).await;
+                                    let _ =
+                                        pong_tx.send(pong_frame(decode_nonce(&f.payload))).await;
                                 }
                                 _ => {} // WELCOME (already consumed), PONG, unknown: ignore
                             }

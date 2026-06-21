@@ -562,7 +562,7 @@ public func FfiConverterTypeDeriveKeyError_lower(_ value: DeriveKeyError) -> Rus
 /**
  * Derive the 32-byte handoff seed from a pairing code.
  *
- * This is literally [`crate::code::derive_key`]: it normalises the code,
+ * This is literally [`crate::code::derive_seed`]: it normalises the code,
  * runs Argon2id (OWASP-default params, salt `b"zuko-share-handoff-v1"`),
  * and returns the 32-byte seed. The iOS app constructs an
  * `iroh::SecretKey::from_bytes(&seed)` from the result, reads its
@@ -571,6 +571,12 @@ public func FfiConverterTypeDeriveKeyError_lower(_ value: DeriveKeyError) -> Rus
  *
  * The seed is returned as a `Vec<u8>` (not a fixed array) because uniffi's
  * Swift codegen maps `Vec<u8>` to `Data`, which is what the iOS side wants.
+ *
+ * Uses `derive_seed` (not `derive_key`) so the iOS staticlib doesn't need
+ * to depend on `iroh` — the seed is plain bytes, and the iOS app already
+ * wraps them in `IrohLib.SecretKey.fromBytes`. Keeps `iroh` (and its
+ * transitive `ring` C/asm dep) out of the iOS staticlib, which is what
+ * lets `build-ffi.sh` cross-compile from Linux without `xcrun`.
  */
 public func deriveHandoffKey(code: String)throws  -> Data  {
     return try  FfiConverterData.lift(try rustCallWithError(FfiConverterTypeDeriveKeyError_lift) {
@@ -595,7 +601,7 @@ private let initializationResult: InitializationResult = {
     if bindings_contract_version != scaffolding_contract_version {
         return InitializationResult.contractVersionMismatch
     }
-    if (uniffi_zuko_checksum_func_derive_handoff_key() != 61776) {
+    if (uniffi_zuko_checksum_func_derive_handoff_key() != 1086) {
         return InitializationResult.apiChecksumMismatch
     }
 

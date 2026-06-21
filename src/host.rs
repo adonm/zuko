@@ -51,8 +51,8 @@ use crate::control::{control_socket_path, hex_id, parse_session_id_hex};
 use crate::secret::write_secret_0600;
 use crate::ticket_file::write_current_ticket;
 use crate::wire::{
-    self, decode_nonce, try_parse_frame, Hello, SessionId, Welcome, FLAG_HEARTBEAT,
-    FLAG_RESUME, FLAG_RESUMED, TYPE_DATA, TYPE_HELLO, TYPE_PING, TYPE_RESIZE, ALPN,
+    self, decode_nonce, try_parse_frame, Hello, SessionId, Welcome, ALPN, FLAG_HEARTBEAT,
+    FLAG_RESUME, FLAG_RESUMED, TYPE_DATA, TYPE_HELLO, TYPE_PING, TYPE_RESIZE,
 };
 use crate::HostArgs;
 
@@ -465,10 +465,7 @@ impl Session {
     /// caller treats that as "not idle" — same as the auto-reaper's `try_lock`
     /// pattern).
     fn idle(&self) -> Option<std::time::Duration> {
-        self.last_activity
-            .lock()
-            .ok()
-            .map(|t| t.elapsed())
+        self.last_activity.lock().ok().map(|t| t.elapsed())
     }
 }
 
@@ -686,7 +683,11 @@ async fn serve(
         loop {
             interval.tick().await;
             nonce = nonce.wrapping_add(1);
-            if ping_tx.send(OutItem::Frame(wire::ping_frame(nonce))).await.is_err() {
+            if ping_tx
+                .send(OutItem::Frame(wire::ping_frame(nonce)))
+                .await
+                .is_err()
+            {
                 break; // connection gone; stop heartbeating
             }
         }
@@ -705,9 +706,7 @@ async fn serve(
     pty_to_net.abort();
     heartbeat.abort();
 
-    let shell_gone = session
-        .exited
-        .load(std::sync::atomic::Ordering::Relaxed)
+    let shell_gone = session.exited.load(std::sync::atomic::Ordering::Relaxed)
         || matches!(end, ConnEnd::ShellExited);
     if shell_gone {
         // The shell is gone (PTY EOF) or the session was reaped elsewhere.
@@ -804,10 +803,7 @@ fn spawn_reaper(sessions: SessionRegistry) {
             {
                 let registry = sessions.lock().await;
                 for (id, session) in registry.iter() {
-                    if session
-                        .exited
-                        .load(std::sync::atomic::Ordering::Relaxed)
-                    {
+                    if session.exited.load(std::sync::atomic::Ordering::Relaxed) {
                         to_reap.push(*id);
                     }
                     // No time-based reaping — sessions live forever until the
@@ -907,9 +903,7 @@ fn handle_control_conn(
 fn handle_control_line(line: &str, sessions: &SessionRegistry) -> String {
     let parts: Vec<&str> = line.split_whitespace().collect();
     if parts.len() < 3 || parts.first() != Some(&"REAP") {
-        return format!(
-            "ERROR expected 'REAP <secs> <skip|none>', got {line:?}\n"
-        );
+        return format!("ERROR expected 'REAP <secs> <skip|none>', got {line:?}\n");
     }
     let secs: u64 = match parts[1].parse() {
         Ok(s) => s,
@@ -952,13 +946,8 @@ fn reap_idle(
             }
             // An exited session is always a candidate regardless of activity —
             // it's already dead, just hasn't been cleaned up yet.
-            let exited = session
-                .exited
-                .load(std::sync::atomic::Ordering::Relaxed);
-            let idle_too_long = session
-                .idle()
-                .map(|d| d > threshold)
-                .unwrap_or(false);
+            let exited = session.exited.load(std::sync::atomic::Ordering::Relaxed);
+            let idle_too_long = session.idle().map(|d| d > threshold).unwrap_or(false);
             if exited || idle_too_long {
                 to_reap.push(*id);
             }
@@ -973,7 +962,10 @@ fn reap_idle(
         };
         if let Some(session) = session {
             reap_session(&session);
-            info!(session = hex_id(id), "reaped idle session via control socket");
+            info!(
+                session = hex_id(id),
+                "reaped idle session via control socket"
+            );
         }
     }
     to_reap

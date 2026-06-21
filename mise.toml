@@ -2,9 +2,8 @@
 # Local dev:   `mise install`  then  `mise run <task>`
 # CI:          `jdx/mise-action` (runs `mise install`) then `mise run <task>`
 #
-# iOS tooling (xcodegen, fastlane) is installed via system Homebrew by the
-# `setup-ios` task — mise's own brew backend conflicts with the system Homebrew
-# on runners/dev Macs, and these are exactly the system tools Homebrew is for.
+# iOS local builds use xtool. Fastlane/XcodeGen are kept only for the signed
+# App Store/TestFlight workflow until xtool grows an App Store export path.
 
 [tools]
 # iroh 1.0's dependency tree needs edition2024 (Rust 1.85+); track latest stable.
@@ -53,54 +52,59 @@ description = "End-to-end PTY harness (host<->connect + share<->claim) against t
 run = "cargo test --release --test e2e -- --ignored --nocapture"
 
 [tasks.build-ffi]
-description = "Build Zuko.xcframework + regenerate the Swift bindings for the iOS app. macOS only (needs Xcode + iOS targets)."
+description = "Build ZukoRust.xcframework + regenerate Swift bindings for the iOS app. Set ZUKO_FFI_DEVICE_ONLY=1 for xtool's default device-only build."
 run = "sh scripts/build-ffi.sh"
 
 [tasks.build-ios]
-description = "Generate the iOS app via xtool (Package.swift + xtool.yml). macOS only for now — Linux needs a one-time `xtool sdk install` of a Darwin artifactbundle (see scripts/patch-iroh-framework.sh + ios/xtool.yml). Run `setup-xtool` + `build-ffi` first."
-dir = "ios"
-# xtool replaces xcodegen + xcodebuild. Two scripts bracket the build:
-#   1. patch-ios-plist.sh — bakes MARKETING_VERSION (from Cargo.toml via
-#      scripts/version.sh) + CURRENT_PROJECT_VERSION (from $ZUKO_BUILD_NUMBER,
-#      default "1") into the Info.plist, because xtool has no `xcargs`
-#      equivalent for build-setting substitution.
-#   2. patch-iroh-framework.sh — adds MinimumOSVersion to embedded
-#      frameworks that ship without it (the iroh-ffi packaging bug the
-#      legacy postBuildScripts step patched inline). Runs after the build
-#      against the .app xtool emitted.
-#
-# The .app/.ipa path xtool emits is unstable (it includes a timestamp);
-# the simplest reliable way to find it is the Wrote: line xtool prints
-# at the end. We let xtool manage the path and patch in place via find.
-run = """
-v="${ZUKO_VERSION:-$(sh "$(git rev-parse --show-toplevel)/scripts/version.sh")}"
-b="${ZUKO_BUILD_NUMBER:-1}"
-export ZUKO_BUILD_NUMBER="$b"
-echo "Building Zuko $v (build $b) for iOS via xtool"
-sh "$(git rev-parse --show-toplevel)/scripts/patch-ios-plist.sh"
+description = "Build the iOS app with xtool. One command for local dev and CI: builds FFI, patches plist/frameworks, emits ios/xtool/Zuko.app."
+run = "sh scripts/build-ios-xtool.sh"
 
-# xtool dev build emits either an .app (default) or a .ipa (--ipa). For the
-# smoke build we want the .app so we can patch embedded frameworks in place
-# before any packaging. xtool prints `Wrote to /path/Zuko.app` on success.
-xtool dev build --configuration debug
-
-# Restore the Info.plist placeholders so the working tree stays clean for
-# the next `xcodebuild` path (or a re-run with different version env).
-git -C "$(git rev-parse --show-toplevel)" checkout -- ios/Zuko/Zuko/Info.plist
-
-# Patch iroh-ffi + any other binary framework missing MinimumOSVersion.
-# xtool's build output dir varies; find the freshest Zuko.app.
-app="$(find . -name 'Zuko.app' -type d -print 2>/dev/null | head -1)"
-if [ -z "$app" ]; then
-    echo "build-ios: couldn't locate Zuko.app in xtool output" >&2
-    exit 1
-fi
-IPHONEOS_DEPLOYMENT_TARGET="26.0" sh "$(git rev-parse --show-toplevel)/scripts/patch-iroh-framework.sh" "$app"
-echo "Built + patched: $app"
-"""
+[tasks.setup-ios-sdk]
+description = "Install the cached Darwin Swift SDK bundle for Linux xtool iOS builds. Idempotent; build-ios runs this automatically when needed."
+run = "sh scripts/setup-ios-sdk.sh"
 
 [tasks.setup-ios]
-description = "Install iOS tooling (xcodegen, fastlane) via Homebrew. macOS only."
+description = "Install local iOS build tooling for xtool. macOS: xtool tap. Linux: Homebrew Swift/libxml2 + xtool AppImage."
+run = """
+case "$(uname -s)" in
+    Linux)
+        if command -v mise >/dev/null 2>&1; then
+            mise bootstrap packages install --yes
+        fi
+        BREW="$(command -v brew || command -v /home/linuxbrew/.linuxbrew/bin/brew || true)"
+        if [ -z "$BREW" ]; then
+            echo "setup-ios: Homebrew is required for Swift on Linux" >&2
+            exit 1
+        fi
+        "$BREW" install swift libxml2
+        "$BREW" link --overwrite --force swift libxml2 || true
+        BREW_PREFIX="$($BREW --prefix)"
+        export PATH="$BREW_PREFIX/bin:$BREW_PREFIX/sbin:$PATH"
+
+        ld_libs=""
+        for d in "$BREW_PREFIX"/opt/*/lib; do
+            [ -d "$d" ] || continue
+            if [ -z "$ld_libs" ]; then ld_libs="$d"; else ld_libs="$ld_libs:$d"; fi
+        done
+        export LD_LIBRARY_PATH="${ld_libs}${LD_LIBRARY_PATH+:${LD_LIBRARY_PATH}}"
+        if [ -n "${GITHUB_PATH:-}" ]; then
+            {
+                echo "$BREW_PREFIX/bin"
+                echo "$BREW_PREFIX/sbin"
+            } >> "$GITHUB_PATH"
+        fi
+        if [ -n "${GITHUB_ENV:-}" ]; then
+            echo "LD_LIBRARY_PATH=$LD_LIBRARY_PATH" >> "$GITHUB_ENV"
+        fi
+        ;;
+esac
+
+mise run setup-xtool
+swift --version
+"""
+
+[tasks.setup-ios-release]
+description = "Install legacy signed-release tooling (xcodegen + fastlane). Used only by release-ios.yml."
 run = "brew install xcodegen fastlane"
 
 [tasks.setup-xtool]
@@ -115,6 +119,10 @@ case "$(uname -s)" in
         curl -fL "https://github.com/xtool-org/xtool/releases/latest/download/xtool-$(uname -m).AppImage" \
             -o "$HOME/.local/bin/xtool"
         chmod +x "$HOME/.local/bin/xtool"
+        export PATH="$HOME/.local/bin:$PATH"
+        if [ -n "${GITHUB_PATH:-}" ]; then
+            echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+        fi
         ;;
     *)
         echo "setup-xtool: unsupported OS $(uname -s)" >&2
@@ -138,6 +146,32 @@ fi
 description = "One-time Apple signing setup for the iOS TestFlight pipeline. Generates cert+profile material, walks you through the developer-portal dance, and pushes the 7 GH Actions secrets via `gh`. No Mac needed. See ios/DISTRIBUTION.md."
 run = "sh scripts/setup-ios-signing.sh"
 
+[tasks.ios-signing-status]
+description = "Check local iOS signing artifacts under ~/.config/zuko/ios-signing without printing secrets."
+run = """
+dir="${ZUKO_IOS_SIGNING_DIR:-$HOME/.config/zuko/ios-signing}"
+missing=0
+echo "iOS signing workspace: $dir"
+for f in zuko.key zuko.csr zuko.cer zuko.p12 p12-password Zuko_AppStore.mobileprovision team-id asc-key-id asc-issuer-id; do
+    if [ -f "$dir/$f" ]; then
+        echo "  ok:      $f"
+    else
+        echo "  missing: $f"
+        missing=1
+    fi
+done
+if ! ls "$dir"/AuthKey_*.p8 >/dev/null 2>&1; then
+    echo "  missing: AuthKey_*.p8"
+    missing=1
+else
+    echo "  ok:      AuthKey_*.p8"
+fi
+if [ "$missing" -ne 0 ]; then
+    echo "Run: mise run setup-ios-signing"
+    exit 1
+fi
+"""
+
 [tasks.run-host]
 description = "Run `zuko host` in the foreground (mise shim or local debug build)"
 run = "sh scripts/zuko-host.sh"
@@ -145,3 +179,159 @@ run = "sh scripts/zuko-host.sh"
 [tasks.release]
 description = "Cut a release: commit pending work, push, tag vX.Y.Z, push tag (triggers release.yml). Pass the version, e.g. `mise run release v0.1.0`."
 run = "sh scripts/release.sh ${@}"
+
+# ──────────────────────────── hooks ─────────────────────────────────
+# See https://mise.jdx.dev/hooks.html. All hooks fire only when
+# `mise activate` is set up in the user's shell — they're no-ops
+# otherwise (CI included, which is fine: CI runs tasks explicitly).
+#
+# Design:
+#   - `enter` is a one-shot status snapshot (cheap, no builds).
+#   - `watch_files` runs *fast* checks on save: cargo fmt + clippy
+#     (Rust), swiftlint (Swift). Output is short — keeps the editor
+#     pane readable.
+#   - The slow check (full xtool iOS build) is gated to manifest /
+#     config file changes only, so it doesn't fire on every keystroke.
+#     Triggers `mise run preflight`, which is the same path CI runs.
+
+[hooks.enter]
+# Run once when entering the project. Quick environment snapshot only —
+# no builds, no tests, no network. Surfaces:
+#   - rust toolchain version (always)
+#   - swift + xtool versions (if present; iOS dev is opt-in)
+#   - whether the .xtoolsdk is installed (on Linux; gates xtool dev build)
+# The goal is a glance-able status line so you immediately know if
+# something's off before you start a build.
+run = """
+echo "zuko dev env:"
+echo "  rust:   $(cargo --version 2>/dev/null || echo 'missing — run mise install')"
+if command -v xtool >/dev/null 2>&1; then
+    echo "  xtool:  $(xtool --version 2>/dev/null)"
+fi
+if command -v swift >/dev/null 2>&1; then
+    echo "  swift:  $(swift --version 2>/dev/null | head -1)"
+    sdk_status="$(xtool sdk status 2>&1 || true)"
+    if printf '%s\n' "$sdk_status" | grep -qi 'not installed'; then
+        echo "  ios SDK: not installed (run 'mise run setup-ios' on macOS,"
+        echo "           or install the SDK bundle from bootstrap-xtoolsdk.yml on Linux)"
+    else
+        echo "  ios SDK: $(printf '%s\n' "$sdk_status" | head -1)"
+    fi
+fi
+signing_dir="${ZUKO_IOS_SIGNING_DIR:-$HOME/.config/zuko/ios-signing}"
+if [ -d "$signing_dir" ]; then
+    if [ -f "$signing_dir/zuko.p12" ] && [ -f "$signing_dir/Zuko_AppStore.mobileprovision" ] && ls "$signing_dir"/AuthKey_*.p8 >/dev/null 2>&1; then
+        echo "  iOS signing: configured ($signing_dir)"
+    else
+        echo "  iOS signing: incomplete (run 'mise run setup-ios-signing' if you need TestFlight)"
+    fi
+else
+    echo "  iOS signing: not set up (run 'mise run setup-ios-signing' if you need TestFlight)"
+fi
+"""
+
+# ────────────── watch_files: fast checks on every save ──────────────
+
+[[watch_files]]
+# cargo fmt is instant and runs unconditionally on every Rust save.
+# Auto-fixes in place; noisy diffs print to the editor pane so you see
+# what changed.
+patterns = ["src/**/*.rs", "tests/**/*.rs", "uniffi-bindgen.rs"]
+run = "cargo fmt"
+
+[[watch_files]]
+# `cargo check` is what we'd actually want here (faster than clippy for
+# save-time feedback), but it doesn't auto-fix. Clippy does lint-grade
+# analysis with decent incremental speed; the watch_files output
+# surfaces warnings without aborting the editor session.
+patterns = ["src/**/*.rs", "Cargo.toml", "Cargo.lock"]
+run = "cargo clippy --quiet --message-format=short 2>&1 | tail -5"
+
+[[watch_files]]
+# SwiftLint is the iOS-side equivalent of cargo clippy — fast, no build.
+# Runs against the same config CI uses (.swiftlint.yml), so warnings
+# match what PR check will flag.
+patterns = ["ios/Zuko/Zuko/**/*.swift", ".swiftlint.yml"]
+run = """
+if command -v swiftlint >/dev/null 2>&1; then
+    swiftlint --config .swiftlint.yml ios/Zuko --quiet
+else
+    echo "(swiftlint not installed — run 'mise install')"
+fi
+"""
+
+# ───── watch_files: slow checks gated to manifest / config files ─────
+
+[[watch_files]]
+# xtool iOS build is ~2-3 min, far too slow for per-keystroke. Gate it
+# to the small set of files that *change the build configuration*:
+# Package.swift (dependencies, products), xtool.yml (bundle ID, custom
+# plist path), Info.plist (version sync), Cargo.toml (iOS staticlib
+# behavior). Source-level Swift changes get the fast swiftlint hook
+# above instead.
+#
+# Wraps `mise run build-ios` so the validation path is identical to CI
+# — if CI is going to fail, this hook surfaces it locally first.
+# Silent skip if xtool isn't installed (Linux without iOS dev setup,
+# or a rust-only contributor's machine).
+patterns = [
+    "ios/Package.swift",
+    "ios/xtool.yml",
+    "ios/Zuko/Zuko/Info.plist",
+    "Cargo.toml",
+]
+run = """
+if ! command -v xtool >/dev/null 2>&1; then
+    echo "(xtool not installed — skipping iOS build validation)"
+    exit 0
+fi
+sdk_status="$(xtool sdk status 2>&1 || true)"
+if printf '%s\n' "$sdk_status" | grep -qi 'not installed'; then
+    echo "(iOS SDK not installed — skipping iOS build validation)"
+    echo " on macOS: run 'mise run setup-ios' then 'xtool setup'"
+    echo " on Linux: run 'mise run setup-ios-sdk' (build-ios also does this automatically)"
+    exit 0
+fi
+echo "==> iOS build config changed; running xtool build validation..."
+mise run build-ios 2>&1 | tail -20
+"""
+
+# ──────────────────── explicit check / preflight tasks ──────────────
+# These don't auto-run; they're what you call before `git push` to
+# mirror what CI is going to do. `check` is the fast subset (~10s);
+# `preflight` is everything CI runs including the iOS build (~3 min).
+
+[tasks.check]
+description = "Fast pre-push checks: cargo fmt --check + clippy + tests + swiftlint. ~10-30s. Mirrors what the build.yml job runs."
+run = [
+    "cargo fmt --check",
+    "cargo clippy --all-targets -- -D warnings",
+    "cargo test",
+    """
+if command -v swiftlint >/dev/null 2>&1; then
+    swiftlint --config .swiftlint.yml ios/Zuko --strict
+else
+    echo "(skipping swiftlint — not installed)"
+fi
+""",
+]
+
+[tasks.preflight]
+description = "Full local CI mirror: 'mise run check' + 'mise run build-ios' (xtool build). ~3 min. Run before pushing if you've touched iOS code."
+depends = ["check"]
+run = """
+if ! command -v xtool >/dev/null 2>&1; then
+    echo "preflight: xtool not installed — skipping iOS build (run 'mise run setup-xtool' to enable)"
+    exit 0
+fi
+sdk_status="$(xtool sdk status 2>&1 || true)"
+if printf '%s\n' "$sdk_status" | grep -qi 'not installed'; then
+    if [ "$(uname -s)" = "Linux" ]; then
+        mise run setup-ios-sdk
+    else
+        echo "preflight: iOS SDK not installed — skipping iOS build"
+        exit 0
+    fi
+fi
+mise run build-ios
+"""

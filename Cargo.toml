@@ -1,6 +1,6 @@
 [package]
 name = "zuko"
-version = "0.4.3"
+version = "0.4.6"
 edition = "2021"
 license = "Apache-2.0"
 description = "Remote terminals over Iroh: the host daemon and reference CLI client."
@@ -26,10 +26,7 @@ name = "zuko"
 crate-type = ["rlib", "staticlib"]
 
 [dependencies]
-iroh = "1.0"
-# Just the tokio features we actually use. Target-cfg'd below for non-iOS,
-# because the iOS FFI build (code.rs + ffi.rs) is fully synchronous — no
-# async runtime needed on device.
+# iroh is intentionally NOT here — see the target-cfg'd block below for why.
 # Memory-hard KDF for deriving the throwaway handoff key from a memorable code
 # (`zuko share`/`claim`). Replaces a single unsalted SHA-256 so the ~52-bit
 # code resists offline brute-force if the ephemeral NodeId leaks.
@@ -50,7 +47,14 @@ uniffi = { version = "0.31", features = ["cli"] }
 # `crossterm` + `inquire` are interactive-terminal-only; etc. Target-cfg
 # keeps the CLI build unchanged while letting `cargo build --lib --target
 # *-apple-ios*` succeed.
+#
+# `iroh` lives here (not in the unconditional `[dependencies]` above) because
+# the iOS FFI exposes only `derive_seed` — pure Argon2, no iroh types across
+# the boundary. Keeping iroh off iOS in turn keeps `ring` (iroh's transitive
+# C/asm dep) off iOS, which lets `build-ffi.sh` cross-compile from Linux
+# without `xcrun` (which doesn't exist outside macOS).
 [target.'cfg(not(target_os = "ios"))'.dependencies]
+iroh = "1.0"
 iroh-tickets = "1.0"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "io-util", "signal", "time"] }
 portable-pty = "0.8"

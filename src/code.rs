@@ -29,6 +29,7 @@
 
 use anyhow::Result;
 use argon2::{Algorithm, Argon2, Params, Version};
+#[cfg(not(target_os = "ios"))]
 use iroh::SecretKey;
 
 /// Fixed, non-secret Argon2 salt. Tied to the protocol version so a future
@@ -62,16 +63,22 @@ pub fn normalize_code(code: &str) -> String {
         .collect()
 }
 
-/// Derive the throwaway [`SecretKey`] deterministically from a code. Both sides
-/// run exactly this, so they converge on the same key (and thus the same node
-/// id) without ever exchanging secret material.
+/// Derive the throwaway 32-byte seed deterministically from a code. Both
+/// sides run exactly this, so they converge on the same seed (and thus
+/// the same node id) without ever exchanging secret material.
 ///
 /// Memory-hard (Argon2id, ~19 MiB) so the code resists offline brute-force
 /// even if the ephemeral `NodeId` is observed. The code itself carries ~28 bits
 /// of entropy (one adjective from ~37K × one noun from ~6K), which is far
 /// beyond reach for **online** guessing during the minutes-long share window,
 /// and the Argon2id KDF raises each **offline** guess to ~200 ms.
-pub fn derive_key(code: &str) -> Result<SecretKey> {
+///
+/// Pure Argon2id — no `iroh` dependency. The iOS staticlib cfg-excludes
+/// `iroh` (it ships the same seed bytes to Swift, which wraps them via
+/// `IrohLib.SecretKey.fromBytes`), and excluding `iroh` from the iOS
+/// build sidesteps the transitive `ring` (C/asm) dependency that would
+/// otherwise need `xcrun` to cross-compile from Linux.
+pub fn derive_seed(code: &str) -> Result<[u8; 32]> {
     let material = normalize_code(code);
     let mut seed = [0u8; 32];
     // With our const-constructed Argon2 + a 32-byte output buffer the only
@@ -80,6 +87,21 @@ pub fn derive_key(code: &str) -> Result<SecretKey> {
     kdf()
         .hash_password_into(material.as_bytes(), KDF_SALT, &mut seed)
         .map_err(|e| anyhow::anyhow!("argon2 derivation failed: {e}"))?;
+    Ok(seed)
+}
+
+/// Derive the throwaway [`SecretKey`] deterministically from a code by
+/// running [`derive_seed`] and wrapping the bytes in iroh's `SecretKey`
+/// for CLI convenience (the handoff code passes the key straight into
+/// iroh's `Endpoint::builder`).
+///
+/// Not built on iOS — the iOS FFI exposes [`derive_seed`] and the Swift
+/// side constructs the SecretKey via `IrohLib.SecretKey.fromBytes(seed)`.
+/// Keeping `iroh` out of the iOS staticlib in turn keeps `ring` (C/asm)
+/// out — that's the cross-compile blocker on Linux CI.
+#[cfg(not(target_os = "ios"))]
+pub fn derive_key(code: &str) -> Result<SecretKey> {
+    let seed = derive_seed(code)?;
     Ok(SecretKey::from_bytes(&seed))
 }
 

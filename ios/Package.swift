@@ -1,7 +1,8 @@
 // swift-tools-version: 6.2
 //
-// Top-level SwiftPM manifest for the Zuko iOS app. Replaces the old
-// `Zuko/project.yml` (xcodegen + xcodebuild) for local dev + CI builds.
+// Top-level SwiftPM manifest for the Zuko iOS app. This is the local/PR build
+// source of truth; `Zuko/project.yml` remains only for the signed Fastlane
+// archive path.
 //
 // xtool (`xtool dev build --ipa`) drives this manifest directly — no
 // `.xcodeproj` is generated for the build path. The Swift sources stay at
@@ -10,12 +11,12 @@
 // handles the binary `ZukoRust.xcframework` inside ZukoFFI the same way xcodebuild
 // did (see `PackLib/Planner.swift`'s `BinaryTarget` resource handling).
 //
-// On Linux/CI: `xtool dev build --ipa` (unsigned) for smoke testing. The
-// signed TestFlight path stays on macOS via the upload-split workflow.
+// On Linux/CI: `mise run build-ios` (unsigned) for smoke testing. The signed
+// TestFlight path still archives through Fastlane/XcodeGen until xtool supports
+// this repo's App Store export flow.
 //
-// On macOS: `xtool dev generate-xcode-project` if you want an `.xcodeproj`
-// to open in Xcode. The old `Zuko/project.yml` is kept for now as a fallback
-// (older fastlane path); once the migration is stable we delete it.
+// On macOS: `xtool dev generate-xcode-project` if you want an `.xcworkspace`
+// to open in Xcode.
 
 import PackageDescription
 
@@ -57,6 +58,11 @@ let package = Package(
             // Legacy path — keeps the diff to one new file rather than
             // moving all of Zuko/Zuko/*.swift to Sources/Zuko/.
             path: "Zuko/Zuko",
+            exclude: [
+                // xtool reads this via ios/xtool.yml's infoPath; SwiftPM should
+                // not try to classify it as a source/resource file.
+                "Info.plist",
+            ],
             // The xcassets bundle ships alongside the app's executable.
             // Declared via SwiftPM's resources so xtool's Planner picks it
             // up (Planner.swift's `target.resources` path).

@@ -144,7 +144,7 @@ capability flags, the ticket-handoff ALPN) is in
 | `src/`, `Cargo.toml` | The `zuko` crate — library + binary + uniffi staticlib. Binary covers host (`zuko host`), CLI client (`zuko connect`/`share`/`claim`), and service installer. `src/ffi.rs` exposes the Argon2id code-derivation for mobile clients. |
 | `tests/e2e.rs` | End-to-end PTY harness — spawns host + client, exercises `share`→`claim` over the live Iroh network. |
 | `scripts/` | `zuko-host.sh` (foreground dev wrapper), `release.sh` (tag + push). |
-| `ios/Zuko/` | The iOS client (XcodeGen + Swift + SwiftTerm, networking via IrohLib). |
+| `ios/Zuko/` | The iOS client (xtool + Swift + SwiftTerm, networking via IrohLib). |
 | `docs/` | [`HOST.md`](docs/HOST.md) (user guide), [`PROTOCOL.md`](docs/PROTOCOL.md) (wire spec), [`CLIENTS.md`](docs/CLIENTS.md) (client registry), [`RELEASING.md`](docs/RELEASING.md) (cutting releases). |
 | `.github/workflows/` | CI: build+test `zuko` + iOS app; publish release binaries. |
 
@@ -175,8 +175,8 @@ mise install              # rust (+ system deps via mise bootstrap)
 mise run test             # clippy + unit tests
 mise run test-e2e         # end-to-end: host<->connect + share<->claim over Iroh
 mise run build            # release binary
-mise run setup-ios        # brew install xcodegen + fastlane (macOS)
-mise run build-ios        # generate + build the iOS app
+mise run setup-ios        # install xtool + Swift pieces for local iOS builds
+mise run build-ios        # Linux-first xtool iOS build (auto-installs cached SDK)
 mise run run-host         # run `zuko host` in the foreground
 ```
 

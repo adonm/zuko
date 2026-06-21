@@ -33,7 +33,7 @@ pub enum DeriveKeyError {
 
 /// Derive the 32-byte handoff seed from a pairing code.
 ///
-/// This is literally [`crate::code::derive_key`]: it normalises the code,
+/// This is literally [`crate::code::derive_seed`]: it normalises the code,
 /// runs Argon2id (OWASP-default params, salt `b"zuko-share-handoff-v1"`),
 /// and returns the 32-byte seed. The iOS app constructs an
 /// `iroh::SecretKey::from_bytes(&seed)` from the result, reads its
@@ -42,10 +42,16 @@ pub enum DeriveKeyError {
 ///
 /// The seed is returned as a `Vec<u8>` (not a fixed array) because uniffi's
 /// Swift codegen maps `Vec<u8>` to `Data`, which is what the iOS side wants.
+///
+/// Uses `derive_seed` (not `derive_key`) so the iOS staticlib doesn't need
+/// to depend on `iroh` — the seed is plain bytes, and the iOS app already
+/// wraps them in `IrohLib.SecretKey.fromBytes`. Keeps `iroh` (and its
+/// transitive `ring` C/asm dep) out of the iOS staticlib, which is what
+/// lets `build-ffi.sh` cross-compile from Linux without `xcrun`.
 #[uniffi::export]
 pub fn derive_handoff_key(code: String) -> Result<Vec<u8>, DeriveKeyError> {
-    crate::code::derive_key(&code)
-        .map(|sk| sk.to_bytes().to_vec())
+    crate::code::derive_seed(&code)
+        .map(|seed| seed.to_vec())
         .map_err(|e| DeriveKeyError::DerivationFailed {
             message: format!("{e:#}"),
         })

@@ -103,9 +103,8 @@ async fn ensure_current_ticket() -> Result<String> {
             // takes a few seconds to bind + write current_ticket.
             crate::service::install(&crate::service::InstallArgs::default())
                 .context("install host service")?;
-            wait_for_current_ticket(Duration::from_secs(60)).context(
-                "host service was installed but didn't produce a ticket in time",
-            )
+            wait_for_current_ticket(Duration::from_secs(60))
+                .context("host service was installed but didn't produce a ticket in time")
         }
     }
 }

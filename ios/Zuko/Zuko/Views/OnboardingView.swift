@@ -116,7 +116,9 @@ struct CopyableCommand: View {
     }
 }
 
+#if canImport(PreviewsMacros)
 #Preview {
     OnboardingView()
         .padding()
 }
+#endif
