@@ -35,10 +35,7 @@ struct TerminalScreen: View {
 
     var body: some View {
         ZStack(alignment: .top) {
-            Color.black.ignoresSafeArea()
-            TerminalSurfaceView(context: terminalState)
-                .ignoresSafeArea(.container, edges: [.bottom])
-
+            terminalContent
             if let banner = statusMessage {
                 statusBar(banner)
             }
@@ -139,6 +136,21 @@ struct TerminalScreen: View {
         }
         .onDisappear {
             session.disconnect()
+        }
+    }
+
+    /// The terminal surface + touch-mouse overlay. Extracted from `body`
+    /// so Swift's type-checker can resolve the parent ZStack in reasonable
+    /// time — putting these in the body alongside the toolbar Menu above
+    /// pushes the body over the compiler's complexity budget.
+    private var terminalContent: some View {
+        ZStack(alignment: .top) {
+            Color.black.ignoresSafeArea()
+            TerminalSurfaceView(context: terminalState)
+                .ignoresSafeArea(.container, edges: [.bottom])
+            // Touch-to-mouse bridge for TUI apps that enable mouse capture
+            // (btop, yazi, zellij, vim+`set mouse=a`). See TouchMouseInput.swift.
+            TouchMouseInput()
         }
     }
 

@@ -3,49 +3,61 @@ import ObjectiveC
 import os
 import UIKit
 
-// Method swizzle that routes software-keyboard Return **around** libghostty's
-// text-input pipeline, directly into the host-managed backend via
-// `InMemoryTerminalSession.sendInput`.
+// Method swizzle that routes software-keyboard text input **around**
+// libghostty's text-input pipeline, directly into the host-managed
+// backend via `InMemoryTerminalSession.sendInput`.
 //
 // ## Why
 //
-// The iOS software keyboard's Return key calls `insertText("\n")` (UIKit
-// UIKeyInput convention). Libghostty's `ghostty_surface_text` consumes that
-// text through its IME/text-input path, which on the host-managed backend
-// does NOT invoke `receive_buffer_callback` — so the byte never reaches the
-// wire, and Enter doesn't trigger `accept-line` in the remote shell. The
-// exec backend would normally translate via `queueWrite`'s `linefeed` flag,
-// but the host-managed patch ignores that flag (see
-// `Patches/ghostty/0002-host-managed-io.patch`).
+// Libghostty's `ghostty_surface_text` on the host-managed backend does
+// NOT invoke `receive_buffer_callback` — the bytes the user types never
+// reach the wire. We first noticed this for Return (`"\n"` → Enter
+// didn't work); the same broken path affects every ASCII keystroke.
+// At a bash prompt characters *appear* to work because the kernel's
+// line discipline echoes them — but in raw-mode TUI apps (zellij's
+// tab mode, vim's insert mode) the byte is silently lost and the app
+// never sees it.
 //
-// The accessory bar's Ctrl-J/Ctrl-M path works because it calls
-// `InMemoryTerminalSession.sendInput(...)` directly, bypassing ghostty and
-// writing straight to the wire via the `writeHandler` closure. That's the
+// The accessory bar's Ctrl-J / Ctrl-M path works because it calls
+// `InMemoryTerminalSession.sendInput(...)` directly, bypassing ghostty
+// and writing straight to the wire via `writeHandler`. That's the
 // proven-correct path for any byte we definitely want delivered.
 //
 // ## Fix
 //
-// Swizzle `-[UITerminalView insertText:]`. When the text contains a newline:
+// Swizzle `-[UITerminalView insertText:]`. When the text is ASCII and
+// there are no active sticky modifiers (Ctrl/Alt/Cmd armed on the
+// accessory bar), bypass ghostty entirely and route the bytes straight
+// to `session.sendInput(...)`. The original `insertText` still handles:
 //
-//   1. Pull the `InMemoryTerminalSession` off `self.configuration.backend`
-//      (the same backend the accessory bar reads).
-//   2. Translate every LF (0x0A) to CR (0x0D). The PTY's ICRNL flag then
-//      translates CR→LF for the reader, so both raw-mode readline (`\r`
-//      binding) and canonical-mode NL line-termination work.
-//   3. Hand the bytes to `session.sendInput(...)` — direct to the wire,
-//      ghostty never sees them.
+//   - **Sticky modifier sequences** (e.g. Ctrl-T in zellij). When a
+//     sticky modifier is armed, the original `handleStickyTextInput`
+//     path generates the control byte (`0x14` for Ctrl-T) via
+//     `sendControlByte` → `sendInput`, which works correctly. The
+//     sticky state is then consumed; the *next* `insertText("n")` has
+//     no sticky active → our bypass fires → "n" reaches the wire.
+//   - **Non-ASCII text** (IME composition — CJK, emoji). Those need
+//     ghostty's marked-text / preedit handling, which `sendInput`
+//     can't replicate.
 //
-// For text without a newline (letters, digits, IME composition, etc.), fall
-// through to the original `insertText` — ghostty's text-input path handles
-// those correctly, and routing them through `sendInput` would lose any
-// client-side echo or IME bookkeeping ghostty does.
+// For ASCII text without sticky modifiers (the common case: typing in
+// zellij tab mode, vim insert mode, bash prompt, etc.), we translate
+// every LF (0x0A) to CR (0x0D) — the PTY's ICRNL flag then translates
+// CR→LF for the reader — and collapse CRLF pairs in multi-line paste
+// so we don't emit phantom empty command submissions.
 //
-// Also collapses CRLF pairs in multi-line paste to a single CR, so a paste
-// of `"foo\r\nbar\r\n"` doesn't submit `foo` and then an empty command before
-// `bar`.
+// ## Detecting active sticky modifiers
 //
-// Swizzle scope: `UITerminalView` is final in the SwiftUI representable, so
-// subclassing isn't an option. Method swizzling is the lightest-touch
+// `TerminalStickyModifierState` and its `hasActiveModifiers` property
+// are both `internal` in libghostty-spm. We Mirror-reflect on the
+// stored `ctrl`/`alt`/`command` activation enums (also internal) and
+// pattern-match against their `String(describing:)` form. Brittle
+// against upstream enum-case renames, but the failure mode is benign:
+// if the reflection misses, we fall through to the original
+// `insertText` and the terminal behaves as it does today.
+//
+// Swizzle scope: `UITerminalView` is final in the SwiftUI representable,
+// so subclassing isn't an option. Method swizzling is the lightest-touch
 // intercept point — affects only `-[UITerminalView insertText:]`, applied
 // once at app launch via `TerminalInputFix.apply()` (called from
 // `ZukoApp.init`).
@@ -69,11 +81,7 @@ extension UITerminalView {
                     #selector(zuko_insertText(_:))
                 )
             else {
-                // If the swizzle fails to register (e.g. the upstream
-                // package renamed insertText), surface it loudly in debug
-                // so we notice immediately. In release, log via os.Logger
-                // so it's visible in Console.app.
-                logger.error("UITerminalView.insertText swizzle failed to register — Return key will not work")
+                logger.error("UITerminalView.insertText swizzle failed to register — software keyboard input will be unreliable")
                 assertionFailure("Could not resolve UITerminalView.insertText(_:) for swizzle")
                 return
             }
@@ -83,39 +91,72 @@ extension UITerminalView {
     }
 
     @objc private func zuko_insertText(_ text: String) {
-        // After `method_exchangeImplementations`, this method IS the original
-        // implementation — calling it here forwards to the pre-swizzle code.
-        // For any text containing LF, bypass ghostty entirely and route the
-        // bytes straight to the in-memory backend via `sendInput` (the
-        // same path the accessory bar uses for Ctrl-J / Ctrl-M, which the
-        // user has confirmed works).
-        if text.contains("\n"), case let .inMemory(session) = configuration.backend {
-            // Collapse CRLF pairs to a single CR first (multi-line paste
-            // from clipboard), then any remaining bare LF → CR. UTF-8
-            // encodes U+000A and U+000D as single bytes, so byte-wise
-            // replacement is correct for any text containing them.
+        // After `method_exchangeImplementations`, this method IS the
+        // original implementation — calling it forwards to the pre-swizzle
+        // code. Use it for cases we don't want to claim (sticky modifiers,
+        // non-ASCII text).
+        let isAllASCII = text.utf8.allSatisfy { $0 < 0x80 }
+        if isAllASCII, !zuko_hasActiveStickyModifiers(), case let .inMemory(session) = configuration.backend {
+            // Bypass ghostty for plain ASCII input. Translate LF → CR
+            // (canonical Unix Return convention; the PTY's ICRNL flag
+            // translates CR→LF for the reader) and collapse CRLF pairs
+            // in multi-line paste so we don't double-submit.
             var bytes = Data()
             bytes.reserveCapacity(text.utf8.count)
             var prevWasCR = false
             for byte in text.utf8 {
                 if byte == 0x0A {
-                    if prevWasCR {
-                        // CRLF pair — drop the LF, keep the CR we already emitted.
-                    } else {
+                    if !prevWasCR {
                         bytes.append(0x0D)
                     }
+                    // else: this LF immediately follows a CR — drop it
+                    // (avoids emitting two line endings for one paste
+                    // newline).
                     prevWasCR = false
                 } else {
                     bytes.append(byte)
                     prevWasCR = byte == 0x0D
                 }
             }
-            logger.debug("insertText bypass: \(text.utf8.count) bytes → \(bytes.count) bytes via sendInput")
+            logger.debug("insertText bypass: \(text.utf8.count) utf8 bytes → \(bytes.count) wire bytes via sendInput")
             session.sendInput(bytes)
             return
         }
-        // No LF — let ghostty handle it normally.
+        // Sticky modifier active, non-ASCII text (IME), or no in-memory
+        // backend — let ghostty handle it via the original path.
         self.zuko_insertText(text)
+    }
+
+    /// True if any of the accessory bar's sticky modifiers (Ctrl/Alt/Cmd)
+    /// is currently armed or locked. We need to know because the original
+    /// `insertText` consumes the modifier and dispatches via
+    /// `handleStickyTextInput` → `sendControlByte` → `sendInput`, which
+    /// works correctly; bypassing it would lose the modifier.
+    ///
+    /// Reads the internal `stickyModifiers` state via `Mirror` reflection
+    /// (the type itself is internal in libghostty-spm). The activation
+    /// enum cases are matched as strings so we don't need to import the
+    /// internal enum — brittle against upstream renames, but a missed
+    /// match just means we fall through to the original path.
+    private func zuko_hasActiveStickyModifiers() -> Bool {
+        #if targetEnvironment(macCatalyst)
+            return false
+        #else
+            let viewMirror = Mirror(reflecting: self)
+            guard let sticky = viewMirror.descendant("stickyModifiers") else {
+                return false
+            }
+            let stickyMirror = Mirror(reflecting: sticky)
+            for mod in ["ctrl", "alt", "command"] {
+                if let activation = stickyMirror.descendant(mod) {
+                    let desc = String(describing: activation).lowercased()
+                    if desc == "armed" || desc == "locked" {
+                        return true
+                    }
+                }
+            }
+            return false
+        #endif
     }
 }
 
