@@ -59,19 +59,27 @@ jobs:
       # the brew-augmented PATH without re-running shellenv.
       - name: Put Homebrew tools on PATH
         # `brew install llvm` (from mise bootstrap above) kegs to
-        # /home/linuxbrew/.linuxbrew/opt/llvm/bin to avoid clashing with the
-        # system LLVM. `brew shellenv` only puts /home/linuxbrew/.linuxbrew/bin
-        # on PATH, so we have to layer the opt/llvm path explicitly for
-        # llvm-lipo + llvm-objcopy. swift is in the standard brew bin/.
+        # $BREW_PREFIX/opt/llvm/bin to avoid clashing with the system LLVM.
+        # `brew shellenv` only puts $BREW_PREFIX/bin on PATH, so we layer
+        # the opt/llvm path explicitly for llvm-lipo + llvm-objcopy.
+        # swift is in the standard brew bin/.
+        #
+        # GITHUB_PATH only applies to subsequent steps, so the verification
+        # commands below use the absolute brew prefix directly to confirm
+        # the install landed where we expect.
         run: |
           BREW_PREFIX="$(/home/linuxbrew/.linuxbrew/bin/brew --prefix)"
           echo "${BREW_PREFIX}/bin" >> "$GITHUB_PATH"
           echo "${BREW_PREFIX}/sbin" >> "$GITHUB_PATH"
           echo "${BREW_PREFIX}/opt/llvm/bin" >> "$GITHUB_PATH"
           /home/linuxbrew/.linuxbrew/bin/brew shellenv >> "$GITHUB_ENV"
-          swift --version
-          llvm-lipo --version
-          llvm-objcopy --version
+          # Verify with absolute paths — GITHUB_PATH hasn't taken effect yet
+          # for THIS step. Also surfaces what mise's bootstrap actually
+          # installed in case the formula layout differs.
+          echo "--- swift ---"; "${BREW_PREFIX}/bin/swift" --version
+          echo "--- llvm tools ---"
+          ls -la "${BREW_PREFIX}/opt/llvm/bin/" 2>&1 | grep -E "(llvm-lipo|llvm-objcopy)" || ls -la "${BREW_PREFIX}/bin/" | grep -E "llvm-"
+          "${BREW_PREFIX}/opt/llvm/bin/llvm-lipo" --version 2>&1 || "${BREW_PREFIX}/bin/llvm-lipo" --version
 
       - name: Install Rust iOS targets
         run: rustup target add aarch64-apple-ios aarch64-apple-ios-sim x86_64-apple-ios
