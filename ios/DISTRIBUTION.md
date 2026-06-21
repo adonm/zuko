@@ -13,7 +13,9 @@ certs repository). The workflow is
 CI imports your **Apple Distribution** certificate (`.p12`) into a temporary
 keychain and installs your **provisioning profile** (`.mobileprovision`), then
 fastlane `gym` archives and exports an app-store `.ipa`, and `pilot` uploads it
-to TestFlight. The App Store Connect **API key** secret authenticates the
+to TestFlight. Local/PR unsigned builds use xtool; this signed release path is
+kept on Fastlane/XcodeGen until xtool supports App Store export/provisioning for
+this workflow. The App Store Connect **API key** secret authenticates the
 TestFlight upload.
 
 ## Prerequisites

@@ -6,21 +6,14 @@ on:
   pull_request:
   workflow_dispatch:
 
-# Bump in lockstep with bootstrap-xtoolsdk.yml's `tag` input. When this
-# changes, every smoke-build run downloads the new SDK once, repopulating
-# the actions/cache. Keep stable across runs to keep cache hits hot.
+# Bump in lockstep with bootstrap-xtoolsdk.yml's `tag` input. The SDK is large,
+# so Linux CI downloads it once per tag and then restores it from actions/cache.
 env:
   XTOOLSDK_TAG: xtoolsdk-v1
 
 jobs:
   build:
-    name: Build iOS app (xtool on Linux)
-    # ubuntu-latest escapes the macOS runner entirely. xtool's whole pitch
-    # is cross-platform iOS builds via SwiftPM + a pre-built Darwin SDK
-    # bundle (.xtoolsdk), and Phase A.5 of the migration validates that.
-    # FFI cross-compile (cargo build --target aarch64-apple-ios) works on
-    # Linux because staticlibs don't need a linker; the .xtoolsdk provides
-    # the linker for the final SwiftPM link step that xtool drives.
+    name: Build iOS app (xtool)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -30,195 +23,36 @@ jobs:
         with:
           cache: true
 
-      # Fast lint pass — fails in seconds on style/correctness issues,
-      # before the ~5 min SDK download + ~3 min build. SwiftLint ships as
-      # a static Linux binary via mise; mise-action above puts it on PATH.
       - name: SwiftLint
-        run: swiftlint --config .swiftlint.yml ios/Zuko --reporter github-actions-logging
+        run: mise run lint
 
       - uses: Swatinem/rust-cache@v2
         with:
-          key: ios-sim-linux
+          key: ios-xtool
 
-      # System-level deps for cross-compiling to iOS from Linux. Two parts:
-      #   1. Swift toolchain (Homebrew's `swift` formula on Linux is the
-      #      only reliable install path on Bluefin-derived distros — the
-      #      Swiftly installer trips on /etc/os-release ID=bluefin).
-      #   2. LLVM binutils for `llvm-lipo` (fat-lib assembly in build-ffi.sh)
-      #      and `llvm-objcopy` (symbol localization in build-ffi.sh).
-      #      Both ship in Homebrew's `llvm` formula.
-      # Opt-in via `mise bootstrap packages install` so rust-only
-      # contributors don't pull the 1.5 GB Swift toolchain when they don't
-      # need it.
-      - name: mise bootstrap (apt packages — Rust cross-linker)
-        # mise's bootstrap on Ubuntu picks apt as the primary backend and
-        # SKIPS brew: entries (we saw only `apt-get install gcc-aarch64-linux-gnu`
-        # in production). Swift + llvm need to be installed via the explicit
-        # brew call below — mise's bootstrap won't do it on Debian-derivatives.
-        # We keep this step for the apt-based entry.
-        run: mise bootstrap packages install --yes
+      - name: Install local iOS tooling (Swift + xtool)
+        run: mise run setup-ios
 
-      - name: Install swift + llvm + libxml2 via Homebrew
-        # Explicit `brew install` because mise bootstrap above skips brew on
-        # Ubuntu. /home/linuxbrew/.linuxbrew is preinstalled on ubuntu-latest
-        # GitHub runners; we just have to call brew by full path because
-        # shellenv hasn't been sourced yet.
-        #
-        # swift 6.x provides the cross-compile toolchain for the iOS SDK;
-        # llvm provides llvm-lipo (fat-lib assembly) + llvm-objcopy (symbol
-        # localization in build-ffi.sh).
-        #
-        # libxml2: swift-sdk needs libxml2.so.16 at runtime, which is the
-        # SONAME shipped by Homebrew's libxml2 formula. The formula isn't
-        # auto-installed by `brew install swift` on the GitHub runner
-        # (system libxml2 may shadow it), so install explicitly to be sure.
-        #
-        # `brew install` skips formulae that are already poured but not
-        # linked (the ubuntu-latest runner ships swift 6.2.4 unlinked —
-        # Homebrew's "keg-only" state). `brew link --overwrite --force`
-        # after install forces the symlinks into $BREW_PREFIX/bin so the
-        # binaries land on PATH.
-        run: |
-          /home/linuxbrew/.linuxbrew/bin/brew install swift llvm libxml2
-          /home/linuxbrew/.linuxbrew/bin/brew link --overwrite --force swift llvm libxml2
-
-      - name: Put Homebrew tools on PATH
-        # GITHUB_PATH writes affect every SUBSEQUENT step; this step uses
-        # absolute paths for verification because its own PATH mutation
-        # hasn't taken effect yet.
-        #
-        # `brew install llvm` kegs to $BREW_PREFIX/opt/llvm/bin (separate
-        # from $BREW_PREFIX/bin) to avoid clashing with system LLVM.
-        # swift lives in the standard brew bin/.
-        #
-        # LD_LIBRARY_PATH: brew's keg-only runtime libs (libxml2, etc.)
-        # live in $BREW_PREFIX/opt/<name>/lib and the system dynamic
-        # linker doesn't look there by default. Without this, swift-sdk
-        # fails with 'libxml2.so.16: cannot open shared object file'.
-        # We enumerate every opt/*/lib dir and prepend them all — safe
-        # superset (some entries won't exist for the current install).
-        run: |
-          BREW_PREFIX="$(/home/linuxbrew/.linuxbrew/bin/brew --prefix)"
-          {
-            echo "${BREW_PREFIX}/bin"
-            echo "${BREW_PREFIX}/sbin"
-            echo "${BREW_PREFIX}/opt/llvm/bin"
-          } >> "$GITHUB_PATH"
-
-          # LD_LIBRARY_PATH: colon-join every opt/*/lib that exists, then
-          # persist for subsequent steps via GITHUB_ENV.
-          ld_libs=""
-          for d in "${BREW_PREFIX}"/opt/*/lib; do
-              [ -d "$d" ] || continue
-              if [ -z "$ld_libs" ]; then ld_libs="$d"; else ld_libs="$ld_libs:$d"; fi
-          done
-          echo "LD_LIBRARY_PATH=${ld_libs}${LD_LIBRARY_PATH+:${LD_LIBRARY_PATH}}" >> "$GITHUB_ENV"
-
-          # Verify with absolute paths — surfaces a clear error here rather
-          # than 5 steps later in build-ffi.sh. Run with LD_LIBRARY_PATH
-          # in this step's env so the verify actually works.
-          export LD_LIBRARY_PATH="${ld_libs}${LD_LIBRARY_PATH+:${LD_LIBRARY_PATH}}"
-          "${BREW_PREFIX}/bin/swift" --version
-          "${BREW_PREFIX}/opt/llvm/bin/llvm-lipo" --version
-          "${BREW_PREFIX}/opt/llvm/bin/llvm-objcopy" --version
-
-      - name: Install Rust iOS targets
-        run: rustup target add aarch64-apple-ios aarch64-apple-ios-sim x86_64-apple-ios
-
-      - name: Install xtool (AppImage)
-        run: mise run setup-xtool
-
-      # Cache the extracted .xtoolsdk to skip the ~700 MB re-download on
-      # every run. Keyed on the release tag — bump XTOOLSDK_TAG at the top
-      # of this file (and bootstrap-xtoolsdk.yml's `tag` input) in
-      # lockstep to roll every run forward.
-      - name: Cache .xtoolsdk
-        id: sdk-cache
+      - name: Cache xtool Darwin SDK
         uses: actions/cache@v4
         with:
-          path: ${{ runner.temp }}/darwin-x86_64
+          path: ~/.cache/zuko/xtoolsdk
           key: xtoolsdk-${{ env.XTOOLSDK_TAG }}-x86_64
 
-      - name: Download .xtoolsdk (cache miss only)
-        if: steps.sdk-cache.outputs.cache-hit != 'true'
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          set -e
-          mkdir -p "${{ runner.temp }}/darwin-x86_64"
-          cd "${{ runner.temp }}/darwin-x86_64"
-          # Tarball contains a single directory whose name tracks xtool's
-          # evolution (darwin.artifactbundle on 1.17.0, darwin.xtoolsdk on
-          # main). Extract verbatim — we don't rename because the install
-          # tools on each side are extension-picky in opposite ways.
-          gh release download "$XTOOLSDK_TAG" \
-            --repo "$GITHUB_REPOSITORY" \
-            --pattern 'darwin-x86_64.tar.gz' \
-            --output darwin-x86_64.tar.gz
-          tar -xzf darwin-x86_64.tar.gz
-          rm darwin-x86_64.tar.gz
-          ls -la "${{ runner.temp }}/darwin-x86_64"
-
-      - name: Install .xtoolsdk into SwiftPM
-        # xtool 1.17.0's `sdk install` doesn't recognize the `.xtoolsdk`
-        # shortcut (added post-release on main HEAD). The underlying
-        # command xtool wraps is `swift sdk install`, which works directly
-        # against an artifactbundle — but strictly requires the
-        # `.artifactbundle` extension (renames break its format detection).
-        # Bypass xtool until we bump to a release with native .xtoolsdk
-        # support. Idempotent — `swift sdk install` skips if the same
-        # bundle is already registered.
-        run: |
-          set -e
-          bundle_dir="$(find "${{ runner.temp }}/darwin-x86_64" -maxdepth 1 -type d \( -name 'darwin.artifactbundle' -o -name 'darwin.xtoolsdk' \) | head -1)"
-          if [ -z "$bundle_dir" ]; then
-            echo "ERROR: no darwin.*bundle found in cache dir" >&2
-            ls -la "${{ runner.temp }}/darwin-x86_64/" >&2
-            exit 1
-          fi
-          echo "Installing: $bundle_dir"
-          swift sdk install "$bundle_dir"
-          xtool sdk status
-
-      # Build the Rust staticlib into ZukoRust.xcframework + regenerate the
-      # Swift bindings. Linux path: cargo cross-compiles each iOS slice
-      # (no linker needed for staticlibs), llvm-objcopy localizes _rust_*
-      # symbols to avoid the iroh-ffi link conflict, llvm-lipo builds the
-      # fat sim slice, and the XCFramework is assembled manually (no
-      # xcodebuild available).
-      - name: Build ZukoRust.xcframework (Rust FFI for iOS, cross-compiled)
-        run: sh scripts/build-ffi.sh
-
-      # Resolve the same version env release-ios uses so the .app's
-      # CFBundleShortVersionString matches Cargo.toml.
       - name: Resolve version env
         run: |
           echo "ZUKO_VERSION=$(sh scripts/version.sh)" >> "$GITHUB_ENV"
           echo "ZUKO_BUILD_NUMBER=$(date -u +%s)" >> "$GITHUB_ENV"
 
-      # `mise run build-ios` now drives xtool on Linux:
-      #   1. Patches Info.plist with the resolved version.
-      #   2. Runs `xtool dev build --configuration debug` (uses the
-      #      installed .xtoolsdk for cross-compilation).
-      #   3. Restores Info.plist placeholders.
-      #   4. Patches embedded frameworks' MinimumOSVersion (iroh-ffi fix).
       - name: xtool build
         env:
           ZUKO_VERSION: ${{ env.ZUKO_VERSION }}
           ZUKO_BUILD_NUMBER: ${{ env.ZUKO_BUILD_NUMBER }}
         run: mise run build-ios
 
-      - name: Locate .app
-        id: app
-        working-directory: ios
-        run: |
-          app="$(find "$(pwd)" -name 'Zuko.app' -type d -not -path '*/.build/checkouts/*' | head -1)"
-          echo "path=$app" >> "$GITHUB_OUTPUT"
-          echo "Found $app"
-
       - name: Upload app
         uses: actions/upload-artifact@v7
         with:
           name: Zuko-app
-          path: ${{ steps.app.outputs.path }}
+          path: ios/xtool/Zuko.app
           if-no-files-found: error

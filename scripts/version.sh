@@ -3,11 +3,11 @@
 # for both the CLI binary and the iOS app's MARKETING_VERSION. Used by:
 #
 #   - fastlane/Fastfile (xcargs MARKETING_VERSION) for signed CI builds
-#   - .github/workflows/build-ios.yml (xcargs) for the simulator build
+#   - scripts/build-ios-xtool.sh (Info.plist patch) for xtool builds
 #   - scripts/release.sh already reads the same field its own way for the
 #     pre-tag sanity check; this is the canonical reader for build tooling.
 #
-# Keeps `MARKETING_VERSION` in project.yml and the .ipa's
+# Keeps `MARKETING_VERSION` in project.yml/xtool Info.plist and the .ipa's
 # CFBundleShortVersionString in lockstep with `cargo run -- --version`,
 # without a second hand-maintained version string drifting.
 #

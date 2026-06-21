@@ -5,7 +5,8 @@ name: release-ios
 # cert + .mobileprovision profile). See ios/DISTRIBUTION.md for the one-time
 # setup to obtain them.
 #
-# Tools come from mise (rust) + `mise run setup-ios` (brew: xcodegen, fastlane).
+# Tools come from mise (rust) + `mise run setup-ios-release` (legacy signed
+# release path: xcodegen + fastlane). Local/PR iOS builds use xtool instead.
 #
 # Triggers:
 #   - push tag v*       → tag-driven release (lane=beta, version from the tag)
@@ -96,8 +97,8 @@ jobs:
         with:
           key: ios-release
 
-      - name: Install iOS tooling (xcodegen via brew; fastlane via bundler)
-        run: mise run setup-ios
+      - name: Install signed-release tooling (xcodegen via brew; fastlane via bundler)
+        run: mise run setup-ios-release
 
       # Resolve the bundler-driven fastlane from ios/Gemfile so the build
       # is reproducible against the pinned gem versions (instead of whatever
@@ -118,7 +119,7 @@ jobs:
       # this MUST run before `xcodegen` (which fastlane does internally).
       # Mirrors the same step in build-ios.yml.
       - name: Build ZukoRust.xcframework (Rust FFI for iOS)
-        run: sh scripts/build-ffi.sh
+        run: ZUKO_FFI_DEVICE_ONLY=1 sh scripts/build-ffi.sh
 
       - name: Import distribution certificate (.p12 from secret)
         uses: apple-actions/import-codesign-certs@v7

@@ -1,7 +1,7 @@
 # SwiftLint config for the Zuko iOS app.
 # Install:  `mise install`  (swiftlint is in [tools])
 # Run:      `mise run lint`
-# CI:       build-ios.yml runs this before the expensive FFI + xcodebuild
+# CI:       build-ios.yml runs this before the expensive FFI + xtool build
 #           steps so style/correctness issues fail fast (seconds, not minutes).
 
 included:

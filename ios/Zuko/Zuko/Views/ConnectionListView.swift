@@ -112,7 +112,9 @@ struct OnboardingSheet: View {
     }
 }
 
+#if canImport(PreviewsMacros)
 #Preview {
     ConnectionListView()
         .environmentObject(ConnectionStore())
 }
+#endif
