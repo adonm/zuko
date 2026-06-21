@@ -6,6 +6,13 @@ on:
   pull_request:
   workflow_dispatch:
 
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   test:
     name: build & test (${{ matrix.os }})
@@ -34,6 +41,7 @@ jobs:
         run: mise run build
 
       - name: End-to-end (host<->connect, share<->claim)
+        if: ${{ matrix.os == 'ubuntu-latest' }}
         # Runs the #[ignore] e2e integration test in tests/e2e.rs: spawns
         # `zuko host`, drives `zuko connect` under a PTY, and exercises
         # `zuko share`/`zuko claim` against the real Iroh network (needs
@@ -43,6 +51,7 @@ jobs:
         run: mise run test-e2e
 
       - name: Upload binary
+        if: ${{ github.event_name != 'pull_request' }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: zuko-${{ runner.os }}

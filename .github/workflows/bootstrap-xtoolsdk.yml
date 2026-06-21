@@ -48,7 +48,7 @@ jobs:
 
       - name: Select newest Xcode
         run: |
-          xcode="$(ls -d /Applications/Xcode*.app | sort -V | tail -1)"
+          xcode="$(find /Applications -maxdepth 1 -name 'Xcode*.app' -type d | sort -V | tail -1)"
           echo "Selecting $xcode"
           sudo xcode-select -s "$xcode"
           echo "XCODE_APP=$xcode" >> "$GITHUB_ENV"
