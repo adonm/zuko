@@ -1,4 +1,5 @@
 import GhosttyTerminal
+import ObjectiveC
 import SwiftUI
 import UIKit
 
@@ -16,12 +17,15 @@ import UIKit
 /// `UITerminalView` overrides only `inputAccessoryView` (to provide the
 /// Esc/Tab/arrows/modifiers/Paste bar) — `inputView` is inherited from
 /// `UIResponder`. The public UIKit header declares `inputView` as
-/// `readonly`; the readwrite half lives in a private class extension, so
-/// plain assignment (`view.inputView = …`) won't compile against a UIView
-/// subclass that didn't re-declare it. KVC (`setValue(_:forKey:)`) reaches
-/// the private setter; this is the same path `UITextField`'s public
-/// readwrite override forwards to internally. The pattern is widely used
-/// (calculator apps, scanner apps, etc.) and stable.
+/// `readonly`, so plain assignment (`view.inputView = …`) won't compile
+/// against a UIView subclass that didn't re-declare it. The readwrite half
+/// is a private ivar on UIResponder; we write it directly via the ObjC
+/// runtime (see `FinderUIView.apply()`). Earlier iOS versions let KVC
+/// (`setValue(_:forKey:)`) reach the same storage via
+/// `accessInstanceMethodsDirectly`, but iOS 26 tightened UIView's
+/// `setValue:forKey:` override to raise `NSUnknownKeyException` for
+/// `inputView` — and Swift can't catch `NSException`, so that path now
+/// terminates the process.
 ///
 /// Setting `inputView` to an empty `UIView` makes UIKit swap the system
 /// keyboard for that empty view, leaving the accessory bar visible on its
@@ -102,14 +106,26 @@ private struct TerminalKeyboardFinder: UIViewRepresentable {
 
         private func apply() {
             guard let terminal = findTerminal() else { return }
-            // KVC reaches the private readwrite half of UIResponder.inputView
-            // (see extension docstring). Plain `terminal.inputView = …` won't
-            // compile — UITerminalView inherits the readonly declaration.
-            // `nil` is the documented "use system keyboard" value.
-            terminal.setValue(
-                suppress ? UIView(frame: .zero) : nil,
-                forKey: "inputView"
-            )
+            // UIResponder's `inputView` is publicly `readonly`; the backing
+            // storage is a private ivar. The original implementation reached
+            // it via `setValue(_:forKey:)`, but iOS 26 tightened UIView's KVC
+            // override to raise `NSUnknownKeyException` for `inputView` — and
+            // Swift can't catch NSException, so the process terminates with
+            // SIGABRT (see testflight_feedback/crashlog.crash, frames 4-5).
+            //
+            // Write the backing ivar directly via the ObjC runtime — the same
+            // storage KVC's `accessInstanceMethodsDirectly` reached before
+            // UIView's override started short-circuiting the lookup. Safe
+            // across iOS versions: if the ivar is renamed in a future release
+            // we silently no-op (the terminal still works; only the
+            // keyboard-suppression shortcut degrades).
+            guard let ivar = Self.inputViewIvar(of: terminal) else { return }
+            // `object_setIvarWithStrongDefault` honors the ivar's declared
+            // memory semantics (strong by default for UIView references), so
+            // ARC-style retain/release happens correctly on the old and new
+            // values. `nil` is the documented "use system keyboard" value.
+            let newValue: UIView? = suppress ? UIView(frame: .zero) : nil
+            object_setIvarWithStrongDefault(terminal, ivar, newValue)
             // `reloadInputViews` refreshes the keyboard system's read of
             // inputView/inputAccessoryView while first responder. If the
             // terminal isn't first responder the new value is picked up on
@@ -117,6 +133,25 @@ private struct TerminalKeyboardFinder: UIViewRepresentable {
             if terminal.isFirstResponder {
                 terminal.reloadInputViews()
             }
+        }
+
+        /// Walks the class hierarchy looking for the UIResponder-private ivar
+        /// that backs `inputView`. UIResponder historically stores it as
+        /// `_inputView`; some Apple subclasses shadow it as `inputView`.
+        /// Returns `nil` if neither is present (e.g., on a future OS that
+        /// reworked responder storage) so callers can no-op safely.
+        private static func inputViewIvar(of responder: UIResponder) -> Ivar? {
+            let candidates = ["_inputView", "inputView"]
+            var cls: AnyClass? = type(of: responder)
+            while let c = cls {
+                for name in candidates {
+                    if let ivar = class_getInstanceVariable(c, name) {
+                        return ivar
+                    }
+                }
+                cls = class_getSuperclass(c)
+            }
+            return nil
         }
 
         /// Walk up to the closest common ancestor (the SwiftUI platform
@@ -146,4 +181,3 @@ private struct TerminalKeyboardFinder: UIViewRepresentable {
         }
     }
 }
-
