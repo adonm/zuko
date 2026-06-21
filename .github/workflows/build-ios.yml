@@ -85,6 +85,13 @@ jobs:
         # `brew install llvm` kegs to $BREW_PREFIX/opt/llvm/bin (separate
         # from $BREW_PREFIX/bin) to avoid clashing with system LLVM.
         # swift lives in the standard brew bin/.
+        #
+        # LD_LIBRARY_PATH: brew's keg-only runtime libs (libxml2, etc.)
+        # live in $BREW_PREFIX/opt/<name>/lib and the system dynamic
+        # linker doesn't look there by default. Without this, swift-sdk
+        # fails with 'libxml2.so.16: cannot open shared object file'.
+        # We enumerate every opt/*/lib dir and prepend them all — safe
+        # superset (some entries won't exist for the current install).
         run: |
           BREW_PREFIX="$(/home/linuxbrew/.linuxbrew/bin/brew --prefix)"
           {
@@ -92,8 +99,20 @@ jobs:
             echo "${BREW_PREFIX}/sbin"
             echo "${BREW_PREFIX}/opt/llvm/bin"
           } >> "$GITHUB_PATH"
+
+          # LD_LIBRARY_PATH: colon-join every opt/*/lib that exists, then
+          # persist for subsequent steps via GITHUB_ENV.
+          ld_libs=""
+          for d in "${BREW_PREFIX}"/opt/*/lib; do
+              [ -d "$d" ] || continue
+              if [ -z "$ld_libs" ]; then ld_libs="$d"; else ld_libs="$ld_libs:$d"; fi
+          done
+          echo "LD_LIBRARY_PATH=${ld_libs}${LD_LIBRARY_PATH+:${LD_LIBRARY_PATH}}" >> "$GITHUB_ENV"
+
           # Verify with absolute paths — surfaces a clear error here rather
-          # than 5 steps later in build-ffi.sh.
+          # than 5 steps later in build-ffi.sh. Run with LD_LIBRARY_PATH
+          # in this step's env so the verify actually works.
+          export LD_LIBRARY_PATH="${ld_libs}${LD_LIBRARY_PATH+:${LD_LIBRARY_PATH}}"
           "${BREW_PREFIX}/bin/swift" --version
           "${BREW_PREFIX}/opt/llvm/bin/llvm-lipo" --version
           "${BREW_PREFIX}/opt/llvm/bin/llvm-objcopy" --version
