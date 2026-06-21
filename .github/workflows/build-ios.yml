@@ -6,81 +6,118 @@ on:
   pull_request:
   workflow_dispatch:
 
+# Bump in lockstep with bootstrap-xtoolsdk.yml's `tag` input. When this
+# changes, every smoke-build run downloads the new SDK once, repopulating
+# the actions/cache. Keep stable across runs to keep cache hits hot.
+env:
+  XTOOLSDK_TAG: xtoolsdk-v1
+
 jobs:
   build:
-    name: Build iOS app (simulator)
-    # macos-latest (currently macos-15) — the *Xcode* version is what we
-    # care about, and the explicit "Select newest Xcode" step below pins
-    # that, so the runner macOS version is just the host OS for brew +
-    # xcodebuild. Tracking macos-latest keeps us off stale runner images
-    # without changing which Xcode we build with.
-    runs-on: macos-latest
+    name: Build iOS app (xtool on Linux)
+    # ubuntu-latest escapes the macOS runner entirely. xtool's whole pitch
+    # is cross-platform iOS builds via SwiftPM + a pre-built Darwin SDK
+    # bundle (.xtoolsdk), and Phase A.5 of the migration validates that.
+    # FFI cross-compile (cargo build --target aarch64-apple-ios) works on
+    # Linux because staticlibs don't need a linker; the .xtoolsdk provides
+    # the linker for the final SwiftPM link step that xtool drives.
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
 
-      # Fast lint pass — fails in seconds on style/correctness issues, before
-      # the ~10 min FFI compile + xcodebuild. SwiftLint is on Homebrew, so the
-      # install is ~5 s on the macOS runner.
+      # Fast lint pass — fails in seconds on style/correctness issues,
+      # before the ~5 min SDK download + ~3 min build. SwiftLint ships as
+      # a static Linux binary via mise.
       - name: SwiftLint
         run: |
-          brew install swiftlint >/dev/null
-          swiftlint --config .swiftlint.yml ios/Zuko --reporter github-actions-logging
-
-      - name: Select newest Xcode (full iOS platform)
-        run: |
-          xcode="$(ls -d /Applications/Xcode*.app | sort -V | tail -1)"
-          echo "Selecting $xcode"
-          sudo xcode-select -s "$xcode"
-          xcodebuild -version
+          mise install swiftlint@latest
+          mise exec swiftlint@latest -- swiftlint --config .swiftlint.yml ios/Zuko --reporter github-actions-logging
 
       - name: mise install (rust)
         uses: jdx/mise-action@v4
         with:
           cache: true
 
-      # Cache cargo's registry + per-target `target/` dirs. `mise cache:true`
-      # only caches the toolchain install (the rustup download); without this,
-      # every run recompiles every Rust dep from scratch for all four iOS
-      # targets the FFI script builds — ~10 min of pure recompute that hasn't
-      # changed since the last run. The key namespaces by workflow so the
-      # simulator-only build doesn't collide with release-ios's device+sim
-      # FFI slices (which are built with the same code but different intents).
       - uses: Swatinem/rust-cache@v2
         with:
-          key: ios-sim
+          key: ios-sim-linux
 
-      - name: Install iOS tooling (xcodegen + fastlane via mise/brew; xtool via setup-xtool)
-        # xtool drives the build now (replaces xcodegen + xcodebuild for the
-        # smoke build). xcodegen + fastlane stay installed because release-ios
-        # still uses them — `mise run setup-ios` is the canonical "everything
-        # iOS" task, `mise run setup-xtool` layers xtool on top.
+      # System-level deps for cross-compiling to iOS from Linux. Two parts:
+      #   1. Swift toolchain (Homebrew's `swift` formula on Linux is the
+      #      only reliable install path on Bluefin-derived distros — the
+      #      Swiftly installer trips on /etc/os-release ID=bluefin).
+      #   2. LLVM binutils for `llvm-lipo` (fat-lib assembly in build-ffi.sh)
+      #      and `llvm-objcopy` (symbol localization in build-ffi.sh).
+      #      Both ship in Homebrew's `llvm` formula.
+      # Opt-in via `mise bootstrap packages install` so rust-only
+      # contributors don't pull the 1.5 GB Swift toolchain when they don't
+      # need it.
+      - name: mise bootstrap (brew:swift + brew:llvm)
+        run: mise bootstrap packages install --yes
+
+      - name: Install Rust iOS targets
+        run: rustup target add aarch64-apple-ios aarch64-apple-ios-sim x86_64-apple-ios
+
+      - name: Install xtool (AppImage)
+        run: mise run setup-xtool
+
+      # Cache the extracted .xtoolsdk to skip the ~700 MB re-download on
+      # every run. Keyed on the release tag — bump XTOOLSDK_TAG at the top
+      # of this file (and bootstrap-xtoolsdk.yml's `tag` input) in
+      # lockstep to roll every run forward.
+      - name: Cache .xtoolsdk
+        id: sdk-cache
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/darwin-x86_64.xtoolsdk
+          key: xtoolsdk-${{ env.XTOOLSDK_TAG }}-x86_64
+
+      - name: Download .xtoolsdk (cache miss only)
+        if: steps.sdk-cache.outputs.cache-hit != 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          mise run setup-ios
-          mise run setup-xtool
+          set -e
+          mkdir -p "${{ runner.temp }}"
+          cd "${{ runner.temp }}"
+          # Pull the tarball from the bootstrap-xtoolsdk workflow's release,
+          # extract to the cache path. Subsequent runs hit the cache and
+          # skip this step entirely.
+          gh release download "$XTOOLSDK_TAG" \
+            --repo "$GITHUB_REPOSITORY" \
+            --pattern 'darwin-x86_64.xtoolsdk.tar.gz' \
+            --output darwin-x86_64.xtoolsdk.tar.gz
+          tar -xzf darwin-x86_64.xtoolsdk.tar.gz
+          rm darwin-x86_64.xtoolsdk.tar.gz
+          ls -la "${{ runner.temp }}/darwin-x86_64.xtoolsdk"
 
-      # Build the Rust staticlib into a ZukoRust.xcframework + regenerate the
-      # Swift bindings. The Package.swift references the local ZukoFFI
-      # package, which expects ZukoRust.xcframework to exist at SwiftPM
-      # resolve time — so this must run before `xtool dev build`.
-      - name: Build ZukoRust.xcframework (Rust FFI for iOS)
+      - name: Install .xtoolsdk into xtool
+        run: |
+          xtool sdk install "${{ runner.temp }}/darwin-x86_64.xtoolsdk"
+          xtool sdk status
+
+      # Build the Rust staticlib into ZukoRust.xcframework + regenerate the
+      # Swift bindings. Linux path: cargo cross-compiles each iOS slice
+      # (no linker needed for staticlibs), llvm-objcopy localizes _rust_*
+      # symbols to avoid the iroh-ffi link conflict, llvm-lipo builds the
+      # fat sim slice, and the XCFramework is assembled manually (no
+      # xcodebuild available).
+      - name: Build ZukoRust.xcframework (Rust FFI for iOS, cross-compiled)
         run: sh scripts/build-ffi.sh
 
-      # Resolve the same version env release-ios uses so the simulator
-      # .app's CFBundleShortVersionString matches Cargo.toml. Lets us
-      # verify the version is correctly threaded before cutting a release
-      # — without it, only the TestFlight upload enforces sync.
+      # Resolve the same version env release-ios uses so the .app's
+      # CFBundleShortVersionString matches Cargo.toml.
       - name: Resolve version env
         run: |
           echo "ZUKO_VERSION=$(sh scripts/version.sh)" >> "$GITHUB_ENV"
           echo "ZUKO_BUILD_NUMBER=$(date -u +%s)" >> "$GITHUB_ENV"
 
-      # `mise run build-ios` now drives xtool (see mise.toml). The task:
-      #   1. Patches Info.plist with the resolved version (xtool has no
-      #      xcargs equivalent).
-      #   2. Runs `xtool dev build --configuration debug` (builds Zuko.app).
-      #   3. Restores Info.plist placeholders (clean working tree).
-      #   4. Patches embedded frameworks' MinimumOSVersion (the iroh-ffi
-      #      packaging bug the legacy postBuildScripts step fixed inline).
+      # `mise run build-ios` now drives xtool on Linux:
+      #   1. Patches Info.plist with the resolved version.
+      #   2. Runs `xtool dev build --configuration debug` (uses the
+      #      installed .xtoolsdk for cross-compilation).
+      #   3. Restores Info.plist placeholders.
+      #   4. Patches embedded frameworks' MinimumOSVersion (iroh-ffi fix).
       - name: xtool build
         env:
           ZUKO_VERSION: ${{ env.ZUKO_VERSION }}
@@ -91,8 +128,6 @@ jobs:
         id: app
         working-directory: ios
         run: |
-          # xtool emits Zuko.app somewhere under .build/ or the working
-          # dir (path varies — find by name is the most stable contract).
           app="$(find "$(pwd)" -name 'Zuko.app' -type d -not -path '*/.build/checkouts/*' | head -1)"
           echo "path=$app" >> "$GITHUB_OUTPUT"
           echo "Found $app"
