@@ -77,10 +77,6 @@ struct OnboardingView: View {
                     "Pinch the terminal to zoom font size live — coarse adjustment without leaving the session."
                 )
                 tip(
-                    icon: "keyboard.chevron.compact.down",
-                    "Tap the keyboard chevron in the top bar to hide the system keyboard and keep just the Esc/Tab/arrows/modifiers/Paste bar — doubles screen real estate for shell work. Tap again to bring the full keyboard back."
-                )
-                tip(
                     icon: "paintpalette",
                     "Tap the palette icon in the top bar for quick theme switching (Dracula, Catppuccin, Nord, …) or \"Browse all\" for the full 485-theme catalog with live preview."
                 )

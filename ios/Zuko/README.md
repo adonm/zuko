@@ -44,24 +44,20 @@ Zuko/
     Connection.swift        saved host (label + ticket)
     ConnectionStore.swift   persisted list (Keychain-backed, observable)
     ConnectionKeychain.swift  Keychain wrapper for the bearer-token tickets
-    ThemeStore.swift        persisted terminal prefs: color theme, font size,
-                            compact-keyboard toggle (UserDefaults-backed)
-  Net/
-    Wire.swift              length-prefixed framing (shared with host)
-    IrohSession.swift       Iroh connect + framed read loop + serial write pump;
-                            owns the InMemoryTerminalSession fed to GhosttyTerminal
-  Terminal/
-    TerminalKeyboardSuppression.swift  SwiftUI view modifier that hides the
-                            system software keyboard via inputView override
-                            (keeps the accessory bar visible)
-  Views/
-    RootView.swift
-    ConnectionListView.swift     list + empty-state onboarding
-    OnboardingView.swift         host setup commands + app tips (zoom/keyboard)
-    AddConnectionView.swift      add a connection
-    TerminalScreen.swift         the live terminal (GhosttyTerminal surface)
-    ThemeBrowserView.swift       searchable list of all 485 catalog themes
-```
+    ThemeStore.swift        persisted terminal prefs: color theme, font size
+                            (UserDefaults-backed)
+    Net/
+     Wire.swift              length-prefixed framing (shared with host)
+     IrohSession.swift       Iroh connect + framed read loop + serial write pump;
+                             owns the InMemoryTerminalSession fed to GhosttyTerminal
+   Views/
+     RootView.swift
+     ConnectionListView.swift     list + empty-state onboarding
+     OnboardingView.swift         host setup commands + app tips (zoom/theme)
+     AddConnectionView.swift      add a connection
+     TerminalScreen.swift         the live terminal (GhosttyTerminal surface)
+     ThemeBrowserView.swift       searchable list of all 485 catalog themes
+ ```
 
 ## CI
 
@@ -99,9 +95,3 @@ Fastlane/XcodeGen archive path — see [`../DISTRIBUTION.md`](../DISTRIBUTION.md
   applies live via `TerminalController.setTheme`. The app follows the system
   color scheme (no longer force-dark); the default theme is Afterglow (dark)
   / Alabaster (light).
-- Compact-keyboard toggle (keyboard chevron in the toolbar): suppresses the
-  system software keyboard via the inherited `UIResponder.inputView`
-  property — only the translucent accessory bar (Esc/Tab/arrows/modifiers/
-  Paste) shows, freeing ~70% of the screen. The terminal keyboard remains
-  tap-to-focus; arbitrary text input needs the toggle off. See
-  `Terminal/TerminalKeyboardSuppression.swift` for the mechanism.
