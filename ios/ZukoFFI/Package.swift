@@ -18,9 +18,10 @@ import PackageDescription
 let package = Package(
     name: "ZukoFFI",
     platforms: [
-        // Must match iroh-ffi's floor: the N0 relay stack (nw_path_is_ultra_constrained)
-        // needs iOS 17.5.
-        .iOS("17.5"),
+        // Must match the consuming app's floor (ios/Package.swift). iroh-ffi's
+        // binary is built against iOS 26.5; if our XCFramework targets a lower
+        // floor, ld64.lld warns about our object files in the other direction.
+        .iOS("26.5"),
     ],
     products: [
         .library(

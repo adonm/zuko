@@ -2,7 +2,7 @@ name: Zuko
 options:
   bundleIdPrefix: dev.adonm
   deploymentTarget:
-    iOS: "26.0"
+    iOS: "26.5"
   createIntermediateGroups: true
   groupSortPosition: top
 
@@ -36,7 +36,7 @@ targets:
   Zuko:
     type: application
     platform: iOS
-    deploymentTarget: "26.0"
+    deploymentTarget: "26.5"
     sources:
       - path: Zuko
     info:
@@ -53,7 +53,7 @@ targets:
         # strictly-increasing build number on every upload. Bump these
         # defaults when you cut a release so a fresh `mise run build-ios`
         # matches the binary version.
-        MARKETING_VERSION: "0.6.4"
+        MARKETING_VERSION: "0.6.6"
         CURRENT_PROJECT_VERSION: "1"
         TARGETED_DEVICE_FAMILY: "1"  # iPhone only — avoids iPad multitasking
         # orientation requirements that need UISupportedInterfaceOrientations~ipad

@@ -19,7 +19,7 @@
 #
 # Usage:
 #   sh scripts/patch-iroh-framework.sh path/to/Zuko.app
-#   IPHONEOS_DEPLOYMENT_TARGET=26.0 sh scripts/patch-iroh-framework.sh path/to/Zuko.app
+#   IPHONEOS_DEPLOYMENT_TARGET=26.5 sh scripts/patch-iroh-framework.sh path/to/Zuko.app
 set -eu
 
 if [ "$#" -ne 1 ]; then
@@ -35,7 +35,7 @@ fi
 
 # Default to the deployment target we ship for; the workflow overrides this
 # with the env var xcodebuild would normally set (IPHONEOS_DEPLOYMENT_TARGET).
-TARGET="${IPHONEOS_DEPLOYMENT_TARGET:-26.0}"
+TARGET="${IPHONEOS_DEPLOYMENT_TARGET:-26.5}"
 
 FRAMEWORKS_DIR="$APP/Frameworks"
 if [ ! -d "$FRAMEWORKS_DIR" ]; then
