@@ -15,6 +15,7 @@ zuko <code>            pair: fetch the host's ticket, save it, connect
 zuko claim <code>      the same, with flags (--as, --no-connect, --timeout)
 zuko connect <name>    attach a terminal to a saved host
 zuko <name>            shorthand for `zuko connect <name>`
+zuko                   ask which saved host to connect to (TTY only)
 zuko ls                list saved hosts (by name)
 zuko rm <name>         remove a saved host
 ```
@@ -72,11 +73,11 @@ zuko home                  # = zuko connect home (shorthand)
 ```
 
 The session is a real PTY — `vim`, `htop`, resize, and Ctrl-C all behave like a
-local shell. Exiting the remote shell (`exit` or Ctrl-D) ends the session; so
-does a network drop. **There's no auto-reconnect or session resume** — each
-connect mints a fresh PTY on the host, killed when the connection ends. For
-long-lived work that survives disconnects, run `tmux`/`zellij`/`screen`
-*inside* the zuko session.
+local shell. Exiting the remote shell (`exit` or Ctrl-D) ends the session. A
+network/client drop detaches the PTY for a 5-minute in-memory lease; mobile
+clients can auto-redial and reattach with their token. Output while detached is
+discarded, and the CLI still exits on drop. For long-lived work that survives
+long disconnects or host restarts, run `tmux`/`zellij`/`screen` *inside* zuko.
 
 ## Pairing: how `share` / `claim` work
 

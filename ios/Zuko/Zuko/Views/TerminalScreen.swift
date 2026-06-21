@@ -32,6 +32,9 @@ struct TerminalScreen: View {
     @Environment(\.dismiss) private var dismiss
 
     @State private var showingThemeBrowser = false
+    @State private var accessoryKeysVisible = false
+    @State private var inputMode: TerminalInputMode = .keyboard
+    @FocusState private var terminalFocused: Bool
 
     var body: some View {
         ZStack(alignment: .top) {
@@ -45,14 +48,15 @@ struct TerminalScreen: View {
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             // Refresh stays as a top-level icon — it's the one users reach
-            // for mid-session (after a garbled reconnect, etc.). Font and
-            // theme are set-once-and-forget, so they fold into a single
-            // overflow Menu with Disconnect (destructive, lives behind a
-            // tap to avoid accidental hits). Two trailing items instead of
-            // four keeps the inline nav title from getting squeezed on
-            // iPhone.
+            // for mid-session (after a garbled reconnect, etc.). Input-mode
+            // toggles are also top-level because they affect every tap/key.
+            // Font and theme are set-once-and-forget, so they fold into a
+            // single overflow Menu with Disconnect (destructive, lives behind
+            // a tap to avoid accidental hits).
             ToolbarItemGroup(placement: .topBarTrailing) {
                 refreshButton
+                accessoryKeysButton
+                inputModeButton
                 Menu {
                     Menu("Font size") {
                         Button("A−  smaller") {
@@ -147,11 +151,25 @@ struct TerminalScreen: View {
         ZStack(alignment: .top) {
             Color.black.ignoresSafeArea()
             TerminalSurfaceView(context: terminalState)
+                .terminalFocused($terminalFocused)
+                .onAppear {
+                    terminalFocused = inputMode == .keyboard
+                }
                 .ignoresSafeArea(.container, edges: [.bottom])
             // Touch-to-mouse bridge for TUI apps that enable mouse capture
             // (btop, yazi, zellij, vim+`set mouse=a`). See TouchMouseInput.swift.
-            TouchMouseInput()
+            TouchMouseInput(
+                tapModeEnabled: inputMode == .tap,
+                accessoryKeysVisible: accessoryKeysVisible
+            )
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .ignoresSafeArea(.container, edges: [.bottom])
         }
+    }
+
+    private enum TerminalInputMode {
+        case keyboard
+        case tap
     }
 
     /// Rebuilds the terminal configuration with the current font size and
@@ -167,38 +185,59 @@ struct TerminalScreen: View {
         terminalState.setTerminalConfiguration(config)
     }
 
-    /// Force-clear the local surface and trigger a redraw on the host. Use
-    /// after a garbled resume replay (fullscreen TUI apps like `btop` leave
-    /// the snapshot mid-ANSI-sequence) or any time the display looks stuck.
-    ///
-    /// Two-step:
-    ///   1. RIS (`\x1b c`) straight to the local ghostty surface via
-    ///      `receive(...)` — bypasses the wire, resets all terminal state
-    ///      (screen, scrollback, SGR attributes, alternate buffer) so any
-    ///      half-rendered frame is wiped before the redraw arrives.
-    ///   2. Ctrl-L (`\x0c`, form feed) up the wire to the host shell/TUI.
-    ///      Universal "redraw" key: bash/readline clears + redraws the
-    ///      prompt; vim/less/btop/man redraw their UI. Apps that don't
-    ///      intercept it just see a form feed — terminal clears the screen
-    ///      and the cursor jumps home, which is also what we want.
+    /// Ask the host-side PTY to redraw without injecting a keystroke. We send a
+    /// same-size RESIZE so shells/fullscreen TUIs/multiplexers get SIGWINCH and
+    /// repaint. This is gentler than the old local RIS + Ctrl-L combo: it
+    /// doesn't wipe Ghostty state and doesn't clear zellij/tmux panes.
     private var refreshButton: some View {
         Button {
-            // Local hard reset. Goes to the surface only — not the wire.
-            session.inMemorySession.receive(Data("\u{1B}c".utf8))
-            // Ctrl-L up the wire. writeHandler's LF→CR translation doesn't
-            // affect 0x0C, so bypass via sendInput (skips the libghostty
-            // surface callback path; identical bytes either way).
-            session.inMemorySession.sendInput(Data([0x0C]))
+            session.requestRedraw()
         } label: {
             Image(systemName: "arrow.clockwise")
         }
         .accessibilityLabel("Refresh terminal")
     }
 
+    /// Show/hide libghostty's iOS shortcut-key accessory row. The default is
+    /// hidden so first tap gives the plain software keyboard only.
+    private var accessoryKeysButton: some View {
+        Button {
+            accessoryKeysVisible.toggle()
+            if inputMode == .keyboard {
+                terminalFocused = true
+            }
+        } label: {
+            Image(systemName: accessoryKeysVisible ? "command.circle.fill" : "command.circle")
+        }
+        .accessibilityLabel(accessoryKeysVisible ? "Hide accessory keys" : "Show accessory keys")
+    }
+
+    /// Switch between normal keyboard input and tap/cursor input. Tap mode
+    /// intentionally drops first-responder focus so the software keyboard stays
+    /// hidden while taps are delivered to mouse-aware terminal apps.
+    private var inputModeButton: some View {
+        Button {
+            switch inputMode {
+            case .keyboard:
+                inputMode = .tap
+                terminalFocused = false
+            case .tap:
+                inputMode = .keyboard
+                terminalFocused = true
+            }
+        } label: {
+            Image(systemName: inputMode == .tap ? "hand.tap.fill" : "hand.tap")
+        }
+        .accessibilityLabel(inputMode == .keyboard ? "Enable tap mode" : "Disable tap mode")
+        .accessibilityHint("Tap mode hides the keyboard and sends taps to mouse-aware terminal apps.")
+    }
+
     private var statusMessage: String? {
         switch session.status {
         case .connecting:
             return "Connecting to host…"
+        case .reconnecting(let attempt, let delay, let reason):
+            return "Connection lost: \(reason). Reconnecting in \(delay)s (try \(attempt)); reattaches if the host lease is alive…"
         case .disconnected(let reason):
             return reason == "disconnected" ? nil : reason
         case .failed(let reason):

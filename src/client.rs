@@ -7,11 +7,12 @@
 //!
 //! ## Single-shot (v0.6)
 //!
-//! No auto-reconnect, no heartbeat, no session resume. The connection lives
-//! for as long as the iroh stream is open; on drop (network loss, host down,
-//! shell exit) the client exits and the user re-runs `zuko <host>` to get a
-//! fresh PTY. Users running long-lived work should do so inside `tmux`/
-//! `zellij`/`screen` on the host.
+//! No app-level heartbeat and no protocol resume. The CLI is intentionally
+//! single-shot: on drop (network loss, host down, shell exit) it restores the
+//! local terminal and exits; the user re-runs `zuko <host>` for a fresh PTY.
+//! Mobile clients may auto-redial transient drops, but every successful redial
+//! still starts a fresh PTY. Users running long-lived work should do so inside
+//! `tmux`/`zellij`/`screen` on the host.
 //!
 //! ## Force-quit
 //!
@@ -32,7 +33,8 @@ use tokio::io::AsyncWriteExt as _;
 use tokio::sync::mpsc;
 
 use crate::wire::{
-    ALPN, TYPE_DATA, TYPE_PING, decode_nonce, pong_frame, resize_frame, try_parse_frame,
+    ALPN, SESSION_TOKEN_LEN, TYPE_DATA, TYPE_PING, attach_frame, decode_nonce, pong_frame,
+    resize_frame, try_parse_frame,
 };
 
 /// Force-quit escape hatch: in raw mode Ctrl-C (0x03) is forwarded to the
@@ -47,8 +49,8 @@ use crate::wire::{
 const FORCE_QUIT_PRESSES: u32 = 3;
 const FORCE_QUIT_WINDOW: std::time::Duration = std::time::Duration::from_secs(1);
 
-/// Connect to a host and bridge the local terminal to its shell, reconnecting
-/// on network drops until the remote shell exits.
+/// Connect to a host once and bridge the local terminal to its shell until the
+/// remote shell exits or the link drops.
 pub async fn connect(ticket_str: &str) -> Result<()> {
     let ticket = ticket_str
         .parse::<EndpointTicket>()
@@ -56,8 +58,8 @@ pub async fn connect(ticket_str: &str) -> Result<()> {
     let addr: EndpointAddr = ticket.into();
 
     let (cols, rows) = crossterm::terminal::size().unwrap_or((80, 24));
-    // Current terminal size, updated by SIGWINCH across reconnects. Packed as
-    // cols<<16 | rows in a u32 so the reconnect path can read it lock-free.
+    // Current terminal size, updated by SIGWINCH. Packed as cols<<16 | rows in
+    // a u32 so the connect path can read it lock-free.
     let size: Arc<AtomicU32> = Arc::new(AtomicU32::new(pack_size(cols, rows)));
 
     // Connect *before* entering raw mode so connect errors print to a normal,
@@ -79,9 +81,8 @@ pub async fn connect(ticket_str: &str) -> Result<()> {
     // Monotonic token bumped by the read loop whenever DATA is written to
     // stdout. The stdin thread samples it to detect "no remote output since
     // the previous Ctrl-C", which is the gate for the 3× Ctrl-C force-quit
-    // hatch. Process-wide (not reset on reconnect) — a successful resume
-    // replays recent output and bumps this, which is exactly the "remote is
-    // alive again" signal we want to reset the burst.
+    // hatch. Any remote output bumps this, which is exactly the "remote is
+    // alive" signal we want to reset the burst.
     let stdout_seq: Arc<AtomicU64> = Arc::new(AtomicU64::new(0));
 
     // stdin -> DATA frames. A dedicated OS thread does blocking reads (the
@@ -162,22 +163,20 @@ pub async fn connect(ticket_str: &str) -> Result<()> {
         });
     }
 
-    // Single-shot connect (v0.6): no auto-reconnect. The user re-runs
-    // `zuko <host>` if the connection drops. This keeps the model simple and
-    // avoids the "silently lost state on reconnect" surprise that came with
-    // resuming to a fresh PTY.
+    // Single-shot CLI connect: the user re-runs `zuko <host>` if the link
+    // drops. This keeps raw-mode terminal recovery boring and avoids implying
+    // session state survived when the next dial would be a fresh PTY.
     let result: Result<()> = async {
         let conn = endpoint.connect(addr, ALPN).await.context("dial host")?;
         let (mut send, recv) = conn.open_bi().await.context("open bidi stream")?;
 
-        // Initial RESIZE — also acts as the v0.6 handshake (tells the host
-        // the terminal size before the first byte of input flows). Sent
-        // directly on `send` BEFORE handing it to the writer so it's
-        // guaranteed first on the wire.
+        // Initial ATTACH — zero token means "fresh PTY". Sent directly on
+        // `send` BEFORE handing it to the writer so it's guaranteed first on
+        // the wire.
         let (c, r) = unpack_size(size.load(Ordering::Relaxed));
-        send.write_all(&resize_frame(c, r))
+        send.write_all(&attach_frame([0u8; SESSION_TOKEN_LEN], c, r))
             .await
-            .context("send initial RESIZE")?;
+            .context("send initial ATTACH")?;
 
         // Writer: drains the frame channel (stdin + SIGWINCH) into the send
         // stream. Runs until the channel closes or `send` errors.

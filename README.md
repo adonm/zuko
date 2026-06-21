@@ -106,12 +106,12 @@ from source (Simulator or device).
 
 ## Session lifetime
 
-Each connection mints a **fresh PTY** on the host, killed when the connection
-ends (network drop, app close, or shell exit — all the same). There's no
-auto-reconnect or session resume; reconnect by re-running `zuko <host>` or
-tapping the connection again. For long-lived work that survives disconnects,
-run `tmux`/`zellij`/`screen` *inside* the zuko session — that's the proper
-layer for resumability.
+Each new session mints a **PTY** on the host, killed when the shell exits. A
+short client/network drop detaches that PTY for a 5-minute in-memory lease; the
+iOS app auto-redials with the lease token and reattaches. Output produced while
+detached is discarded (no replay buffer), and the CLI still exits on drop. For
+long-lived work that survives long disconnects or host restarts, run
+`tmux`/`zellij`/`screen` *inside* the zuko session.
 
 If the session wedges hard (keystrokes vanish), **Ctrl-C 3× within ~1 s** with
 no remote output between presses force-exits the CLI — see

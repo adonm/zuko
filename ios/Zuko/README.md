@@ -46,18 +46,39 @@ Zuko/
     ConnectionKeychain.swift  Keychain wrapper for the bearer-token tickets
     ThemeStore.swift        persisted terminal prefs: color theme, font size
                             (UserDefaults-backed)
-    Net/
-     Wire.swift              length-prefixed framing (shared with host)
-     IrohSession.swift       Iroh connect + framed read loop + serial write pump;
-                             owns the InMemoryTerminalSession fed to GhosttyTerminal
-   Views/
-     RootView.swift
-     ConnectionListView.swift     list + empty-state onboarding
-     OnboardingView.swift         host setup commands + app tips (zoom/theme)
-     AddConnectionView.swift      add a connection
-     TerminalScreen.swift         the live terminal (GhosttyTerminal surface)
-     ThemeBrowserView.swift       searchable list of all 485 catalog themes
- ```
+  Net/
+    Wire.swift              length-prefixed framing (shared with host)
+    IrohSession.swift       Iroh connect + framed read loop + serial write pump;
+                            owns the InMemoryTerminalSession fed to GhosttyTerminal
+    TerminalInputFix.swift  software-keyboard byte delivery swizzle
+  Views/
+    RootView.swift
+    ConnectionListView.swift     list + empty-state onboarding
+    OnboardingView.swift         host setup commands + app tips (zoom/theme)
+    AddConnectionView.swift      add a connection
+    TerminalScreen.swift         the live terminal (GhosttyTerminal surface)
+    TouchMouseInput.swift        tap/cursor-mode mouse click + scroll bridge
+    ThemeBrowserView.swift       searchable list of all 485 catalog themes
+  ```
+
+## Terminal controls
+
+- Default input is the plain iOS software keyboard. The shortcut-key accessory
+  row starts hidden.
+- Toolbar command-circle toggles the accessory row (`Esc`, `Tab`, arrows,
+  `Ctrl`/`Alt`/`Cmd`, symbols, paste).
+- Toolbar hand-tap toggles cursor/tap mode. Cursor mode resigns first responder
+  so the keyboard stays hidden; taps are delivered as mouse clicks to apps that
+  enabled terminal mouse capture, and one-finger swipes send precision wheel
+  scroll events for scrollback panes in apps like opencode, zellij, vim, and
+  btop.
+- The refresh icon sends a same-size resize to the host PTY, asking shells/TUIs
+  to repaint without clearing zellij/tmux panes.
+- Transient Iroh/link failures auto-redial with bounded exponential backoff
+  while the terminal screen remains open. The app reuses the host's session
+  token, so short drops reattach the same PTY within the host's 5-minute lease.
+  Output while detached is discarded; use tmux/zellij/screen inside the session
+  for persistent processes across long disconnects or host restarts.
 
 ## CI
 
@@ -87,11 +108,11 @@ Fastlane/XcodeGen archive path — see [`../DISTRIBUTION.md`](../DISTRIBUTION.md
   1.0.0's edition) and `cargo clippy`-clean under `-W clippy::pedantic
   -W clippy::nursery -W clippy::cargo` (with the doc/noisy lints allowed).
 - The default font size is `ThemeStore.defaultFontSize` (5pt — 50% of
-  libghostty-spm's iOS default). Adjustable from the `Aa` toolbar Menu or by
-  pinching the terminal surface (live). Persisted to UserDefaults.
-- The color theme picker lives on `TerminalScreen`'s toolbar (palette icon):
-  Popular menu for quick switching + "Browse all…" for a searchable sheet
-  over all 485 catalog themes. The selection persists in UserDefaults and
-  applies live via `TerminalController.setTheme`. The app follows the system
-  color scheme (no longer force-dark); the default theme is Afterglow (dark)
-  / Alabaster (light).
+  libghostty-spm's iOS default). Adjustable from the toolbar overflow menu or
+  by pinching the terminal surface (live). Persisted to UserDefaults.
+- The color theme picker also lives in `TerminalScreen`'s toolbar overflow menu:
+  Popular menu for quick switching + "Browse all…" for a searchable sheet over
+  all 485 catalog themes. The selection persists in UserDefaults and applies
+  live via `TerminalController.setTheme`. The app follows the system color
+  scheme (no longer force-dark); the default theme is Afterglow (dark) /
+  Alabaster (light).

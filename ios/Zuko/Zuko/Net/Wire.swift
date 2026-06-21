@@ -7,14 +7,15 @@ import Foundation
 /// - 0x00 DATA    — raw terminal bytes (keystrokes up, PTY output down)
 /// - 0x01 RESIZE  — payload `[cols: u16 BE][rows: u16 BE]` (client -> host,
 ///                  also the first frame — acts as the v0.6 handshake)
-/// - 0x04 PING    — `[nonce: u64 BE]`, bidirectional (legacy; kept for
-///                  backward compat with older peers, ignored by v0.6+)
-/// - 0x05 PONG    — `[nonce: u64 BE]`, bidirectional (legacy; same)
+/// - 0x04 PING    — `[nonce: u64 BE]`, optional control/compat (reply PONG)
+/// - 0x05 PONG    — `[nonce: u64 BE]`, optional control/compat
+/// - 0x06 ATTACH  — `[token: 16 bytes][cols: u16 BE][rows: u16 BE]`
+/// - 0x07 ATTACHED — `[token: 16 bytes]`
 ///
-/// The client opens the stream with a single RESIZE carrying its initial
-/// terminal size. The host spawns a fresh PTY at that size and starts
-/// streaming. No HELLO/WELCOME exchange, no session ids — each connection
-/// gets a new PTY, killed when the connection ends.
+/// New clients open the stream with ATTACH: a 16-byte session token (zero for
+/// first attach) plus terminal size. The host replies ATTACHED with the token
+/// to reuse on short reconnects. Legacy first-frame RESIZE still starts a
+/// fresh PTY.
 enum Wire {
     static let data: UInt8 = 0x00
     static let resize: UInt8 = 0x01
@@ -22,6 +23,10 @@ enum Wire {
     // session-resume handshake. Removed in v0.6.
     static let ping: UInt8 = 0x04
     static let pong: UInt8 = 0x05
+    static let attach: UInt8 = 0x06
+    static let attached: UInt8 = 0x07
+    static let maxPayloadLength = Int(UInt16.max)
+    static let sessionTokenLength = 16
 
     struct Frame {
         let type: UInt8
@@ -30,6 +35,10 @@ enum Wire {
 
     /// Encode one length-prefixed frame ready to write to the stream.
     static func encode(type: UInt8, payload: Data) -> Data {
+        precondition(
+            payload.count <= maxPayloadLength,
+            "zuko frame payload exceeds u16 length prefix"
+        )
         var out = Data(capacity: 3 + payload.count)
         out.append(type)
         let len = UInt16(payload.count)
@@ -46,6 +55,22 @@ enum Wire {
         payload.append(UInt8((rows >> 8) & 0xFF))
         payload.append(UInt8(rows & 0xFF))
         return encode(type: resize, payload: payload)
+    }
+
+    static func encodeAttach(token: Data, cols: UInt16, rows: UInt16) -> Data {
+        precondition(token.count == sessionTokenLength, "zuko session token must be 16 bytes")
+        var payload = Data(capacity: sessionTokenLength + 4)
+        payload.append(token)
+        payload.append(UInt8((cols >> 8) & 0xFF))
+        payload.append(UInt8(cols & 0xFF))
+        payload.append(UInt8((rows >> 8) & 0xFF))
+        payload.append(UInt8(rows & 0xFF))
+        return encode(type: attach, payload: payload)
+    }
+
+    static func parseAttached(_ payload: [UInt8]) -> Data? {
+        guard payload.count == sessionTokenLength else { return nil }
+        return Data(payload)
     }
 
     /// Try to pull one complete frame off the front of `buffer`, draining it.

@@ -4,31 +4,36 @@
 //! ticket to `~/.config/zuko/current_ticket` (read out-of-band by
 //! `zuko share`), and for each incoming connection spawns the user's shell on
 //! a PTY. The connection owns the PTY: when it ends (for any reason — shell
-//! exit, network drop, client disconnect) the PTY is killed.
+//! exit, or a short detached lease expires after a client/network drop.
 //!
-//! ## No session persistence (v0.6)
+//! ## Short detached leases
 //!
-//! Earlier versions (v0.4–v0.5) kept sessions alive across disconnects and
-//! replayed a ring buffer on resume. That added a lot of machinery (session
-//! registry, ring buffer, reaper, control socket) and a class of edge cases
-//! (stale sessions, two connections to one session, garbled replays for
-//! fullscreen apps). v0.6 rips it out: each connection is a fresh PTY, end of
-//! story. Users who want resumability run `tmux`/`zellij`/`screen` *inside*
-//! the zuko session — that's the proper layer for it.
+//! Earlier versions kept replay buffers and durable-ish session registries. The
+//! current host keeps only an in-memory 5-minute lease: if a client reconnects
+//! with its 16-byte token, it gets the same PTY; output while detached is
+//! discarded. There is no replay buffer or cross-restart persistence. Users who
+//! want robust resumability still run `tmux`/`zellij`/`screen` inside zuko.
 
 use anyhow::{Context, Result};
 use iroh::{Endpoint, SecretKey, endpoint::presets};
 use iroh_tickets::endpoint::EndpointTicket;
 use portable_pty::{CommandBuilder, PtySize, native_pty_system};
+use std::collections::HashMap;
+use std::io::{Read, Write};
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::time::Duration;
 use tracing::{info, warn};
 
 use crate::HostArgs;
 use crate::config_dir;
 use crate::secret::write_secret_0600;
 use crate::ticket_file::write_current_ticket;
-use crate::wire::{self, ALPN, TYPE_DATA, TYPE_PING, TYPE_RESIZE, decode_nonce, try_parse_frame};
+use crate::wire::{
+    self, ALPN, SESSION_TOKEN_LEN, SessionToken, TYPE_ATTACH, TYPE_DATA, TYPE_PING, TYPE_RESIZE,
+    decode_nonce, empty_session_token, parse_attach, try_parse_frame,
+};
 
 /// Per-direction capacity of the bounded channels that connect the network
 /// pump to the PTY (and back). Bounds host memory under flood — without it a
@@ -38,6 +43,17 @@ use crate::wire::{self, ALPN, TYPE_DATA, TYPE_PING, TYPE_RESIZE, decode_nonce, t
 /// control chokes the peer, and on the output side the kernel TTY buffer
 /// eventually blocks the shell's own writes.
 const PUMP_CHANNEL_CAP: usize = 128;
+/// Bound half-open clients that connect but never open/send a zuko stream.
+/// This keeps the host's per-connection task/thread budget predictable without
+/// adding a separate accept limiter.
+const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
+/// How long a PTY stays alive after its client disappears. Five minutes covers
+/// normal mobile backgrounding, lock-screen auth, Wi‑Fi/cellular handover, and
+/// brief tunnel/relay churn without letting abandoned shells linger for hours.
+/// Output while detached is discarded.
+const DETACHED_SESSION_TTL: Duration = Duration::from_secs(300);
+
+type SessionRegistry = Arc<tokio::sync::Mutex<HashMap<SessionToken, Arc<Session>>>>;
 
 #[derive(Debug)]
 enum PtyCmd {
@@ -58,6 +74,100 @@ enum OutItem {
     /// PTY reader hit EOF (shell exited). Drain any earlier output, then finish
     /// the send stream so the client exits instead of waiting for more input.
     End,
+}
+
+struct Attachment {
+    id: u64,
+    tx: tokio::sync::mpsc::Sender<OutItem>,
+}
+
+struct Session {
+    token: SessionToken,
+    pty_tx: tokio::sync::mpsc::Sender<PtyCmd>,
+    child: Arc<std::sync::Mutex<Option<Box<dyn portable_pty::Child + Send + Sync>>>>,
+    attachment: std::sync::Mutex<Option<Attachment>>,
+    next_attach_id: AtomicU64,
+    lease_generation: AtomicU64,
+    exited: AtomicBool,
+}
+
+impl Session {
+    fn attach(&self, tx: tokio::sync::mpsc::Sender<OutItem>) -> u64 {
+        let id = self.next_attach_id.fetch_add(1, Ordering::Relaxed) + 1;
+        let old = {
+            let mut guard = self.attachment.lock().expect("attachment mutex poisoned");
+            guard.replace(Attachment { id, tx })
+        };
+        if let Some(old) = old {
+            let _ = old.tx.try_send(OutItem::End);
+        }
+        id
+    }
+
+    fn detach(&self, id: u64) -> Option<u64> {
+        let mut guard = self.attachment.lock().expect("attachment mutex poisoned");
+        if guard.as_ref().is_some_and(|a| a.id == id) {
+            *guard = None;
+            Some(self.lease_generation.fetch_add(1, Ordering::Relaxed) + 1)
+        } else {
+            None
+        }
+    }
+
+    fn send_output(&self, bytes: Vec<u8>) {
+        let tx = self
+            .attachment
+            .lock()
+            .expect("attachment mutex poisoned")
+            .as_ref()
+            .map(|a| a.tx.clone());
+        if let Some(tx) = tx {
+            // No replay buffer: if the client is gone or badly stalled, drop
+            // output and let the app/user request a redraw after reattach.
+            let _ = tx.try_send(OutItem::Pty(bytes));
+        }
+    }
+
+    fn mark_exited(&self) {
+        self.exited.store(true, Ordering::Relaxed);
+        let tx = self
+            .attachment
+            .lock()
+            .expect("attachment mutex poisoned")
+            .as_ref()
+            .map(|a| a.tx.clone());
+        if let Some(tx) = tx {
+            let _ = tx.try_send(OutItem::End);
+        }
+    }
+
+    fn active(&self, id: u64) -> bool {
+        self.attachment
+            .lock()
+            .expect("attachment mutex poisoned")
+            .as_ref()
+            .is_some_and(|a| a.id == id)
+    }
+
+    fn should_reap(&self, generation: u64) -> bool {
+        self.exited.load(Ordering::Relaxed)
+            || (self.lease_generation.load(Ordering::Relaxed) == generation
+                && self
+                    .attachment
+                    .lock()
+                    .expect("attachment mutex poisoned")
+                    .is_none())
+    }
+
+    fn kill(&self) {
+        if let Ok(mut guard) = self.child.lock() {
+            if let Some(child) = guard.as_mut() {
+                let _ = child.kill();
+                let _ = child.wait();
+            }
+            *guard = None;
+        }
+    }
 }
 
 const DEFAULT_COLS: u16 = 80;
@@ -139,15 +249,18 @@ pub async fn run(args: HostArgs) -> Result<()> {
         }
     });
 
-    // Accept connections forever. Each connection spawns its own PTY; the
-    // PTY dies with the connection.
+    // Accept connections forever. Each first connection creates a PTY-backed
+    // session token; short client drops can reattach to that token within the
+    // detached lease window.
+    let sessions: SessionRegistry = Arc::new(tokio::sync::Mutex::new(HashMap::new()));
     loop {
         if let Some(incoming) = endpoint.accept().await {
             let shell = shell.clone();
             let shell_args = args.shell_args.clone();
             let cwd = args.cwd.clone();
+            let sessions = sessions.clone();
             tokio::spawn(async move {
-                if let Err(e) = serve(incoming, shell, shell_args, cwd).await {
+                if let Err(e) = serve(incoming, shell, shell_args, cwd, sessions).await {
                     warn!("connection ended: {e:#}");
                 }
             });
@@ -166,13 +279,17 @@ async fn serve(
     shell: String,
     shell_args: Vec<String>,
     cwd: Option<PathBuf>,
+    sessions: SessionRegistry,
 ) -> Result<()> {
-    let conn = incoming
-        .accept()
-        .context("accept connection")?
+    let connecting = incoming.accept().context("accept connection")?;
+    let conn = tokio::time::timeout(HANDSHAKE_TIMEOUT, connecting)
         .await
+        .context("timed out completing connection")?
         .context("complete connection")?;
-    let (mut send, mut recv) = conn.accept_bi().await.context("accept bidi stream")?;
+    let (mut send, mut recv) = tokio::time::timeout(HANDSHAKE_TIMEOUT, conn.accept_bi())
+        .await
+        .context("timed out waiting for bidi stream")?
+        .context("accept bidi stream")?;
 
     // ── Handshake: read the client's first frame. ──
     // The client sends a single `RESIZE` carrying the initial terminal size.
@@ -180,35 +297,258 @@ async fn serve(
     // 80×24; the client's first subsequent `RESIZE` corrects it.
     let mut acc: Vec<u8> = Vec::with_capacity(16 * 1024);
     let mut tmp = vec![0u8; 16 * 1024];
-    let first = read_one_frame(&mut recv, &mut acc, &mut tmp).await?;
-    let (cols, rows, pending_first) = initial_size_and_pending(first);
+    let first = tokio::time::timeout(
+        HANDSHAKE_TIMEOUT,
+        read_one_frame(&mut recv, &mut acc, &mut tmp),
+    )
+    .await
+    .context("timed out waiting for initial frame")??;
+    let request = initial_request(first);
+    let session = get_or_create_session(
+        &sessions,
+        request.requested_token,
+        shell,
+        shell_args,
+        cwd,
+        request.cols,
+        request.rows,
+    )
+    .await?;
 
-    // ── Spawn the PTY + shell. ──
+    // Outbound channel: PTY output + PONG replies to client PINGs all funnel
+    // through here so the single `pty_to_net` writer puts frames on the wire
+    // in order without interleaving. zuko doesn't run an app-level heartbeat;
+    // Iroh/QUIC owns transport liveness. PING/PONG is just cheap peer
+    // compatibility for clients that still send protocol control frames.
+    let (out_tx, mut out_rx) = tokio::sync::mpsc::channel::<OutItem>(PUMP_CHANNEL_CAP);
+    let pong_tx = out_tx.clone();
+    let attach_id = session.attach(out_tx);
+    let token = session.token;
+
+    // PTY output (via the out channel) + control frames -> network.
+    // Ends when all senders are dropped (reader thread done) or the send
+    // errors (connection dropped).
+    let mut pty_to_net = tokio::spawn(async move {
+        if send.write_all(&wire::attached_frame(token)).await.is_err() {
+            return;
+        }
+        while let Some(item) = out_rx.recv().await {
+            let frame = match item {
+                OutItem::Pty(bytes) => wire::data_frame(&bytes),
+                OutItem::Frame(pre) => pre,
+                OutItem::End => break,
+            };
+            if send.write_all(&frame).await.is_err() {
+                break;
+            }
+        }
+        let _ = send.finish();
+    });
+
+    // Network -> PTY. Async frame parser over the iroh recv stream. The first
+    // frame was already consumed above; `acc` may still hold buffered bytes
+    // from a coalesced read, so the pump continues from `acc`/`tmp`. PONGs
+    // for inbound PINGs are routed back via `pong_tx`.
+    let session_for_input = session.clone();
+    let mut net_to_pty: tokio::task::JoinHandle<()> = tokio::spawn(async move {
+        if let Some(frame) = request.pending_first
+            && !handle_client_frame(&frame, &session_for_input, attach_id, &pong_tx).await
+        {
+            return;
+        }
+        loop {
+            // Parse any bytes already in `acc` first (from the handshake
+            // read), then top up from the stream.
+            while let Some(frame) = try_parse_frame(&mut acc) {
+                if !handle_client_frame(&frame, &session_for_input, attach_id, &pong_tx).await {
+                    return;
+                }
+            }
+            match recv.read(&mut tmp).await {
+                Ok(Some(n)) => acc.extend_from_slice(&tmp[..n]),
+                // Client closed send half / dropped / errored: same outcome.
+                Ok(None) | Err(_) => return,
+            }
+        }
+    });
+
+    // No host-side heartbeat — see note on out_tx above.
+
+    // End this attachment when either side ends: client/network EOF, replaced
+    // attachment, or PTY EOF (shell exit). The PTY itself survives a network
+    // drop for DETACHED_SESSION_TTL unless it exited.
+    tokio::select! {
+        _ = &mut net_to_pty => pty_to_net.abort(),
+        _ = &mut pty_to_net => net_to_pty.abort(),
+    }
+
+    if session.exited.load(Ordering::Relaxed) {
+        sessions.lock().await.remove(&session.token);
+        session.kill();
+    } else if let Some(generation) = session.detach(attach_id) {
+        schedule_reap(sessions, session, generation);
+    }
+    Ok(())
+}
+
+/// Handle one frame from the client. Returns `false` if the session's PTY
+/// writer is gone and the connection should end. `pong_tx` routes PONGs
+/// (replies to client PINGs) back out the send stream.
+async fn handle_client_frame(
+    frame: &wire::ParsedFrame,
+    session: &Session,
+    attach_id: u64,
+    pong_tx: &tokio::sync::mpsc::Sender<OutItem>,
+) -> bool {
+    if !session.active(attach_id) {
+        return false;
+    }
+    match frame.typ {
+        TYPE_DATA => {
+            if session
+                .pty_tx
+                .send(PtyCmd::Data(frame.payload.clone()))
+                .await
+                .is_err()
+            {
+                return false;
+            }
+            true
+        }
+        TYPE_RESIZE if frame.payload.len() == 4 => {
+            let cols = u16::from_be_bytes([frame.payload[0], frame.payload[1]]);
+            let rows = u16::from_be_bytes([frame.payload[2], frame.payload[3]]);
+            let _ = session
+                .pty_tx
+                .send(PtyCmd::Resize(cols.max(1), rows.max(1)))
+                .await;
+            true
+        }
+        TYPE_PING => {
+            // Echo the nonce back as PONG, routed through the out channel so
+            // the single writer puts it on the wire.
+            let nonce = decode_nonce(&frame.payload);
+            let _ = pong_tx.send(OutItem::Frame(wire::pong_frame(nonce))).await;
+            true
+        }
+        _ => true, // ignore unknown types (forward compat — PONG, legacy HELLO/WELCOME, etc.)
+    }
+}
+
+struct InitialRequest {
+    requested_token: SessionToken,
+    cols: u16,
+    rows: u16,
+    pending_first: Option<wire::ParsedFrame>,
+}
+
+fn initial_request(first: wire::ParsedFrame) -> InitialRequest {
+    match first.typ {
+        TYPE_ATTACH => {
+            if let Some((token, cols, rows)) = parse_attach(&first.payload) {
+                InitialRequest {
+                    requested_token: token,
+                    cols: cols.max(1),
+                    rows: rows.max(1),
+                    pending_first: None,
+                }
+            } else {
+                default_initial_request(Some(first))
+            }
+        }
+        TYPE_RESIZE if first.payload.len() == 4 => {
+            let cols = u16::from_be_bytes([first.payload[0], first.payload[1]]);
+            let rows = u16::from_be_bytes([first.payload[2], first.payload[3]]);
+            InitialRequest {
+                requested_token: [0u8; SESSION_TOKEN_LEN],
+                cols: cols.max(1),
+                rows: rows.max(1),
+                pending_first: None,
+            }
+        }
+        _ => default_initial_request(Some(first)),
+    }
+}
+
+fn default_initial_request(pending_first: Option<wire::ParsedFrame>) -> InitialRequest {
+    InitialRequest {
+        requested_token: [0u8; SESSION_TOKEN_LEN],
+        cols: DEFAULT_COLS,
+        rows: DEFAULT_ROWS,
+        pending_first,
+    }
+}
+
+async fn get_or_create_session(
+    sessions: &SessionRegistry,
+    requested_token: SessionToken,
+    shell: String,
+    shell_args: Vec<String>,
+    cwd: Option<PathBuf>,
+    cols: u16,
+    rows: u16,
+) -> Result<Arc<Session>> {
+    if !empty_session_token(&requested_token)
+        && let Some(existing) = sessions.lock().await.get(&requested_token).cloned()
+        && !existing.exited.load(Ordering::Relaxed)
+    {
+        let _ = existing.pty_tx.send(PtyCmd::Resize(cols, rows)).await;
+        return Ok(existing);
+    }
+
+    let token = fresh_session_token(sessions).await;
+    let session = spawn_session(token, shell, shell_args, cwd, cols, rows)?;
+    sessions.lock().await.insert(token, session.clone());
+    Ok(session)
+}
+
+async fn fresh_session_token(sessions: &SessionRegistry) -> SessionToken {
+    loop {
+        let bytes = SecretKey::generate().to_bytes();
+        let mut token = [0u8; SESSION_TOKEN_LEN];
+        token.copy_from_slice(&bytes[..SESSION_TOKEN_LEN]);
+        if empty_session_token(&token) {
+            continue;
+        }
+        if !sessions.lock().await.contains_key(&token) {
+            return token;
+        }
+    }
+}
+
+fn spawn_session(
+    token: SessionToken,
+    shell: String,
+    shell_args: Vec<String>,
+    cwd: Option<PathBuf>,
+    cols: u16,
+    rows: u16,
+) -> Result<Arc<Session>> {
     let Pty {
         tx: pty_tx,
-        rx: _pty_rx,
+        rx: pty_rx,
         reader: pty_reader,
         master,
         child,
     } = spawn_pty(shell, shell_args, cwd, cols, rows)?;
 
-    // Outbound channel: PTY output + PONG replies to client PINGs all funnel
-    // through here so the single `pty_to_net` writer puts frames on the wire
-    // in order without interleaving. (Heartbeat was removed in v0.6 — iroh's
-    // QUIC keepalive handles transport liveness, and without auto-reconnect
-    // there's nothing for an app-level heartbeat to trigger.)
-    let (out_tx, mut out_rx) = tokio::sync::mpsc::channel::<OutItem>(PUMP_CHANNEL_CAP);
-    let pong_tx = out_tx.clone();
+    let session = Arc::new(Session {
+        token,
+        pty_tx,
+        child,
+        attachment: std::sync::Mutex::new(None),
+        next_attach_id: AtomicU64::new(0),
+        lease_generation: AtomicU64::new(0),
+        exited: AtomicBool::new(false),
+    });
 
-    // PTY reader -> out channel. Runs on a dedicated OS thread because
-    // portable_pty's reader is a blocking `Read`. The channel's bounded cap
-    // back-pressures: if the network slows, this thread awaits `send`,
-    // which in turn blocks the PTY's stdout pipe (kernel TTY buffer fills,
-    // the shell's own writes block). No ring buffer, no detach — the PTY
-    // dies with the connection.
-    let out_tx_for_reader = out_tx.clone();
+    spawn_pty_reader(session.clone(), pty_reader);
+    spawn_pty_writer(pty_rx, master);
+    Ok(session)
+}
+
+fn spawn_pty_reader(session: Arc<Session>, pty_reader: Box<dyn std::io::Read + Send>) {
     std::thread::spawn(move || {
-        // `reader` is owned by this closure; the loop reads until EOF/err.
         let mut reader = pty_reader;
         let mut buf = vec![0u8; 16 * 1024];
         loop {
@@ -216,49 +556,31 @@ async fn serve(
                 Ok(0) | Err(_) => break,
                 Ok(n) => {
                     let chunk = buf[..n].to_vec();
-                    // Verbose byte trace for output diagnostics.
                     tracing::debug!(
                         target: "zuko::host::output",
                         bytes = ?chunk.iter().map(|b| format!("{:02x}", b)).collect::<Vec<_>>(),
                         ascii = %String::from_utf8_lossy(&chunk),
                         "pty output"
                     );
-                    if out_tx_for_reader
-                        .blocking_send(OutItem::Pty(chunk))
-                        .is_err()
-                    {
-                        // Network side gone — stop reading.
-                        break;
-                    }
+                    session.send_output(chunk);
                 }
             }
         }
-        // Reader saw EOF (shell exited) or the network dropped. Tell the
-        // outbound pump to drain prior PTY output and finish the send stream;
-        // channel close alone is not enough because PONG senders may still be
-        // alive while the network side waits for client input.
-        let _ = out_tx_for_reader.blocking_send(OutItem::End);
+        session.mark_exited();
     });
+}
 
-    // PTY writer: dedicated thread, takes commands from `pty_tx` and applies
-    // them to the PTY master. Keeps all writes serialised; the channel cap
-    // bounds memory if a client floods DATA frames faster than the shell
-    // reads stdin. Owns `master` outright (no Arc) — portable_pty's MasterPty
-    // isn't `Send`-safe to share, and the writer is the only place that
-    // touches it after spawn.
+fn spawn_pty_writer(
+    mut pty_rx: tokio::sync::mpsc::Receiver<PtyCmd>,
+    master: Box<dyn portable_pty::MasterPty + Send>,
+) {
     std::thread::spawn(move || {
-        // Take the receiver end of the PTY command channel and own it here.
-        // The PTY writer is the sole consumer.
-        let mut pty_rx = _pty_rx;
-        let master = master;
         let Ok(mut writer) = master.take_writer() else {
             return;
         };
         while let Some(cmd) = pty_rx.blocking_recv() {
             match cmd {
                 PtyCmd::Data(d) => {
-                    // Verbose byte trace for input diagnostics. Enable with
-                    // RUST_LOG=zuko=debug.
                     tracing::debug!(
                         target: "zuko::host::input",
                         bytes = ?d.iter().map(|b| format!("{:02x}", b)).collect::<Vec<_>>(),
@@ -280,117 +602,16 @@ async fn serve(
             }
         }
     });
-
-    // PTY output (via the out channel) + control frames -> network.
-    // Ends when all senders are dropped (reader thread done) or the send
-    // errors (connection dropped).
-    let mut pty_to_net = tokio::spawn(async move {
-        while let Some(item) = out_rx.recv().await {
-            let frame = match item {
-                OutItem::Pty(bytes) => wire::data_frame(&bytes),
-                OutItem::Frame(pre) => pre,
-                OutItem::End => break,
-            };
-            if send.write_all(&frame).await.is_err() {
-                break;
-            }
-        }
-        let _ = send.finish();
-    });
-
-    // Network -> PTY. Async frame parser over the iroh recv stream. The first
-    // frame was already consumed above; `acc` may still hold buffered bytes
-    // from a coalesced read, so the pump continues from `acc`/`tmp`. PONGs
-    // for inbound PINGs are routed back via `pong_tx`.
-    let mut net_to_pty: tokio::task::JoinHandle<()> = tokio::spawn(async move {
-        if let Some(frame) = pending_first
-            && !handle_client_frame(&frame, &pty_tx, &pong_tx).await
-        {
-            return;
-        }
-        loop {
-            // Parse any bytes already in `acc` first (from the handshake
-            // read), then top up from the stream.
-            while let Some(frame) = try_parse_frame(&mut acc) {
-                if !handle_client_frame(&frame, &pty_tx, &pong_tx).await {
-                    return;
-                }
-            }
-            match recv.read(&mut tmp).await {
-                Ok(Some(n)) => acc.extend_from_slice(&tmp[..n]),
-                // Client closed send half / dropped / errored: same outcome.
-                Ok(None) | Err(_) => return,
-            }
-        }
-    });
-
-    // Host-side heartbeat removed in v0.6 — see note on out_tx above.
-
-    // End the session when either side ends: client/network EOF or PTY EOF
-    // (shell exit). The other task is then cancelled and the PTY is killed.
-    tokio::select! {
-        _ = &mut net_to_pty => pty_to_net.abort(),
-        _ = &mut pty_to_net => net_to_pty.abort(),
-    }
-
-    // Always kill the PTY — there's no resume to preserve it for. Best-effort:
-    // the shell may already be gone (ESRCH from `kill`).
-    if let Ok(mut guard) = child.lock() {
-        if let Some(child) = guard.as_mut() {
-            let _ = child.kill();
-            let _ = child.wait();
-        }
-        *guard = None;
-    }
-    Ok(())
 }
 
-/// Handle one frame from the client. Returns `false` if the session's PTY
-/// writer is gone and the connection should end. `pong_tx` routes PONGs
-/// (replies to our PINGs) back out the send stream.
-async fn handle_client_frame(
-    frame: &wire::ParsedFrame,
-    pty_tx: &tokio::sync::mpsc::Sender<PtyCmd>,
-    pong_tx: &tokio::sync::mpsc::Sender<OutItem>,
-) -> bool {
-    match frame.typ {
-        TYPE_DATA => {
-            if pty_tx
-                .send(PtyCmd::Data(frame.payload.clone()))
-                .await
-                .is_err()
-            {
-                return false;
-            }
-            true
+fn schedule_reap(sessions: SessionRegistry, session: Arc<Session>, generation: u64) {
+    tokio::spawn(async move {
+        tokio::time::sleep(DETACHED_SESSION_TTL).await;
+        if session.should_reap(generation) {
+            sessions.lock().await.remove(&session.token);
+            session.kill();
         }
-        TYPE_RESIZE if frame.payload.len() == 4 => {
-            let cols = u16::from_be_bytes([frame.payload[0], frame.payload[1]]);
-            let rows = u16::from_be_bytes([frame.payload[2], frame.payload[3]]);
-            let _ = pty_tx.send(PtyCmd::Resize(cols.max(1), rows.max(1))).await;
-            true
-        }
-        TYPE_PING => {
-            // Echo the nonce back as PONG, routed through the out channel so
-            // the single writer puts it on the wire.
-            let nonce = decode_nonce(&frame.payload);
-            let _ = pong_tx.send(OutItem::Frame(wire::pong_frame(nonce))).await;
-            true
-        }
-        _ => true, // ignore unknown types (forward compat — PONG, legacy HELLO/WELCOME, etc.)
-    }
-}
-
-fn initial_size_and_pending(first: wire::ParsedFrame) -> (u16, u16, Option<wire::ParsedFrame>) {
-    if first.typ == TYPE_RESIZE && first.payload.len() == 4 {
-        let cols = u16::from_be_bytes([first.payload[0], first.payload[1]]);
-        let rows = u16::from_be_bytes([first.payload[2], first.payload[3]]);
-        (cols.max(1), rows.max(1), None)
-    } else {
-        // Non-conforming/newer/older peers may send something else first. Spawn
-        // at a safe default size, but don't discard real DATA/PING frames.
-        (DEFAULT_COLS, DEFAULT_ROWS, Some(first))
-    }
+    });
 }
 
 /// Read exactly one complete frame, blocking on the stream until one arrives.
@@ -556,9 +777,10 @@ mod tests {
             typ: TYPE_RESIZE,
             payload: vec![0, 0, 0, 0],
         };
-        let (cols, rows, pending) = initial_size_and_pending(frame);
-        assert_eq!((cols, rows), (1, 1));
-        assert!(pending.is_none());
+        let req = initial_request(frame);
+        assert_eq!((req.cols, req.rows), (1, 1));
+        assert!(empty_session_token(&req.requested_token));
+        assert!(req.pending_first.is_none());
     }
 
     #[test]
@@ -567,11 +789,25 @@ mod tests {
             typ: TYPE_DATA,
             payload: b"x".to_vec(),
         };
-        let (cols, rows, pending) = initial_size_and_pending(frame);
-        assert_eq!((cols, rows), (DEFAULT_COLS, DEFAULT_ROWS));
-        let pending = pending.expect("DATA first frame must be replayed");
+        let req = initial_request(frame);
+        assert_eq!((req.cols, req.rows), (DEFAULT_COLS, DEFAULT_ROWS));
+        assert!(empty_session_token(&req.requested_token));
+        let pending = req
+            .pending_first
+            .expect("DATA first frame must be replayed");
         assert_eq!(pending.typ, TYPE_DATA);
         assert_eq!(pending.payload, b"x");
+    }
+
+    #[test]
+    fn attach_first_frame_uses_token_and_size() {
+        let token = [9u8; SESSION_TOKEN_LEN];
+        let mut buf = wire::attach_frame(token, 120, 33);
+        let frame = wire::try_parse_frame(&mut buf).unwrap();
+        let req = initial_request(frame);
+        assert_eq!(req.requested_token, token);
+        assert_eq!((req.cols, req.rows), (120, 33));
+        assert!(req.pending_first.is_none());
     }
 
     // Two concurrent `load_or_create_key` calls on a fresh path must converge

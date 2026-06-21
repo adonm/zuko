@@ -37,18 +37,20 @@ Read [`PROTOCOL.md`](PROTOCOL.md) first — it's short. In brief:
    into an XCFramework (iOS) / AAR (Android); see [`ios/Zuko/`](../ios/Zuko)
    for the reference.
 2. Parse the host's `endpointa…` ticket.
-3. Connect over Iroh on ALPN `zuko/1`, open one bidi stream, and send a
-   `RESIZE` as the **first frame** (carrying your current terminal size). Iroh
-   only surfaces a stream to the peer once the initiator sends data, so that
-   `RESIZE` doubles as the stream-opening write and the entire handshake.
+3. Connect over Iroh on ALPN `zuko/1`, open one bidi stream, and send `ATTACH`
+   as the **first frame** (`[last_token_or_zero][cols][rows]`). Iroh only
+   surfaces a stream to the peer once the initiator sends data, so `ATTACH`
+   doubles as the stream-opening write and the entire handshake. Legacy clients
+   may send first-frame `RESIZE`, but that always starts a fresh PTY.
 4. Pump `[type:u8][len:u16 BE][payload]` frames (`0x00 DATA`, `0x01 RESIZE`)
    between the stream and a terminal emulator: keystrokes → `DATA` → host →
    PTY; PTY output → `DATA` → client → render; window-size changes → `RESIZE`.
-5. End when `recv` closes (host closed the stream → the shell exited) or
-   errors (network drop). Either way, restore the terminal and exit. There's
-   no auto-reconnect and no session resume — the user re-runs the client for
-   a fresh PTY. For long-lived work, run `tmux`/`zellij`/`screen` inside the
-   zuko session.
+5. Store `ATTACHED`'s token. End when `recv` closes (host closed the stream →
+   the shell exited) or errors (network drop). A client may auto-redial
+   transient link errors with the token (the iOS client does); clean EOF should
+   not be retried. The host keeps detached PTYs for a short in-memory lease and
+   discards output while detached. For long-lived work, run
+   `tmux`/`zellij`/`screen` inside the zuko session.
 
 The reference implementations are deliberately small and worth cribbing from:
 
@@ -61,8 +63,8 @@ The host sets `TERM=xterm-256color`, so pick an emulator that speaks it. Gotchas
 that bit the existing clients (so you don't have to):
 
 - The stream **opener must write first** — Iroh only surfaces a stream to the
-  peer once the initiator sends data. Send `RESIZE` (with your size) right
-  after `open_bi`; it's the entire v0.6 handshake.
+  peer once the initiator sends data. Send `ATTACH` (with token + size) right
+  after `open_bi`; it's the whole session handshake.
 - Clamp reported terminal dimensions to at least `1×1` before sending `RESIZE`.
   Terminal APIs can transiently report zero during resize/minimize; forwarding
   that to a PTY confuses fullscreen TUIs.

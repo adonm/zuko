@@ -16,12 +16,12 @@ import UIKit
 //
 // ## The approach
 //
-// Add a tap gesture recognizer to the embedded `UITerminalView`. The
-// handler checks `ghostty_surface_mouse_captured` and bails when the
-// foreground app hasn't enabled mouse tracking — so a shell at a prompt
-// ignores taps entirely (no escape sequences injected as keystrokes).
-// `cancelsTouchesInView = false` lets the existing scroll / pinch /
-// long-press recognizers continue firing alongside us.
+// In keyboard mode the overlay opts out of hit-testing and libghostty keeps
+// its default touch behavior. In tap/cursor mode the overlay captures direct
+// touches before libghostty can focus the terminal and show the keyboard:
+// taps become mouse clicks when the foreground app has enabled mouse capture,
+// and one-finger vertical pans become precision mouse-wheel scroll events for
+// TUI scrollback panes (opencode, zellij, vim, etc.).
 //
 // ## Why reflection
 //
@@ -86,33 +86,73 @@ extension UITerminalView {
         ghostty_surface_mouse_button(raw, GHOSTTY_MOUSE_PRESS, GHOSTTY_MOUSE_LEFT, mods)
         ghostty_surface_mouse_button(raw, GHOSTTY_MOUSE_RELEASE, GHOSTTY_MOUSE_LEFT, mods)
     }
+
+    /// Send a precision wheel-scroll delta at the given terminal point. This
+    /// intentionally does *not* gate on `mouseCaptured`: libghostty decides
+    /// whether the delta scrolls local terminal scrollback or is encoded for
+    /// an alternate-screen app that requested mouse-wheel input.
+    func zuko_sendMouseScroll(at point: CGPoint, delta: CGPoint) {
+        guard let raw = zuko_rawSurface() else { return }
+        let mods = ghostty_input_mods_e(rawValue: 0)
+        let scrollMods = TerminalScrollModifiers(precision: true)
+        ghostty_surface_mouse_pos(raw, Double(point.x), Double(point.y), mods)
+        ghostty_surface_mouse_scroll(
+            raw,
+            Double(delta.x),
+            Double(delta.y),
+            scrollMods.rawValue
+        )
+    }
 }
 
 /// Invisible overlay placed alongside `TerminalSurfaceView` in the
 /// `TerminalScreen` ZStack. On appear it walks the sibling view hierarchy
-/// to find the `UITerminalView` and installs a tap gesture recognizer
-/// on it. The recognizer's handler bails when the foreground app hasn't
-/// enabled mouse capture — so scroll / text-selection recognizers handle
-/// those touches as before.
+/// to find the `UITerminalView`, applies Zuko's input preferences, and
+/// optionally captures taps for mouse-aware TUI apps.
 ///
 /// Implemented as a `UIViewRepresentable` because the gesture needs to be
-/// attached to the embedded `UITerminalView` (a UIKit view), not to a
-/// SwiftUI view — SwiftUI `.onTapGesture` would consume touches before
-/// they reach the terminal and break existing pan/long-press handling.
+/// coordinated with the embedded `UITerminalView` (a UIKit view), not with
+/// a SwiftUI wrapper. In keyboard mode this view opts out of hit-testing so
+/// libghostty keeps its normal scroll / selection / keyboard-focus behavior.
+/// In tap mode it captures touches before the terminal can become first
+/// responder, which keeps the software keyboard hidden.
 struct TouchMouseInput: UIViewRepresentable {
+    let tapModeEnabled: Bool
+    let accessoryKeysVisible: Bool
+
     func makeUIView(context: Context) -> InputView {
-        InputView()
+        InputView(
+            tapModeEnabled: tapModeEnabled,
+            accessoryKeysVisible: accessoryKeysVisible
+        )
     }
 
-    func updateUIView(_ uiView: InputView, context: Context) {}
+    func updateUIView(_ uiView: InputView, context: Context) {
+        uiView.apply(
+            tapModeEnabled: tapModeEnabled,
+            accessoryKeysVisible: accessoryKeysVisible
+        )
+    }
 }
 
 final class InputView: UIView {
-    private var tapGesture: UITapGestureRecognizer?
+    private lazy var tapGesture = UITapGestureRecognizer(
+        target: self,
+        action: #selector(handleTap(_:))
+    )
+    private lazy var panGesture = UIPanGestureRecognizer(
+        target: self,
+        action: #selector(handlePan(_:))
+    )
     private weak var attachedTerminal: UITerminalView?
+    private var tapModeEnabled: Bool
+    private var accessoryKeysVisible: Bool
+    private let touchScrollMultiplier: CGFloat = 3.0
 
-    override init(frame: CGRect) {
-        super.init(frame: frame)
+    init(tapModeEnabled: Bool, accessoryKeysVisible: Bool) {
+        self.tapModeEnabled = tapModeEnabled
+        self.accessoryKeysVisible = accessoryKeysVisible
+        super.init(frame: .zero)
         commonInit()
     }
 
@@ -123,10 +163,15 @@ final class InputView: UIView {
 
     private func commonInit() {
         backgroundColor = .clear
-        // This representable only installs a recognizer on the real
-        // `UITerminalView`; it must not win hit-testing itself, or taps stop
-        // focusing the terminal / showing the software keyboard.
-        isUserInteractionEnabled = false
+        panGesture.allowedTouchTypes = [NSNumber(value: UITouch.TouchType.direct.rawValue)]
+        panGesture.maximumNumberOfTouches = 1
+        addGestureRecognizer(tapGesture)
+        addGestureRecognizer(panGesture)
+        // In keyboard mode this representable must not win hit-testing, or
+        // taps would stop focusing the terminal / showing the software
+        // keyboard. Tap mode flips this on to swallow touches before
+        // libghostty's `touchesBegan` can call `becomeFirstResponder()`.
+        isUserInteractionEnabled = tapModeEnabled
         accessibilityElementsHidden = true
         isAccessibilityElement = false
     }
@@ -136,8 +181,16 @@ final class InputView: UIView {
         tryAttach()
     }
 
+    func apply(tapModeEnabled: Bool, accessoryKeysVisible: Bool) {
+        self.tapModeEnabled = tapModeEnabled
+        self.accessoryKeysVisible = accessoryKeysVisible
+        isUserInteractionEnabled = tapModeEnabled
+        tryAttach()
+        applyInputPreferences()
+    }
+
     private func tryAttach() {
-        guard window != nil, tapGesture == nil else { return }
+        guard window != nil, attachedTerminal == nil else { return }
         // We're a transparent overlay in the same ZStack as
         // TerminalSurfaceView. Walk siblings + descendants to find the
         // UITerminalView that TerminalSurfaceView's representable
@@ -146,16 +199,8 @@ final class InputView: UIView {
         var ancestor: UIView? = superview
         for _ in 0..<6 {
             if let a = ancestor, let terminal = findTerminal(in: a) {
-                let tap = UITapGestureRecognizer(target: self, action: #selector(handleTap(_:)))
-                // Don't cancel sibling recognizers — we want the
-                // existing scroll / pinch / long-press gestures to
-                // keep working. The handler gates on `mouseCaptured`
-                // so we only deliver a click when the TUI app actually
-                // wants one.
-                tap.cancelsTouchesInView = false
-                terminal.addGestureRecognizer(tap)
-                tapGesture = tap
                 attachedTerminal = terminal
+                applyInputPreferences()
                 return
             }
             ancestor = ancestor?.superview
@@ -163,16 +208,64 @@ final class InputView: UIView {
         }
     }
 
+    private func applyInputPreferences() {
+        guard let terminal = attachedTerminal else { return }
+        if tapModeEnabled, terminal.isFirstResponder {
+            terminal.resignFirstResponder()
+        }
+
+        #if !targetEnvironment(macCatalyst)
+            let desiredItems: [TerminalInputAccessoryItem] = accessoryKeysVisible
+                ? TerminalInputAccessoryItem.defaultItems
+                : []
+            if terminal.inputAccessoryItems != desiredItems {
+                terminal.inputAccessoryItems = desiredItems
+            }
+        #endif
+    }
+
     @objc private func handleTap(_ gesture: UITapGestureRecognizer) {
+        guard tapModeEnabled else { return }
         guard let terminal = attachedTerminal,
-              terminal.zuko_mouseCaptured()
+               terminal.zuko_mouseCaptured()
         else { return }
-        // Translate tap location to the terminal's coordinate space.
-        // The recogniser is attached to the terminal itself, so this is
-        // already in its pixels — ghostty converts to cell coords using
-        // the current grid metrics.
+        // Translate tap location to the terminal's coordinate space. The
+        // recognizer is attached to this overlay; UIKit can still report the
+        // same touch in the sibling terminal view's coordinates. Ghostty then
+        // converts pixels → cells using the current grid metrics.
         let location = gesture.location(in: terminal)
         terminal.zuko_sendMouseClick(at: location)
+    }
+
+    @objc private func handlePan(_ gesture: UIPanGestureRecognizer) {
+        guard tapModeEnabled, let terminal = attachedTerminal else { return }
+
+        switch gesture.state {
+        case .began:
+            if terminal.isFirstResponder {
+                terminal.resignFirstResponder()
+            }
+            gesture.setTranslation(.zero, in: self)
+
+        case .changed:
+            let translation = gesture.translation(in: terminal)
+            gesture.setTranslation(.zero, in: terminal)
+            guard abs(translation.y) >= 0.5 || abs(translation.x) >= 0.5 else { return }
+            let location = gesture.location(in: terminal)
+            terminal.zuko_sendMouseScroll(
+                at: location,
+                delta: CGPoint(
+                    x: translation.x * touchScrollMultiplier,
+                    y: translation.y * touchScrollMultiplier
+                )
+            )
+
+        case .cancelled, .failed, .ended:
+            gesture.setTranslation(.zero, in: self)
+
+        default:
+            break
+        }
     }
 
     private func findTerminal(in view: UIView) -> UITerminalView? {
