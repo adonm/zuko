@@ -38,11 +38,6 @@ struct TerminalScreen: View {
             Color.black.ignoresSafeArea()
             TerminalSurfaceView(context: terminalState)
                 .ignoresSafeArea(.container, edges: [.bottom])
-                // Drive the system software keyboard suppression from the
-                // persisted toggle. The modifier walks the view hierarchy
-                // to find the underlying UITerminalView and sets its
-                // inputView; re-evaluates on every SwiftUI update.
-                .terminalKeyboardSuppression(themeStore.compactKeyboard)
 
             if let banner = statusMessage {
                 statusBar(banner)
@@ -55,7 +50,6 @@ struct TerminalScreen: View {
             ToolbarItemGroup(placement: .topBarTrailing) {
                 fontMenu
                 themeMenu
-                keyboardToggleButton
                 Button("Disconnect") {
                     session.disconnect()
                     dismiss()
@@ -176,23 +170,6 @@ struct TerminalScreen: View {
             Image(systemName: "paintpalette")
         }
         .accessibilityLabel("Color theme")
-    }
-
-    /// Toggle the compact-keyboard mode. When on, the system software
-    /// keyboard is suppressed (only the translucent accessory bar shows)
-    /// via the `terminalKeyboardSuppression` modifier on the surface.
-    /// The icon swaps to make the state obvious.
-    private var keyboardToggleButton: some View {
-        Button {
-            themeStore.setCompactKeyboard(!themeStore.compactKeyboard)
-        } label: {
-            Image(systemName: themeStore.compactKeyboard
-                ? "keyboard.chevron.compact.down.fill"
-                : "keyboard.chevron.compact.down")
-        }
-        .accessibilityLabel(themeStore.compactKeyboard
-            ? "Show software keyboard"
-            : "Hide software keyboard (keep accessory bar)")
     }
 
     private var statusMessage: String? {

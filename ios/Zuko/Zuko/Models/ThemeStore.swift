@@ -6,19 +6,15 @@ import Observation
 /// Persists the user's terminal appearance preferences. Backed by UserDefaults
 /// (the values are small primitives — Keychain isn't warranted).
 ///
-/// Three concerns, co-located because they all flow through the same
+/// Two concerns, co-located because they both flow through the same
 /// `TerminalScreen` and are tiny individually:
 /// - `selectedName` — color theme name (nil = libghostty default).
 /// - `fontSize` — terminal body size in pt. Defaults to half of
 ///   libghostty-spm's iOS default of 10 (matches the v0.5 redesign brief).
-/// - `compactKeyboard` — when true, the system software keyboard is
-///   suppressed on the terminal; only the translucent accessory bar
-///   (Esc/Tab/arrows/modifiers/Paste) shows. Doubles screen real estate
-///   for shell work at the cost of arbitrary text input.
 ///
 /// If this grows beyond ~5 properties, split it into `ThemeStore` +
-/// `FontPreferences` + `InputPreferences`. Until then the single object keeps
-/// `TerminalScreen`'s `@Environment` count to one.
+/// `FontPreferences`. Until then the single object keeps `TerminalScreen`'s
+/// `@Environment` count to one.
 ///
 /// Injected at the app root (`ZukoApp`) via `.environment(...)` so the
 /// `TerminalScreen` toolbar picker and any future surfaces stay in sync.
@@ -31,7 +27,6 @@ import Observation
 final class ThemeStore {
     @ObservationIgnored private static let themeKey = "themeName"
     @ObservationIgnored private static let fontSizeKey = "fontSize"
-    @ObservationIgnored private static let compactKeyboardKey = "compactKeyboard"
 
     /// Default font size — half of libghostty-spm's iOS default of 10pt.
     static let defaultFontSize: Float = 5
@@ -69,7 +64,6 @@ final class ThemeStore {
     // Writes go through the setters below, which also persist to UserDefaults.
     private(set) var selectedName: String?
     private(set) var fontSize: Float
-    private(set) var compactKeyboard: Bool
 
     init() {
         selectedName = UserDefaults.standard.string(forKey: Self.themeKey)
@@ -81,7 +75,6 @@ final class ThemeStore {
         // mental model, not "pinch to change my global pref").
         let storedSize = UserDefaults.standard.object(forKey: Self.fontSizeKey) as? Float
         fontSize = (storedSize ?? Self.defaultFontSize).clamped(to: Self.minFontSize ... Self.maxFontSize)
-        compactKeyboard = UserDefaults.standard.bool(forKey: Self.compactKeyboardKey)
     }
 
     /// Update the theme selection. `nil` restores libghostty-spm's default
@@ -102,13 +95,6 @@ final class ThemeStore {
         guard fontSize != clamped else { return }
         fontSize = clamped
         UserDefaults.standard.set(clamped, forKey: Self.fontSizeKey)
-    }
-
-    /// Update the compact-keyboard toggle. Persisted synchronously.
-    func setCompactKeyboard(_ on: Bool) {
-        guard compactKeyboard != on else { return }
-        compactKeyboard = on
-        UserDefaults.standard.set(on, forKey: Self.compactKeyboardKey)
     }
 
     /// The live `TerminalTheme` to hand to `TerminalController.setTheme`.
