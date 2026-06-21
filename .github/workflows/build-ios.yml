@@ -89,9 +89,20 @@ jobs:
           rm darwin-x86_64.xtoolsdk.tar.gz
           ls -la "${{ runner.temp }}/darwin-x86_64.xtoolsdk"
 
-      - name: Install .xtoolsdk into xtool
+      - name: Install .xtoolsdk into SwiftPM
+        # xtool 1.17.0's `sdk install` doesn't recognize the `.xtoolsdk`
+        # shortcut (added post-release on main HEAD) — it tries to interpret
+        # the bundle as an Xcode.app dir and fails looking for Contents/Developer.
+        # The underlying command xtool invokes is `swift sdk install`, which
+        # works directly against an artifactbundle. Bypass the xtool wrapper
+        # until we bump to a release that supports `.xtoolsdk` natively.
+        # Idempotent — `swift sdk install` skips if the same bundle is already
+        # registered.
         run: |
-          xtool sdk install "${{ runner.temp }}/darwin-x86_64.xtoolsdk"
+          set -e
+          # brew's swift puts the toolchain at /home/linuxbrew/.linuxbrew/bin.
+          eval "$(brew shellenv)"
+          swift sdk install "${{ runner.temp }}/darwin-x86_64.xtoolsdk"
           xtool sdk status
 
       # Build the Rust staticlib into ZukoRust.xcframework + regenerate the
