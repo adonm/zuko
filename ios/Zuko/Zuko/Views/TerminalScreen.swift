@@ -47,17 +47,66 @@ struct TerminalScreen: View {
         .navigationTitle(connection.label)
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
+            // Refresh stays as a top-level icon — it's the one users reach
+            // for mid-session (after a garbled reconnect, etc.). Font and
+            // theme are set-once-and-forget, so they fold into a single
+            // overflow Menu with Disconnect (destructive, lives behind a
+            // tap to avoid accidental hits). Two trailing items instead of
+            // four keeps the inline nav title from getting squeezed on
+            // iPhone.
             ToolbarItemGroup(placement: .topBarTrailing) {
-                fontMenu
-                themeMenu
                 refreshButton
-                Button {
-                    session.disconnect()
-                    dismiss()
+                Menu {
+                    Menu("Font size") {
+                        Button("A−  smaller") {
+                            themeStore.setFontSize(themeStore.fontSize - 1)
+                        }
+                        Text("\(Int(themeStore.fontSize.rounded())) pt")
+                        Button("A+  larger") {
+                            themeStore.setFontSize(themeStore.fontSize + 1)
+                        }
+                        Divider()
+                        Button("Reset to \(Int(ThemeStore.defaultFontSize)) pt") {
+                            themeStore.setFontSize(ThemeStore.defaultFontSize)
+                        }
+                    }
+                    Menu("Color theme") {
+                        Section("Popular") {
+                            ForEach(themeStore.popularThemes) { theme in
+                                Button {
+                                    themeStore.setTheme(theme.name)
+                                } label: {
+                                    if themeStore.selectedName == theme.name {
+                                        Label(theme.name, systemImage: "checkmark")
+                                    } else {
+                                        Text(theme.name)
+                                    }
+                                }
+                            }
+                        }
+                        Button {
+                            themeStore.setTheme(nil)
+                        } label: {
+                            if themeStore.selectedName == nil {
+                                Label("Default (Afterglow / Alabaster)", systemImage: "checkmark")
+                            } else {
+                                Text("Default (Afterglow / Alabaster)")
+                            }
+                        }
+                        Divider()
+                        Button("Browse all (\(GhosttyThemeCatalog.allThemes.count))…") {
+                            showingThemeBrowser = true
+                        }
+                    }
+                    Divider()
+                    Button("Disconnect", role: .destructive) {
+                        session.disconnect()
+                        dismiss()
+                    }
                 } label: {
-                    Image(systemName: "xmark.circle")
+                    Image(systemName: "ellipsis.circle")
                 }
-                .accessibilityLabel("Disconnect")
+                .accessibilityLabel("Appearance and session")
             }
         }
         .sheet(isPresented: $showingThemeBrowser) {
@@ -104,71 +153,6 @@ struct TerminalScreen: View {
             $0.withFontSize(size)
         }
         terminalState.setTerminalConfiguration(config)
-    }
-
-    /// Type-size Menu: A− / A+ / reset, plus the live value. Stepper would
-    /// also work but Buttons give bigger tap targets and the menu closes
-    /// after each tap (acceptable — coarse adjustment; pinch-to-zoom covers
-    /// fine adjustment on the surface itself).
-    private var fontMenu: some View {
-        Menu {
-            Section("Font size") {
-                Button("A−  smaller") {
-                    themeStore.setFontSize(themeStore.fontSize - 1)
-                }
-                Text("\(Int(themeStore.fontSize.rounded())) pt")
-                Button("A+  larger") {
-                    themeStore.setFontSize(themeStore.fontSize + 1)
-                }
-            }
-            Section {
-                Button("Reset to \(Int(ThemeStore.defaultFontSize)) pt") {
-                    themeStore.setFontSize(ThemeStore.defaultFontSize)
-                }
-            }
-        } label: {
-            Image(systemName: "textformat")
-        }
-        .accessibilityLabel("Font size")
-    }
-
-    /// Palette-button dropdown for quick theme switching. Popular section +
-    /// "Browse all…" (opens the searchable sheet with the full 485 catalog).
-    /// Tap-to-apply; `.onChange(of: themeStore.selectedName)` above pushes
-    /// the new theme to the terminal surface immediately.
-    private var themeMenu: some View {
-        Menu {
-            Section("Popular") {
-                ForEach(themeStore.popularThemes) { theme in
-                    Button {
-                        themeStore.setTheme(theme.name)
-                    } label: {
-                        if themeStore.selectedName == theme.name {
-                            Label(theme.name, systemImage: "checkmark")
-                        } else {
-                            Text(theme.name)
-                        }
-                    }
-                }
-            }
-            Section {
-                Button {
-                    themeStore.setTheme(nil)
-                } label: {
-                    if themeStore.selectedName == nil {
-                        Label("Default (Afterglow / Alabaster)", systemImage: "checkmark")
-                    } else {
-                        Text("Default (Afterglow / Alabaster)")
-                    }
-                }
-            }
-            Button("Browse all (\(GhosttyThemeCatalog.allThemes.count))…") {
-                showingThemeBrowser = true
-            }
-        } label: {
-            Image(systemName: "paintpalette")
-        }
-        .accessibilityLabel("Color theme")
     }
 
     /// Force-clear the local surface and trigger a redraw on the host. Use

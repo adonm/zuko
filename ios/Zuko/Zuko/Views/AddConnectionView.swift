@@ -47,11 +47,11 @@ struct AddConnectionView: View {
                     Text("Pairing code")
                 } footer: {
                     VStack(alignment: .leading, spacing: 4) {
-                        Text("On the host:")
+                        Text("On the host, run:")
                             .font(.caption).fontWeight(.semibold)
                         Text(HostSetup.shareCommand)
                             .font(.system(.caption, design: .monospaced))
-                        Text("Reads the code aloud, then type it here. The host's real ticket arrives over an end-to-end-encrypted Iroh stream — it never touches the clipboard.")
+                        Text("Type the code here. The host's real ticket arrives over an E2E-encrypted Iroh stream — it never touches the clipboard.")
                             .padding(.top, 2)
                     }
                 }

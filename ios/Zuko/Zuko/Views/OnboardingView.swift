@@ -74,23 +74,19 @@ struct OnboardingView: View {
             VStack(alignment: .leading, spacing: 8) {
                 tip(
                     icon: "magnifyingglass.circle",
-                    "Pinch the terminal to zoom font size live — coarse adjustment without leaving the session."
+                    "Pinch to zoom font size live."
                 )
                 tip(
                     icon: "arrow.clockwise",
-                    "Tap the refresh icon in the top bar to clear and redraw the screen — handy after a reconnect that garbles a fullscreen app like `btop` or `vim`."
+                    "Refresh icon clears + redraws the screen (handy after a reconnect)."
                 )
                 tip(
-                    icon: "arrow.uturn.left.circle",
-                    "Force-quit or background the app any time — the host keeps your session alive and resumes it (with recent output) on next connect."
+                    icon: "rectangle.split.2x1",
+                    "Run `tmux` or `zellij` on the host for sessions that survive disconnects — zuko itself starts a fresh PTY per connect."
                 )
                 tip(
                     icon: "paintpalette",
-                    "Tap the palette icon in the top bar for quick theme switching (Dracula, Catppuccin, Nord, …) or \"Browse all\" for the full 485-theme catalog with live preview."
-                )
-                tip(
-                    icon: "textformat",
-                    "Tap the Aa icon to grow or shrink the default font size. Persists across sessions."
+                    "Appearance menu (•••) has themes (Dracula, Nord, …) and font size."
                 )
             }
         }
