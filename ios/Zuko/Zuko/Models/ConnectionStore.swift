@@ -1,20 +1,28 @@
 import Foundation
 import IrohLib
+import Observation
 import os
 
 /// Persists the user's saved connections in the iOS Keychain (see
 /// [`ConnectionKeychain`]). Keeps the most recent `maxConnections` so the list
 /// stays tidy.
+///
+/// Uses the Swift 5.9+ `@Observable` macro (iOS 17+) — `connections` is the
+/// only UI-facing state. Internal state (UserDefaults handle, logger, max
+/// count) is marked `@ObservationIgnored` so writes to it don't notify, and
+/// reads of e.g. `logger` from within a view body don't subscribe the view
+/// to irrelevant changes.
 @MainActor
-final class ConnectionStore: ObservableObject {
-    @Published private(set) var connections: [Connection] = []
+@Observable
+final class ConnectionStore {
+    private(set) var connections: [Connection] = []
 
     /// `UserDefaults` key for a pre-Keychain build. Read once on load to
     /// migrate existing users; never written.
-    private static let legacyStorageKey = "dev.adonm.zuko.connections.v1"
-    private static let maxConnections = 12
-    private let defaults: UserDefaults
-    private let logger = Logger(subsystem: "dev.adonm.zuko", category: "ConnectionStore")
+    @ObservationIgnored private static let legacyStorageKey = "dev.adonm.zuko.connections.v1"
+    @ObservationIgnored private static let maxConnections = 12
+    @ObservationIgnored private let defaults: UserDefaults
+    @ObservationIgnored private let logger = Logger(subsystem: "dev.adonm.zuko", category: "ConnectionStore")
 
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults

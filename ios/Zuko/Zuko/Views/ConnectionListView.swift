@@ -3,7 +3,7 @@ import SwiftUI
 /// Main screen. When there are no saved connections it shows the onboarding
 /// (the host setup commands); otherwise it lists saved connections.
 struct ConnectionListView: View {
-    @EnvironmentObject private var store: ConnectionStore
+    @Environment(ConnectionStore.self) private var store
     @State private var presentingAdd = false
     @State private var showingOnboarding = false
 
@@ -115,6 +115,6 @@ struct OnboardingSheet: View {
 #if canImport(PreviewsMacros)
 #Preview {
     ConnectionListView()
-        .environmentObject(ConnectionStore())
+        .environment(ConnectionStore())
 }
 #endif

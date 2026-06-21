@@ -201,9 +201,10 @@ Reference code:
 - **Swift:** [`ios/Zuko/Zuko/Net/Wire.swift`](../ios/Zuko/Zuko/Net/Wire.swift),
   [`ios/Zuko/Zuko/Net/IrohSession.swift`](../ios/Zuko/Zuko/Net/IrohSession.swift).
 
-If your client needs a terminal emulator, [SwiftTerm](https://github.com/migueldeicaza/SwiftTerm)
-is used on iOS; on Linux, [alacritty_terminal](https://crates.io/crates/alacritty_terminal)
-or [vte](https://crates.io/crates/vte) are good choices. The host sends bytes
+If your client needs a terminal emulator, [GhosttyTerminal](https://github.com/Lakr233/libghostty-spm)
+is used on iOS (host-managed I/O backend — no PTY spawn); on Linux,
+[alacritty_terminal](https://crates.io/crates/alacritty_terminal) or
+[vte](https://crates.io/crates/vte) are good choices. The host sends bytes
 compatible with `TERM=xterm-256color`.
 
 ## Design notes
@@ -244,7 +245,7 @@ they flush on reconnect.
 
 mosh runs the terminal emulator on the server so it can send screen *state* on
 resume. zuko replays raw *bytes* from the ring buffer instead — simpler, and
-keeps the client's terminal emulator (SwiftTerm, your local terminal) as the
+keeps the client's terminal emulator (GhosttyTerminal, your local terminal) as the
 single source of rendering truth. The trade-off: a resume into a full-screen
 app may briefly show a mid-redraw screen, fixed by re-sending the size
 (→ `SIGWINCH` → redraw). Line-oriented output replays cleanly (the snapshot

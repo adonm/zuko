@@ -158,8 +158,7 @@ pub async fn connect(ticket_str: &str) -> Result<()> {
                             continue;
                         }
                         let within_window = prev_at
-                            .map(|p| now.duration_since(p) <= FORCE_QUIT_WINDOW)
-                            .unwrap_or(false);
+                            .is_some_and(|p| now.duration_since(p) <= FORCE_QUIT_WINDOW);
                         let output_unchanged = cur_seq == prev_at_seq;
                         burst = advance_burst(burst, within_window, output_unchanged);
                         prev_at = Some(now);
@@ -205,29 +204,23 @@ pub async fn connect(ticket_str: &str) -> Result<()> {
     // run the session until the read half ends, then either stop (shell exited)
     // or back off and reconnect (resume).
     let result: Result<()> = loop {
-        let conn = match endpoint.connect(addr.clone(), ALPN).await {
-            Ok(c) => c,
-            Err(_) => {
-                status_line(&format!(
-                    "can't reach host, retrying in {:.1}s…",
-                    backoff.as_secs_f64()
-                ));
-                tokio::time::sleep(backoff).await;
-                backoff = (backoff * 2).min(BACKOFF_MAX);
-                continue;
-            }
+        let Ok(conn) = endpoint.connect(addr.clone(), ALPN).await else {
+            status_line(&format!(
+                "can't reach host, retrying in {:.1}s…",
+                backoff.as_secs_f64()
+            ));
+            tokio::time::sleep(backoff).await;
+            backoff = (backoff * 2).min(BACKOFF_MAX);
+            continue;
         };
-        let (mut send, recv) = match conn.open_bi().await {
-            Ok(bi) => bi,
-            Err(_) => {
-                status_line(&format!(
-                    "stream open failed, retrying in {:.1}s…",
-                    backoff.as_secs_f64()
-                ));
-                tokio::time::sleep(backoff).await;
-                backoff = (backoff * 2).min(BACKOFF_MAX);
-                continue;
-            }
+        let Ok((mut send, recv)) = conn.open_bi().await else {
+            status_line(&format!(
+                "stream open failed, retrying in {:.1}s…",
+                backoff.as_secs_f64()
+            ));
+            tokio::time::sleep(backoff).await;
+            backoff = (backoff * 2).min(BACKOFF_MAX);
+            continue;
         };
 
         // Handshake: HELLO (caps + current size + session id) then a RESIZE.
@@ -270,7 +263,7 @@ pub async fn connect(ticket_str: &str) -> Result<()> {
             loop {
                 tokio::select! {
                     biased;
-                    _ = writer_stop_for_writer.notified() => break,
+                    () = writer_stop_for_writer.notified() => break,
                     frame = frame_rx.recv() => {
                         let Some(frame) = frame else { break; };
                         if send.write_all(&frame).await.is_err() {
@@ -288,15 +281,12 @@ pub async fn connect(ticket_str: &str) -> Result<()> {
         // A legacy host (v0.3) that doesn't speak HELLO would never send one;
         // we'd time out via the read erroring. Detect that: a non-WELCOME first
         // frame or an early EOF bails and we reconnect.
-        let (welcome, mut acc, recv) = match read_welcome(recv).await {
-            Ok(triple) => triple,
-            Err(_) => {
-                status_line("host didn't send WELCOME (legacy peer?) — reconnecting…");
-                writer.await.ok();
-                tokio::time::sleep(backoff).await;
-                backoff = (backoff * 2).min(BACKOFF_MAX);
-                continue;
-            }
+        let Ok((welcome, mut acc, recv)) = read_welcome(recv).await else {
+            status_line("host didn't send WELCOME (legacy peer?) — reconnecting…");
+            writer.await.ok();
+            tokio::time::sleep(backoff).await;
+            backoff = (backoff * 2).min(BACKOFF_MAX);
+            continue;
         };
         if let Some(id) = welcome.session_id {
             session_id = Some(id);
@@ -413,7 +403,6 @@ pub async fn connect(ticket_str: &str) -> Result<()> {
             ReadEnd::Disconnected => {
                 status_line("reconnecting…");
                 stop.store(false, Ordering::Relaxed);
-                continue;
             }
         }
     };
@@ -427,7 +416,7 @@ pub async fn connect(ticket_str: &str) -> Result<()> {
     // Force exit: the stdin reader thread is blocked on a blocking read and
     // would otherwise keep the process alive past the session end. The
     // RawModeGuard has already restored the terminal.
-    std::process::exit(if result.is_ok() { 0 } else { 1 });
+    std::process::exit(i32::from(result.is_err()));
 }
 
 /// Read the WELCOME frame (the host's first frame), returning it, the
@@ -463,10 +452,10 @@ impl Drop for RawModeGuard {
     }
 }
 
-fn pack_size(cols: u16, rows: u16) -> u32 {
+const fn pack_size(cols: u16, rows: u16) -> u32 {
     ((cols as u32) << 16) | (rows as u32)
 }
-fn unpack_size(packed: u32) -> (u16, u16) {
+const fn unpack_size(packed: u32) -> (u16, u16) {
     ((packed >> 16) as u16, (packed & 0xFFFF) as u16)
 }
 
@@ -486,7 +475,7 @@ fn status_line(msg: &str) {
 /// Ctrl-C was within `FORCE_QUIT_WINDOW`; `output_unchanged` should be true
 /// iff no `DATA` frame has been written to stdout since the previous Ctrl-C.
 /// Extracted as a free function so the rule is unit-testable without I/O.
-fn advance_burst(prev_burst: u32, within_window: bool, output_unchanged: bool) -> u32 {
+const fn advance_burst(prev_burst: u32, within_window: bool, output_unchanged: bool) -> u32 {
     if within_window && output_unchanged {
         prev_burst.saturating_add(1)
     } else {

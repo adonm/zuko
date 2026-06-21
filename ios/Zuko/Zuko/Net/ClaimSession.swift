@@ -1,5 +1,6 @@
 import Foundation
 import IrohLib
+import Observation
 import ZukoFFI
 
 /// Errors from the ticket-handoff claim flow. Surfaced to the UI as the
@@ -41,15 +42,16 @@ enum ClaimError: LocalizedError {
 ///    missing close made `share` hang for the whole session).
 ///
 /// All async work runs off the main actor; the UI drives it via `Task` and
-/// observes the `@Published` `status`.
+/// observes the `status` property (Swift 5.9+ `@Observable` macro).
 @MainActor
-final class ClaimSession: ObservableObject {
+@Observable
+final class ClaimSession {
     /// ALPN for the throwaway handoff endpoint (distinct from the terminal `zuko/1`).
-    static let alpn = Data("zuko/handoff/1".utf8)
+    @ObservationIgnored static let alpn = Data("zuko/handoff/1".utf8)
     /// Cap a handoff payload so a misbehaving peer can't make us allocate forever.
-    static let maxPayload = 8 * 1024
+    @ObservationIgnored static let maxPayload = 8 * 1024
 
-    @Published private(set) var status: ClaimStatus = .idle
+    private(set) var status: ClaimStatus = .idle
 
     /// Drive a claim. Returns the claimed `(label, ticket)` on success so the
     /// caller can save it. The session status transitions through
@@ -165,7 +167,7 @@ final class ClaimSession: ObservableObject {
                 return try await endpoint.connect(addr: addr, alpn: alpn)
             } catch {
                 lastError = error
-                try? await Task.sleep(nanoseconds: 2_000_000_000)
+                try? await Task.sleep(for: .seconds(2))
             }
         }
         throw ClaimError.dialFailed(

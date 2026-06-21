@@ -191,9 +191,7 @@ fn resolve_self_exe() -> Result<PathBuf> {
 }
 
 fn home_dir() -> PathBuf {
-    std::env::var_os("HOME")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("."))
+    std::env::var_os("HOME").map_or_else(|| PathBuf::from("."), PathBuf::from)
 }
 
 /// Write the `zuko-host-run` wrapper. 0755 (it carries no secret — the secret
@@ -255,8 +253,8 @@ enum Service {
 impl std::fmt::Display for Service {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(match self {
-            Service::Systemd => "systemd",
-            Service::Launchd => "launchd",
+            Self::Systemd => "systemd",
+            Self::Launchd => "launchd",
         })
     }
 }
@@ -519,7 +517,7 @@ mod tests {
             )
             .unwrap();
             let mode = std::fs::metadata(&wrapper).unwrap().permissions().mode();
-            assert_eq!(mode & 0o777, 0o755, "wrapper must be 0755, got {:o}", mode);
+            assert_eq!(mode & 0o777, 0o755, "wrapper must be 0755, got {mode:o}");
         }
     }
 

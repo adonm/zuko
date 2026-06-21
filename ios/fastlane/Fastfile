@@ -57,10 +57,11 @@ platform :ios do
     #
     # The override is applied to the Zuko TARGET ONLY, not via xcargs. Setting
     # CODE_SIGN_STYLE / PROVISIONING_PROFILE project-wide (the only scope
-    # xcargs supports) propagates to SwiftPM dependency targets like SwiftTerm,
-    # which doesn't support provisioning profiles and errors out with
-    # "SwiftTerm_SwiftTerm does not support provisioning profiles". The
-    # `xcodeproj` gem ships with fastlane, so no extra dependency.
+    # xcargs supports) propagates to SwiftPM dependency targets like
+    # libghostty-spm, which doesn't support provisioning profiles and errors
+    # out with "GhosttyTerminal_GhosttyTerminal does not support provisioning
+    # profiles". The `xcodeproj` gem ships with fastlane, so no extra
+    # dependency.
     if ENV["APP_PROFILE_UUID"]
       UI.message("CI: switching Zuko target to manual signing (profile UUID #{ENV.fetch('APP_PROFILE_UUID')})")
       require "xcodeproj"

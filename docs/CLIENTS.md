@@ -10,7 +10,7 @@ frame types.
 | Client | Status | Stack | Source |
 |--------|--------|-------|--------|
 | **CLI** | shipped | Rust + [crossterm](https://crates.io/crates/crossterm) | [`src/`](../src) — `zuko connect` (part of the `zuko` binary) |
-| **iOS** | shipped | Swift + [SwiftTerm](https://github.com/migueldeicaza/SwiftTerm) + [IrohLib](https://github.com/n0-computer/iroh-ffi) | [`ios/Zuko/`](../ios/Zuko) |
+| **iOS** | shipped | Swift + [GhosttyTerminal](https://github.com/Lakr233/libghostty-spm) + [IrohLib](https://github.com/n0-computer/iroh-ffi) | [`ios/Zuko/`](../ios/Zuko) |
 | Android | planned | Kotlin/Rust via the crate's [uniffi](https://mozilla.github.io/uniffi.rs/) FFI surface | — |
 | Linux GUI | planned | Rust + [relm4](https://relm4.org/) | — |
 | Web | idea | — | — |

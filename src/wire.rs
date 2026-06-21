@@ -208,7 +208,7 @@ impl Welcome {
         Ok(Self { flags, session_id })
     }
 
-    pub fn resumed(&self) -> bool {
+    pub const fn resumed(&self) -> bool {
         self.flags & FLAG_RESUMED != 0
     }
 }
@@ -296,9 +296,9 @@ mod tests {
             rows: 50,
             session_id: None,
         };
-        let f = h.frame();
+        let mut f = h.frame();
         assert_eq!(f[0], TYPE_HELLO);
-        let parsed = Hello::decode(&parse_one(&mut f.clone()).unwrap().payload).unwrap();
+        let parsed = Hello::decode(&parse_one(&mut f).unwrap().payload).unwrap();
         assert_eq!(parsed.flags, h.flags);
         assert_eq!(parsed.cols, 200);
         assert_eq!(parsed.rows, 50);
@@ -361,15 +361,15 @@ mod tests {
 
     #[test]
     fn ping_pong_nonce_round_trip() {
-        let mut buf = ping_frame(0xDEADBEEFCAFEBABE);
+        let mut buf = ping_frame(0xDEAD_BEEF_CAFE_BABE);
         let f = try_parse_frame(&mut buf).unwrap();
         assert_eq!(f.typ, TYPE_PING);
-        assert_eq!(decode_nonce(&f.payload), 0xDEADBEEFCAFEBABE);
+        assert_eq!(decode_nonce(&f.payload), 0xDEAD_BEEF_CAFE_BABE);
 
-        let mut buf = pong_frame(0x0102030405060708);
+        let mut buf = pong_frame(0x0102_0304_0506_0708);
         let f = try_parse_frame(&mut buf).unwrap();
         assert_eq!(f.typ, TYPE_PONG);
-        assert_eq!(decode_nonce(&f.payload), 0x0102030405060708);
+        assert_eq!(decode_nonce(&f.payload), 0x0102_0304_0506_0708);
 
         // Empty-nonce pings are valid (degrade to 0).
         assert_eq!(decode_nonce(&[]), 0);

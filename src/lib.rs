@@ -57,9 +57,7 @@ pub fn config_dir() -> PathBuf {
     if let Some(xdg) = std::env::var_os("XDG_CONFIG_HOME") {
         return PathBuf::from(xdg);
     }
-    let mut h = std::env::var_os("HOME")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("."));
+    let mut h = std::env::var_os("HOME").map_or_else(|| PathBuf::from("."), PathBuf::from);
     h.push(".config");
     h
 }

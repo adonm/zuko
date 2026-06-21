@@ -291,7 +291,7 @@ async fn bare_zuko_menu() -> Result<()> {
     // Interactive TTY with 2+ hosts: arrow-key picker with type-to-filter.
     match Select::new("Select a host to connect:", saved).prompt() {
         Ok(name) => connect_by_name(&name).await,
-        Err(InquireError::OperationCanceled) | Err(InquireError::OperationInterrupted) => {
+        Err(InquireError::OperationCanceled | InquireError::OperationInterrupted) => {
             eprintln!("cancelled");
             Ok(())
         }

@@ -79,7 +79,7 @@ const RING_BUFFER_BYTES: usize = 1024 * 1024;
 /// (sessions live forever — see [`spawn_reaper`]) the sweep's only job is to
 /// catch shell-exited sessions that [`serve`] somehow didn't clean up itself
 /// (defensive; cheap).
-const REAPER_INTERVAL: std::time::Duration = std::time::Duration::from_secs(60);
+const REAPER_INTERVAL: std::time::Duration = std::time::Duration::from_mins(1);
 
 /// Heartbeat interval. The host sends a PING every interval; a PONG (or any
 /// frame) resets the client's stall timer. iroh's QUIC keepalive (5 s) already
@@ -203,22 +203,19 @@ pub async fn run(args: HostArgs) -> Result<()> {
     // Accept connections forever. Each connection attaches to a session (new
     // or resumed); the session persists after the connection ends.
     loop {
-        match endpoint.accept().await {
-            Some(incoming) => {
-                let shell = shell.clone();
-                let shell_args = args.shell_args.clone();
-                let cwd = args.cwd.clone();
-                let sessions = sessions.clone();
-                tokio::spawn(async move {
-                    if let Err(e) = serve(incoming, shell, shell_args, cwd, sessions).await {
-                        warn!("connection ended: {e:#}");
-                    }
-                });
-            }
-            None => {
-                info!("endpoint stopped accepting");
-                break;
-            }
+        if let Some(incoming) = endpoint.accept().await {
+            let shell = shell.clone();
+            let shell_args = args.shell_args.clone();
+            let cwd = args.cwd.clone();
+            let sessions = sessions.clone();
+            tokio::spawn(async move {
+                if let Err(e) = serve(incoming, shell, shell_args, cwd, sessions).await {
+                    warn!("connection ended: {e:#}");
+                }
+            });
+        } else {
+            info!("endpoint stopped accepting");
+            break;
         }
     }
     // Best-effort: remove the control socket so a stale path doesn't sit at
@@ -286,7 +283,7 @@ impl Session {
         cwd: Option<PathBuf>,
         cols: u16,
         rows: u16,
-    ) -> Result<Arc<Session>> {
+    ) -> Result<Arc<Self>> {
         // Mint the session id up front so we can expose it to the spawned shell
         // via `$ZUKO_SESSION_ID` — `zuko reap` reads this to spare the session
         // it's running in. `rand::random` gives 8 fresh bytes.
@@ -400,13 +397,11 @@ impl Session {
                                 .expect("attached_tx lock poisoned");
                             guard.clone()
                         };
-                        if let Some(tx) = tx {
-                            if tx.blocking_send(OutItem::Pty(chunk)).is_err() {
-                                if let Ok(mut g) = attached_for_reader.lock() {
+                        if let Some(tx) = tx
+                            && tx.blocking_send(OutItem::Pty(chunk)).is_err()
+                                && let Ok(mut g) = attached_for_reader.lock() {
                                     *g = None;
                                 }
-                            }
-                        }
                         // No tx: chunk is dropped (ring has it). The reader
                         // keeps running — that's the whole point of detach.
                     }
@@ -419,7 +414,7 @@ impl Session {
             exited_notify_for_reader.notify_one();
         });
 
-        Ok(Arc::new(Session {
+        Ok(Arc::new(Self {
             id,
             pty_tx,
             ring,
@@ -503,8 +498,7 @@ impl RingBuffer {
         let start = guard
             .iter()
             .position(|&b| b == b'\n')
-            .map(|i| i + 1)
-            .unwrap_or(0);
+            .map_or(0, |i| i + 1);
         guard.iter().copied().skip(start).collect()
     }
 }
@@ -614,7 +608,7 @@ async fn serve(
         loop {
             tokio::select! {
                 biased;
-                _ = exited_notify.notified() => {
+                () = exited_notify.notified() => {
                     // Shell exited: flush any buffered output, then close.
                     while let Ok(item) = out_rx.try_recv() {
                         let frame = match item {
@@ -666,8 +660,8 @@ async fn serve(
             }
             match recv.read(&mut tmp).await {
                 Ok(Some(n)) => acc.extend_from_slice(&tmp[..n]),
-                Ok(None) => return ConnEnd::Detached, // client closed send half / dropped
-                Err(_) => return ConnEnd::Detached,
+                // Client closed send half / dropped / errored: same outcome.
+                Ok(None) | Err(_) => return ConnEnd::Detached,
             }
         }
     });
@@ -731,6 +725,17 @@ async fn handle_client_frame(
 ) -> bool {
     match frame.typ {
         TYPE_DATA => {
+            // Verbose byte trace for input diagnostics. Enable with
+            // RUST_LOG=zuko=debug. Reads as: byte values in hex, ASCII in
+            // brackets where printable. Lets us verify LF→CR normalisation
+            // on the client and diagnose any other input quirks without
+            // needing to instrument the iOS side.
+            tracing::debug!(
+                target: "zuko::host::input",
+                bytes = ?frame.payload.iter().map(|b| format!("{:02x}", b)).collect::<Vec<_>>(),
+                ascii = %String::from_utf8_lossy(&frame.payload),
+                "client DATA frame"
+            );
             if pty_tx
                 .send(PtyCmd::Data(frame.payload.clone()))
                 .await
@@ -841,12 +846,11 @@ fn spawn_control_listener(sessions: SessionRegistry) {
         // Stale socket from a previous crashed host — otherwise `bind` fails
         // with EADDRINUSE and the operator's `zuko reap` can never connect.
         let _ = std::fs::remove_file(&path);
-        if let Some(parent) = path.parent() {
-            if let Err(e) = std::fs::create_dir_all(parent) {
+        if let Some(parent) = path.parent()
+            && let Err(e) = std::fs::create_dir_all(parent) {
                 warn!("control socket: mkdir {}: {e:#}", parent.display());
                 return;
             }
-        }
         let listener = match std::os::unix::net::UnixListener::bind(&path) {
             Ok(l) => l,
             Err(e) => {
@@ -947,7 +951,7 @@ fn reap_idle(
             // An exited session is always a candidate regardless of activity —
             // it's already dead, just hasn't been cleaned up yet.
             let exited = session.exited.load(std::sync::atomic::Ordering::Relaxed);
-            let idle_too_long = session.idle().map(|d| d > threshold).unwrap_or(false);
+            let idle_too_long = session.idle().is_some_and(|d| d > threshold);
             if exited || idle_too_long {
                 to_reap.push(*id);
             }
@@ -1068,13 +1072,15 @@ mod tests {
         // race — either way, all callers must observe the same 32 bytes.
         const N: usize = 8;
         let path = std::sync::Arc::new(path);
-        let handles: Vec<_> = (0..N)
+        let keys: Vec<[u8; 32]> = (0..N)
             .map(|_| {
                 let p = std::sync::Arc::clone(&path);
                 std::thread::spawn(move || load_or_create_key(&p).unwrap().to_bytes())
             })
+            .collect::<Vec<_>>()
+            .into_iter()
+            .map(|h| h.join().unwrap())
             .collect();
-        let keys: Vec<[u8; 32]> = handles.into_iter().map(|h| h.join().unwrap()).collect();
 
         // Every observed key must be identical.
         let first = keys[0];
@@ -1107,8 +1113,7 @@ mod tests {
         assert_eq!(
             perms & 0o777,
             0o600,
-            "key file must be 0600, got {:o}",
-            perms
+            "key file must be 0600, got {perms:o}"
         );
     }
 
