@@ -76,13 +76,16 @@ final class ClaimSession: ObservableObject {
         let secret = try SecretKey.fromBytes(bytes: seed)
         let nodeId = secret.public()
 
-        // 3. Bind an endpoint with the derived secret key + the handoff ALPN.
-        //    The secret key identifies us as the throwaway endpoint derived
-        //    from the code; the ALPN keeps the handoff off the terminal path.
+        // 3. Bind a *fresh* endpoint with a random identity. The derived seed
+        //    is only used to compute the NodeId we dial — we must NOT bind with
+        //    it, or we'd advertise the same NodeId as the host's `share`
+        //    endpoint. Two endpoints with the same id on the same relay get
+        //    "Another endpoint connected with the same endpoint id" and the
+        //    relay silently drops the second one's traffic. (Matches the CLI's
+        //    `handoff.rs::claim`, which binds a keyless `presets::N0` endpoint.)
+        //    No ALPNs either: claimer is a pure dialer, never an accepter.
         let endpoint = try await Endpoint.bind(options: EndpointOptions(
-            preset: presetN0(),
-            secretKey: seed,
-            alpns: [Self.alpn]
+            preset: presetN0()
         ))
         await endpoint.online()
 

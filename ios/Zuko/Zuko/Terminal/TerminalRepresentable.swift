@@ -35,7 +35,8 @@ struct TerminalRepresentable: UIViewRepresentable {
         coordinator.terminal = nil
     }
 
-    final class Coordinator: NSObject, TerminalViewDelegate {
+    @MainActor
+    final class Coordinator: NSObject, @preconcurrency TerminalViewDelegate {
         weak var session: IrohSession?
         weak var terminal: TerminalView?
 
@@ -49,21 +50,18 @@ struct TerminalRepresentable: UIViewRepresentable {
         // MARK: - TerminalViewDelegate
 
         func send(source: TerminalView, data: ArraySlice<UInt8>) {
-            // SwiftTerm invokes delegate methods on the main thread; the session
-            // is MainActor-isolated, so assert the actor and forward synchronously.
-            MainActor.assumeIsolated {
-                // Keystroke / paste from the user -> host.
-                session?.enqueueData(Data(data))
-            }
+            // SwiftTerm invokes delegate methods on the main thread; the
+            // Coordinator is @MainActor-isolated (matching SwiftTerm's main-
+            // thread contract), so this is a direct synchronous forward.
+            // Keystroke / paste from the user -> host.
+            session?.enqueueData(Data(data))
         }
 
         func sizeChanged(source: TerminalView, newCols: Int, newRows: Int) {
-            MainActor.assumeIsolated {
-                session?.enqueueResize(
-                    cols: UInt16(clamping: newCols),
-                    rows: UInt16(clamping: newRows)
-                )
-            }
+            session?.enqueueResize(
+                cols: UInt16(clamping: newCols),
+                rows: UInt16(clamping: newRows)
+            )
         }
 
         func setTerminalTitle(source: TerminalView, title: String) {}

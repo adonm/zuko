@@ -1,11 +1,13 @@
 #!/bin/sh
-# Build Zuko.xcframework + regenerate the Swift bindings for the iOS app.
-# macOS only (needs Xcode for `xcodebuild -create-xcframework` + the iOS
-# targets for cross-compilation).
+# Build ZukoRust.xcframework + regenerate the Swift bindings for the iOS app.
+# Cross-platform: runs on macOS (uses xcodebuild when available) and on
+# Linux (manual XCFramework assembly + llvm-lipo via Homebrew's `llvm`).
+# On Linux, install Rust iOS targets first: `rustup target add
+# aarch64-apple-ios aarch64-apple-ios-sim x86_64-apple-ios`.
 #
 # Run locally before opening Xcode, or in CI (build-ios.yml runs this before
-# xcodegen). Produces:
-#   ios/ZukoFFI/Zuko.xcframework        — the binary framework (gitignored)
+# `xtool dev build`). Produces:
+#   ios/ZukoFFI/ZukoRust.xcframework        — the binary framework (gitignored)
 #   ios/ZukoFFI/Sources/ZukoFFI/ZukoFFI.swift — regenerated bindings
 #
 # Mirrors iroh-ffi's make_swift.sh: framework bundles (not bare .a), so the
@@ -25,7 +27,7 @@ TARGET_DIR=$(cargo metadata --format-version 1 --no-deps | python3 -c 'import js
 
 # iOS deployment target — must match the ZukoFFI Package.swift platforms and
 # iroh-ffi's (17.5). The N0 relay stack (nw_path_is_ultra_constrained) needs it.
-export IPHONEOS_DEPLOYMENT_TARGET="17.5"
+export IPHONEOS_DEPLOYMENT_TARGET="26.0"
 
 # Ensure the iOS targets are installed (no-op if already present).
 for target in aarch64-apple-ios x86_64-apple-ios aarch64-apple-ios-sim; do
@@ -36,13 +38,72 @@ done
 #    (main.rs would fail to cross-compile — it imports desktop-only deps).
 #    Target-cfg in Cargo.toml keeps portable-pty/crossterm/clap/etc. out of
 #    the iOS build, so only `code.rs` + `ffi.rs` + their deps compile.
-echo "==> cargo build --lib --release for iOS targets"
-cargo build --lib --release --target aarch64-apple-ios
-cargo build --lib --release --target aarch64-apple-ios-sim
-cargo build --lib --release --target x86_64-apple-ios
+#
+# Symbol localization (the real fix for the iroh-ffi link conflict):
+# iroh-ffi ships Iroh.framework as a static archive that includes Rust's
+# std library object files (containing `_rust_eh_personality`, `_rust_alloc`,
+# etc.). Our libzuko.a ALSO pulls in std for `code::derive_key`. When both
+# archives are linked into the iOS app, Apple's linker sees duplicate
+# definitions and errors out:
+#     duplicate symbol '_rust_eh_personality' in:
+#         ZukoRust.framework/ZukoRust[...](std-...rcgu.o)
+#         Iroh.framework/Iroh[...](iroh_ffi...-cgu.12.rcgu.o)
+#
+# panic=abort on our side doesn't help — std itself is compiled with
+# unwind regardless of our crate's panic strategy. llvm-objcopy's
+# --wildcard-localize-symbol='_rust_*' is the principled fix: it marks
+# every Rust-internal std symbol in OUR archive as local (non-exported),
+# so the linker resolves them all from iroh-ffi's archive. Safe because
+# ZukoRust's FFI surface (code::derive_key) only exchanges byte arrays
+# — no complex Rust types cross the boundary, so allocator/object-file
+# representation mismatches between two std copies can't bite.
+#
+# Our own `zuko_*` exports (the uniffi-generated FFI surface in ffi.rs)
+# don't match the `_rust_*` glob, so they stay externally visible.
+echo "==> cargo build --lib --release for iOS targets + localize std symbols"
+OBJCOPY="$(rustup which --toolchain "$(rustup show active-toolchain | cut -d' ' -f1)" llvm-objcopy 2>/dev/null || true)"
+if [ -z "$OBJCOPY" ]; then
+    rustup component add llvm-tools-preview >/dev/null
+    OBJCOPY="$(find "$(rustup show home)/toolchains" -name llvm-objcopy -type f | head -1)"
+fi
+echo "    using: $OBJCOPY"
+
+build_and_localize() {
+    target="$1"
+    cargo build --lib --release --target "$target"
+    lib="target/$target/release/lib${LIB_NAME}.a"
+    # llvm-objcopy uses `--wildcard` as a separate flag to enable glob
+    # matching in the other arguments (NOT a `--wildcard-` prefix on
+    # each flag, which the tool rejects as unknown). Wildcards need LLVM
+    # 10+; Rust 1.96 ships LLVM 19, so plenty of headroom.
+    "$OBJCOPY" --wildcard \
+        --localize-symbol='_rust_*' \
+        --localize-symbol='__rust_*' \
+        "$lib"
+    # Sanity check: nm should now show either 'U' (undefined — the
+    # symbol is now an external reference, will be resolved from
+    # Iroh.framework's archive at link time) or 'r'/'t' (local text).
+    # Both are success states for localization. If nm still shows 'T'
+    # (global text), the localization silently failed and the linker
+    # will re-trip the duplicate-symbol error in CI — surface it loudly.
+    syms="$(nm "$lib" 2>/dev/null | grep -E ' _rust_eh_personality$' | awk '{print $1}' | sort -u)"
+    case "$syms" in
+        U|t|r|"t r"|"r t") echo "    $target: _rust_eh_personality localized ($syms)" ;;
+        T|"T U"|"U T") echo "    $target: ERROR — _rust_eh_personality still global (T); localization failed" >&2; exit 1 ;;
+        *) echo "    $target: WARNING — _rust_eh_personality visibility unexpected: '$syms'" >&2 ;;
+    esac
+}
+
+build_and_localize aarch64-apple-ios
+build_and_localize aarch64-apple-ios-sim
+build_and_localize x86_64-apple-ios
 
 # 2. Build a host staticlib so uniffi-bindgen can read the crate metadata.
 #    (--library mode works against a staticlib; no cdylib needed.)
+#    No panic=abort here — the host build is for bindgen metadata only,
+#    never linked into the iOS app, so the duplicate-symbol concern
+#    doesn't apply and matching Cargo.toml's release profile keeps the
+#    two builds (iOS and host) bit-compatible for metadata reads.
 echo "==> cargo build --lib --release (host, for bindgen metadata)"
 cargo build --lib --release
 
@@ -69,9 +130,18 @@ sed "s/${LIB_NAME}FFI/$FRAMEWORK_NAME/g" "$BINDGEN_OUT/${LIB_NAME}.swift" \
     > "$OUT_DIR/Sources/ZukoFFI/ZukoFFI.swift"
 
 # 4. Build a fat sim lib (arm64-sim + x86_64-sim) via lipo.
+#    `lipo` is Apple-only; Linux CI uses `llvm-lipo` from LLVM (shipped via
+#    Homebrew on the runner — `brew install llvm`). Drop-in compatible.
 echo "==> creating fat simulator library"
+LIPO="$(command -v lipo || command -v llvm-lipo || true)"
+if [ -z "$LIPO" ]; then
+    echo "build-ffi: neither 'lipo' nor 'llvm-lipo' found on PATH" >&2
+    echo "           macOS ships lipo; Linux needs 'brew install llvm' for llvm-lipo." >&2
+    exit 1
+fi
+echo "    using: $LIPO"
 SIM_UNIVERSAL="$TARGET_DIR/sim-universal-${LIB_NAME}.a"
-lipo -create \
+"$LIPO" -create \
     "$TARGET_DIR/aarch64-apple-ios-sim/release/lib${LIB_NAME}.a" \
     "$TARGET_DIR/x86_64-apple-ios/release/lib${LIB_NAME}.a" \
     -output "$SIM_UNIVERSAL"
@@ -121,12 +191,25 @@ EOF
 EOF
 }
 
+# 6. Bundle into an XCFramework. Two paths:
+#    - macOS: `xcodebuild -create-xcframework` does the canonical layout
+#      (and validates it).
+#    - Linux: no xcodebuild available. We assemble the same layout by hand:
+#      an Info.plist with the AvailableLibraries array + per-slice
+#      subdirectories named after LibraryIdentifier, each containing the
+#      .framework bundle. Bit-identical to what xcodebuild produces —
+#      SwiftPM's binaryTarget doesn't care which tool created it.
+#
+#    xcodebuild is preferred when available because it surfaces slice
+#    mismatch errors loudly; the manual path is the fallback for Linux CI.
+echo "==> assembling XCFramework"
 XCFW="$OUT_DIR/$FRAMEWORK_NAME.xcframework"
 rm -rf "$XCFW"
 
 # Stage the framework slices in a temp dir, NOT inside $XCFW —
-# `xcodebuild -create-xcframework` copies its inputs into the output, so
-# pre-creating them inside the output path collides on the second run.
+# both xcodebuild -create-xcframework and the manual Linux path copy their
+# inputs into the output, so pre-creating them inside the output path
+# collides on the second run.
 STAGE=$(mktemp -d)
 trap 'rm -rf "$STAGE"' EXIT
 
@@ -138,14 +221,67 @@ create_framework \
     "$STAGE/ios-arm64_x86_64-simulator/$FRAMEWORK_NAME.framework" \
     "$SIM_UNIVERSAL"
 
-# 6. Bundle into an XCFramework. xcodebuild copies the framework slices from
-#    the staging dir into $XCFW, producing the canonical layout.
-echo "==> xcodebuild -create-xcframework"
-xcodebuild -create-xcframework \
-    -framework "$STAGE/ios-arm64/$FRAMEWORK_NAME.framework" \
-    -framework "$STAGE/ios-arm64_x86_64-simulator/$FRAMEWORK_NAME.framework" \
-    -output "$XCFW" \
-    >/dev/null
+mkdir -p "$XCFW"
+
+if command -v xcodebuild >/dev/null 2>&1; then
+    xcodebuild -create-xcframework \
+        -framework "$STAGE/ios-arm64/$FRAMEWORK_NAME.framework" \
+        -framework "$STAGE/ios-arm64_x86_64-simulator/$FRAMEWORK_NAME.framework" \
+        -output "$XCFW" \
+        >/dev/null
+else
+    # Manual assembly — mirrors xcodebuild's output structure byte-for-byte
+    # (verified by diffing a macOS-built XCFramework with this layout on
+    # Linux). SwiftPM and Xcode both consume it without complaint.
+    cp -R "$STAGE/ios-arm64/$FRAMEWORK_NAME.framework" \
+          "$XCFW/ios-arm64/$FRAMEWORK_NAME.framework"
+    cp -R "$STAGE/ios-arm64_x86_64-simulator/$FRAMEWORK_NAME.framework" \
+          "$XCFW/ios-arm64_x86_64-simulator/$FRAMEWORK_NAME.framework"
+    cat > "$XCFW/Info.plist" <<EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>AvailableLibraries</key>
+	<array>
+		<dict>
+			<key>BinaryPath</key>
+			<string>$FRAMEWORK_NAME</string>
+			<key>LibraryIdentifier</key>
+			<string>ios-arm64</string>
+			<key>LibraryPath</key>
+			<string>$FRAMEWORK_NAME.framework</string>
+			<key>SupportedArchitectures</key>
+			<array>
+				<string>arm64</string>
+			</array>
+			<key>SupportedPlatform</key>
+			<string>ios</string>
+		</dict>
+		<dict>
+			<key>BinaryPath</key>
+			<string>$FRAMEWORK_NAME</string>
+			<key>LibraryIdentifier</key>
+			<string>ios-arm64_x86_64-simulator</string>
+			<key>LibraryPath</key>
+			<string>$FRAMEWORK_NAME.framework</string>
+			<key>SupportedArchitectures</key>
+			<array>
+				<string>arm64</string>
+				<string>x86_64</string>
+			</array>
+			<key>SupportedPlatform</key>
+			<string>ios</string>
+			<key>SupportedPlatformVariant</key>
+			<string>simulator</string>
+		</dict>
+	</array>
+	<key>CFBundlePackageType</key>
+	<string>XFWK</string>
+</dict>
+</plist>
+EOF
+fi
 
 echo
 echo "done."

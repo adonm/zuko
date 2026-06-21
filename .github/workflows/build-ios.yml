@@ -9,9 +9,22 @@ on:
 jobs:
   build:
     name: Build iOS app (simulator)
-    runs-on: macos-15
+    # macos-latest (currently macos-15) — the *Xcode* version is what we
+    # care about, and the explicit "Select newest Xcode" step below pins
+    # that, so the runner macOS version is just the host OS for brew +
+    # xcodebuild. Tracking macos-latest keeps us off stale runner images
+    # without changing which Xcode we build with.
+    runs-on: macos-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
+
+      # Fast lint pass — fails in seconds on style/correctness issues, before
+      # the ~10 min FFI compile + xcodebuild. SwiftLint is on Homebrew, so the
+      # install is ~5 s on the macOS runner.
+      - name: SwiftLint
+        run: |
+          brew install swiftlint >/dev/null
+          swiftlint --config .swiftlint.yml ios/Zuko --reporter github-actions-logging
 
       - name: Select newest Xcode (full iOS platform)
         run: |
@@ -21,34 +34,71 @@ jobs:
           xcodebuild -version
 
       - name: mise install (rust)
-        uses: jdx/mise-action@v2
+        uses: jdx/mise-action@v4
         with:
           cache: true
 
-      - name: Install iOS tooling (xcodegen via mise/brew)
-        run: mise run setup-ios
+      # Cache cargo's registry + per-target `target/` dirs. `mise cache:true`
+      # only caches the toolchain install (the rustup download); without this,
+      # every run recompiles every Rust dep from scratch for all four iOS
+      # targets the FFI script builds — ~10 min of pure recompute that hasn't
+      # changed since the last run. The key namespaces by workflow so the
+      # simulator-only build doesn't collide with release-ios's device+sim
+      # FFI slices (which are built with the same code but different intents).
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ios-sim
 
-      # Build the Rust staticlib into a Zuko.xcframework + regenerate the
-      # Swift bindings. The iOS app's project.yml references the local
-      # ZukoFFI package (../ZukoFFI), which expects Zuko.xcframework to
-      # exist at resolve time — so this must run before `xcodegen`.
-      - name: Build Zuko.xcframework (Rust FFI for iOS)
+      - name: Install iOS tooling (xcodegen + fastlane via mise/brew; xtool via setup-xtool)
+        # xtool drives the build now (replaces xcodegen + xcodebuild for the
+        # smoke build). xcodegen + fastlane stay installed because release-ios
+        # still uses them — `mise run setup-ios` is the canonical "everything
+        # iOS" task, `mise run setup-xtool` layers xtool on top.
+        run: |
+          mise run setup-ios
+          mise run setup-xtool
+
+      # Build the Rust staticlib into a ZukoRust.xcframework + regenerate the
+      # Swift bindings. The Package.swift references the local ZukoFFI
+      # package, which expects ZukoRust.xcframework to exist at SwiftPM
+      # resolve time — so this must run before `xtool dev build`.
+      - name: Build ZukoRust.xcframework (Rust FFI for iOS)
         run: sh scripts/build-ffi.sh
 
-      - name: Generate + resolve + build
+      # Resolve the same version env release-ios uses so the simulator
+      # .app's CFBundleShortVersionString matches Cargo.toml. Lets us
+      # verify the version is correctly threaded before cutting a release
+      # — without it, only the TestFlight upload enforces sync.
+      - name: Resolve version env
+        run: |
+          echo "ZUKO_VERSION=$(sh scripts/version.sh)" >> "$GITHUB_ENV"
+          echo "ZUKO_BUILD_NUMBER=$(date -u +%s)" >> "$GITHUB_ENV"
+
+      # `mise run build-ios` now drives xtool (see mise.toml). The task:
+      #   1. Patches Info.plist with the resolved version (xtool has no
+      #      xcargs equivalent).
+      #   2. Runs `xtool dev build --configuration debug` (builds Zuko.app).
+      #   3. Restores Info.plist placeholders (clean working tree).
+      #   4. Patches embedded frameworks' MinimumOSVersion (the iroh-ffi
+      #      packaging bug the legacy postBuildScripts step fixed inline).
+      - name: xtool build
+        env:
+          ZUKO_VERSION: ${{ env.ZUKO_VERSION }}
+          ZUKO_BUILD_NUMBER: ${{ env.ZUKO_BUILD_NUMBER }}
         run: mise run build-ios
 
       - name: Locate .app
         id: app
-        working-directory: ios/Zuko
+        working-directory: ios
         run: |
-          # Absolute path — upload-artifact resolves paths from the repo root.
-          app="$(find "$(pwd)/build/Build/Products" -name 'Zuko.app' -type d | head -1)"
+          # xtool emits Zuko.app somewhere under .build/ or the working
+          # dir (path varies — find by name is the most stable contract).
+          app="$(find "$(pwd)" -name 'Zuko.app' -type d -not -path '*/.build/checkouts/*' | head -1)"
           echo "path=$app" >> "$GITHUB_OUTPUT"
           echo "Found $app"
 
       - name: Upload app
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: Zuko-app
           path: ${{ steps.app.outputs.path }}

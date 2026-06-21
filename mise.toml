@@ -12,12 +12,21 @@
 # 'minimal' profile, and `Swatinem/rust-cache` can restore a toolchain without
 # them — see the matching `rustup component add` step in the workflows).
 rust = { version = "latest", components = "clippy,rustfmt" }
+# SwiftLint for the iOS app. Installed + shimmed by mise on Linux (static
+# binary from realm/SwiftLint releases) and macOS. `mise run lint` uses it.
+swiftlint = "latest"
 
 # System-level deps used by builds. `mise bootstrap packages install` installs
 # only the ones for the current OS/package manager. Just the linux/arm64
 # cross-compiler here (used by the release workflow).
 [bootstrap.packages]
 "apt:gcc-aarch64-linux-gnu" = "latest" # cross linker for aarch64-unknown-linux-gnu
+# Swift toolchain for local xtool/iOS work. Lives in bootstrap (not [tools])
+# because (a) Homebrew's `swift` formula is the only reliable Linux install
+# path on Bluefin, and (b) it's ~1.5 GB — opting in via `mise bootstrap`
+# keeps it off Rust-only contributors who never touch the iOS app. Anyone
+# iterating on ios/ runs `mise bootstrap packages install --yes` once.
+"brew:swift" = "latest"
 
 [settings]
 # `mise bootstrap` (used for [bootstrap.packages]) is still experimental.
@@ -48,17 +57,86 @@ description = "Build Zuko.xcframework + regenerate the Swift bindings for the iO
 run = "sh scripts/build-ffi.sh"
 
 [tasks.build-ios]
-description = "Generate the Xcode project and build the iOS app (iOS Simulator, unsigned). macOS only. Run `setup-ios` + `build-ffi` first."
-dir = "ios/Zuko"
-run = [
-    "xcodegen generate",
-    "xcodebuild -resolvePackageDependencies -project Zuko.xcodeproj -scheme Zuko",
-    "xcodebuild build -project Zuko.xcodeproj -scheme Zuko -destination 'generic/platform=iOS Simulator' -derivedDataPath build CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO",
-]
+description = "Generate the iOS app via xtool (Package.swift + xtool.yml). macOS only for now — Linux needs a one-time `xtool sdk install` of a Darwin artifactbundle (see scripts/patch-iroh-framework.sh + ios/xtool.yml). Run `setup-xtool` + `build-ffi` first."
+dir = "ios"
+# xtool replaces xcodegen + xcodebuild. Two scripts bracket the build:
+#   1. patch-ios-plist.sh — bakes MARKETING_VERSION (from Cargo.toml via
+#      scripts/version.sh) + CURRENT_PROJECT_VERSION (from $ZUKO_BUILD_NUMBER,
+#      default "1") into the Info.plist, because xtool has no `xcargs`
+#      equivalent for build-setting substitution.
+#   2. patch-iroh-framework.sh — adds MinimumOSVersion to embedded
+#      frameworks that ship without it (the iroh-ffi packaging bug the
+#      legacy postBuildScripts step patched inline). Runs after the build
+#      against the .app xtool emitted.
+#
+# The .app/.ipa path xtool emits is unstable (it includes a timestamp);
+# the simplest reliable way to find it is the Wrote: line xtool prints
+# at the end. We let xtool manage the path and patch in place via find.
+run = """
+v="${ZUKO_VERSION:-$(sh "$(git rev-parse --show-toplevel)/scripts/version.sh")}"
+b="${ZUKO_BUILD_NUMBER:-1}"
+export ZUKO_BUILD_NUMBER="$b"
+echo "Building Zuko $v (build $b) for iOS via xtool"
+sh "$(git rev-parse --show-toplevel)/scripts/patch-ios-plist.sh"
+
+# xtool dev build emits either an .app (default) or a .ipa (--ipa). For the
+# smoke build we want the .app so we can patch embedded frameworks in place
+# before any packaging. xtool prints `Wrote to /path/Zuko.app` on success.
+xtool dev build --configuration debug
+
+# Restore the Info.plist placeholders so the working tree stays clean for
+# the next `xcodebuild` path (or a re-run with different version env).
+git -C "$(git rev-parse --show-toplevel)" checkout -- ios/Zuko/Zuko/Info.plist
+
+# Patch iroh-ffi + any other binary framework missing MinimumOSVersion.
+# xtool's build output dir varies; find the freshest Zuko.app.
+app="$(find . -name 'Zuko.app' -type d -print 2>/dev/null | head -1)"
+if [ -z "$app" ]; then
+    echo "build-ios: couldn't locate Zuko.app in xtool output" >&2
+    exit 1
+fi
+IPHONEOS_DEPLOYMENT_TARGET="26.0" sh "$(git rev-parse --show-toplevel)/scripts/patch-iroh-framework.sh" "$app"
+echo "Built + patched: $app"
+"""
 
 [tasks.setup-ios]
 description = "Install iOS tooling (xcodegen, fastlane) via Homebrew. macOS only."
 run = "brew install xcodegen fastlane"
+
+[tasks.setup-xtool]
+description = "Install xtool (cross-platform Xcode replacement). macOS: via the xtool-org Homebrew tap. Linux: the AppImage from GitHub releases. Pairs with `mise bootstrap packages install --yes` on Linux (which installs swift via Homebrew)."
+run = """
+case "$(uname -s)" in
+    Darwin)
+        brew install xtool-org/tap/xtool
+        ;;
+    Linux)
+        mkdir -p "$HOME/.local/bin"
+        curl -fL "https://github.com/xtool-org/xtool/releases/latest/download/xtool-$(uname -m).AppImage" \
+            -o "$HOME/.local/bin/xtool"
+        chmod +x "$HOME/.local/bin/xtool"
+        ;;
+    *)
+        echo "setup-xtool: unsupported OS $(uname -s)" >&2
+        exit 2
+        ;;
+esac
+xtool --version
+"""
+
+[tasks.lint]
+description = "Run SwiftLint on the iOS Swift sources. Works on Linux (swiftlint-static, no SourceKit needed) and macOS (swiftlint from brew/mise). `mise install` brings the tool."
+run = """
+if command -v swiftlint-static >/dev/null 2>&1; then
+    swiftlint-static --config .swiftlint.yml ios/Zuko
+else
+    swiftlint --config .swiftlint.yml ios/Zuko
+fi
+"""
+
+[tasks.setup-ios-signing]
+description = "One-time Apple signing setup for the iOS TestFlight pipeline. Generates cert+profile material, walks you through the developer-portal dance, and pushes the 7 GH Actions secrets via `gh`. No Mac needed. See ios/DISTRIBUTION.md."
+run = "sh scripts/setup-ios-signing.sh"
 
 [tasks.run-host]
 description = "Run `zuko host` in the foreground (mise shim or local debug build)"
