@@ -35,9 +35,7 @@ experimental = true
 [env]
 CARGO_TERM_COLOR = "always"
 
-# --- tasks (shared by local dev and CI) ---
-
-[tasks.build]
+# --- tasks (shared by local dev and CI) ---[tasks.build]
 description = "Build the zuko release binary (native target)"
 run = "cargo build --release"
 
@@ -145,3 +143,143 @@ run = "sh scripts/zuko-host.sh"
 [tasks.release]
 description = "Cut a release: commit pending work, push, tag vX.Y.Z, push tag (triggers release.yml). Pass the version, e.g. `mise run release v0.1.0`."
 run = "sh scripts/release.sh ${@}"
+
+# ──────────────────────────── hooks ─────────────────────────────────
+# See https://mise.jdx.dev/hooks.html. All hooks fire only when
+# `mise activate` is set up in the user's shell — they're no-ops
+# otherwise (CI included, which is fine: CI runs tasks explicitly).
+#
+# Design:
+#   - `enter` is a one-shot status snapshot (cheap, no builds).
+#   - `watch_files` runs *fast* checks on save: cargo fmt + clippy
+#     (Rust), swiftlint (Swift). Output is short — keeps the editor
+#     pane readable.
+#   - The slow check (full xtool iOS build) is gated to manifest /
+#     config file changes only, so it doesn't fire on every keystroke.
+#     Triggers `mise run preflight`, which is the same path CI runs.
+
+[hooks.enter]
+# Run once when entering the project. Quick environment snapshot only —
+# no builds, no tests, no network. Surfaces:
+#   - rust toolchain version (always)
+#   - swift + xtool versions (if present; iOS dev is opt-in)
+#   - whether the .xtoolsdk is installed (on Linux; gates xtool dev build)
+# The goal is a glance-able status line so you immediately know if
+# something's off before you start a build.
+run = """
+echo "zuko dev env:"
+echo "  rust:   $(cargo --version 2>/dev/null || echo 'missing — run mise install')"
+if command -v xtool >/dev/null 2>&1; then
+    echo "  xtool:  $(xtool --version 2>/dev/null)"
+fi
+if command -v swift >/dev/null 2>&1; then
+    echo "  swift:  $(swift --version 2>/dev/null | head -1)"
+    # xtool sdk status returns nonzero if no SDK is installed; guard with ||.
+    if xtool sdk status >/dev/null 2>&1; then
+        echo "  ios SDK: $(xtool sdk status 2>&1 | head -1)"
+    else
+        echo "  ios SDK: not installed (run 'mise run setup-xtool' on macOS,"
+        echo "           or 'xtool sdk install <bundle>' on Linux)"
+    fi
+fi
+"""
+
+# ────────────── watch_files: fast checks on every save ──────────────
+
+[[watch_files]]
+# cargo fmt is instant and runs unconditionally on every Rust save.
+# Auto-fixes in place; noisy diffs print to the editor pane so you see
+# what changed.
+patterns = ["src/**/*.rs", "tests/**/*.rs", "uniffi-bindgen.rs"]
+run = "cargo fmt"
+
+[[watch_files]]
+# `cargo check` is what we'd actually want here (faster than clippy for
+# save-time feedback), but it doesn't auto-fix. Clippy does lint-grade
+# analysis with decent incremental speed; the watch_files output
+# surfaces warnings without aborting the editor session.
+patterns = ["src/**/*.rs", "Cargo.toml", "Cargo.lock"]
+run = "cargo clippy --quiet --message-format=short 2>&1 | tail -5"
+
+[[watch_files]]
+# SwiftLint is the iOS-side equivalent of cargo clippy — fast, no build.
+# Runs against the same config CI uses (.swiftlint.yml), so warnings
+# match what PR check will flag.
+patterns = ["ios/Zuko/Zuko/**/*.swift", ".swiftlint.yml"]
+run = """
+if command -v swiftlint >/dev/null 2>&1; then
+    swiftlint --config .swiftlint.yml ios/Zuko --quiet
+else
+    echo "(swiftlint not installed — run 'mise install')"
+fi
+"""
+
+# ───── watch_files: slow checks gated to manifest / config files ─────
+
+[[watch_files]]
+# xtool iOS build is ~2-3 min, far too slow for per-keystroke. Gate it
+# to the small set of files that *change the build configuration*:
+# Package.swift (dependencies, products), xtool.yml (bundle ID, custom
+# plist path), Info.plist (version sync), Cargo.toml (iOS staticlib
+# behavior). Source-level Swift changes get the fast swiftlint hook
+# above instead.
+#
+# Wraps `mise run build-ios` so the validation path is identical to CI
+# — if CI is going to fail, this hook surfaces it locally first.
+# Silent skip if xtool isn't installed (Linux without iOS dev setup,
+# or a rust-only contributor's machine).
+patterns = [
+    "ios/Package.swift",
+    "ios/xtool.yml",
+    "ios/Zuko/Zuko/Info.plist",
+    "Cargo.toml",
+]
+run = """
+if ! command -v xtool >/dev/null 2>&1; then
+    echo "(xtool not installed — skipping iOS build validation)"
+    exit 0
+fi
+if ! xtool sdk status >/dev/null 2>&1; then
+    echo "(iOS SDK not installed — skipping iOS build validation)"
+    echo " on macOS: run 'mise run setup-xtool' then 'xtool setup'"
+    echo " on Linux: see .github/workflows/bootstrap-xtoolsdk.yml"
+    exit 0
+fi
+echo "==> iOS build config changed; running xtool build validation..."
+mise run build-ios 2>&1 | tail -20
+"""
+
+# ──────────────────── explicit check / preflight tasks ──────────────
+# These don't auto-run; they're what you call before `git push` to
+# mirror what CI is going to do. `check` is the fast subset (~10s);
+# `preflight` is everything CI runs including the iOS build (~3 min).
+
+[tasks.check]
+description = "Fast pre-push checks: cargo fmt --check + clippy + tests + swiftlint. ~10-30s. Mirrors what the build.yml job runs."
+run = [
+    "cargo fmt --check",
+    "cargo clippy --all-targets -- -D warnings",
+    "cargo test",
+    """
+if command -v swiftlint >/dev/null 2>&1; then
+    swiftlint --config .swiftlint.yml ios/Zuko --strict
+else
+    echo "(skipping swiftlint — not installed)"
+fi
+""",
+]
+
+[tasks.preflight]
+description = "Full local CI mirror: 'mise run check' + 'mise run build-ios' (xtool build). ~3 min. Run before pushing if you've touched iOS code."
+depends = ["check"]
+run = """
+if ! command -v xtool >/dev/null 2>&1; then
+    echo "preflight: xtool not installed — skipping iOS build (run 'mise run setup-xtool' to enable)"
+    exit 0
+fi
+if ! xtool sdk status >/dev/null 2>&1; then
+    echo "preflight: iOS SDK not installed — skipping iOS build"
+    exit 0
+fi
+mise run build-ios
+"""
