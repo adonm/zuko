@@ -101,10 +101,7 @@ pub fn reap(min_idle_secs: u64, skip: Option<SessionId>) -> Result<Vec<String>> 
     stream.set_read_timeout(Some(timeout)).ok();
     stream.set_write_timeout(Some(timeout)).ok();
 
-    let skip_hex = match skip {
-        Some(id) => hex_id(&id),
-        None => "none".to_string(),
-    };
+    let skip_hex = skip.map_or_else(|| "none".to_string(), |id| hex_id(&id));
     let req = format!("REAP {min_idle_secs} {skip_hex}\n");
     stream
         .write_all(req.as_bytes())

@@ -67,7 +67,7 @@ const MAX_HANDOFF_PAYLOAD: usize = 8 * 1024;
 /// one prompt, then we wait for the ticket the freshly-started host writes.
 /// Non-interactive invocations (scripts, CI) get the original error so they
 /// fail loudly instead of hanging on a prompt.
-async fn ensure_current_ticket() -> Result<String> {
+fn ensure_current_ticket() -> Result<String> {
     match read_current_ticket() {
         Ok(ticket) => Ok(ticket),
         Err(read_err) => {
@@ -88,8 +88,8 @@ async fn ensure_current_ticket() -> Result<String> {
             .prompt();
             let accepted = match install {
                 Ok(yes) => yes,
-                Err(inquire::InquireError::OperationCanceled)
-                | Err(inquire::InquireError::OperationInterrupted) => false,
+                Err(inquire::InquireError::OperationCanceled |
+inquire::InquireError::OperationInterrupted) => false,
                 Err(e) => {
                     // Picker infra itself failed (rare). Surface and bail
                     // rather than guessing intent.
@@ -103,7 +103,7 @@ async fn ensure_current_ticket() -> Result<String> {
             // takes a few seconds to bind + write current_ticket.
             crate::service::install(&crate::service::InstallArgs::default())
                 .context("install host service")?;
-            wait_for_current_ticket(Duration::from_secs(60))
+            wait_for_current_ticket(Duration::from_mins(1))
                 .context("host service was installed but didn't produce a ticket in time")
         }
     }
@@ -125,7 +125,7 @@ pub async fn share(args: &ShareArgs) -> Result<()> {
 
     let ticket = match &args.ticket {
         Some(t) => t.trim().to_string(),
-        None => ensure_current_ticket().await?,
+        None => ensure_current_ticket()?,
     };
     let label_owned = args.label.clone().unwrap_or_else(default_label);
     let label = sanitize_label(&label_owned);
@@ -210,10 +210,10 @@ enum AcceptOutcome {
 /// means wait forever (until the endpoint closes or Ctrl-C).
 async fn accept_with_timeout(endpoint: &Endpoint, timeout_secs: u64) -> Result<AcceptOutcome> {
     if timeout_secs == 0 {
-        return Ok(match endpoint.accept().await {
-            Some(i) => AcceptOutcome::Incoming(Box::new(i)),
-            None => AcceptOutcome::Closed,
-        });
+        return Ok(endpoint.accept().await.map_or_else(
+            || AcceptOutcome::Closed,
+            |i| AcceptOutcome::Incoming(Box::new(i)),
+        ));
     }
     match tokio::time::timeout(Duration::from_secs(timeout_secs), endpoint.accept()).await {
         Ok(Some(i)) => Ok(AcceptOutcome::Incoming(Box::new(i))),

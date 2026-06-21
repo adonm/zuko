@@ -56,8 +56,8 @@ frame format. See [`docs/CLIENTS.md`](docs/CLIENTS.md) for the full list and
 
 | Client | Status | Stack | Source |
 |--------|--------|-------|--------|
-| **CLI** | shipped | Rust + crossterm | the `zuko` binary (`zuko connect`) |
-| **iOS** | shipped | Swift + SwiftTerm + IrohLib | [`ios/Zuko/`](ios/Zuko) |
+| **CLI** | shipped | Rust 2024 edition + crossterm | the `zuko` binary (`zuko connect`) |
+| **iOS** | shipped | Swift 6.2 + [GhosttyTerminal](https://github.com/Lakr233/libghostty-spm) + IrohLib | [`ios/Zuko/`](ios/Zuko) |
 | Android | planned | — | — |
 | Linux GUI (relm4) | planned | — | — |
 
@@ -144,7 +144,7 @@ capability flags, the ticket-handoff ALPN) is in
 | `src/`, `Cargo.toml` | The `zuko` crate — library + binary + uniffi staticlib. Binary covers host (`zuko host`), CLI client (`zuko connect`/`share`/`claim`), and service installer. `src/ffi.rs` exposes the Argon2id code-derivation for mobile clients. |
 | `tests/e2e.rs` | End-to-end PTY harness — spawns host + client, exercises `share`→`claim` over the live Iroh network. |
 | `scripts/` | `zuko-host.sh` (foreground dev wrapper), `release.sh` (tag + push). |
-| `ios/Zuko/` | The iOS client (xtool + Swift + SwiftTerm, networking via IrohLib). |
+| `ios/Zuko/` | The iOS client (xtool + Swift + GhosttyTerminal, networking via IrohLib). |
 | `docs/` | [`HOST.md`](docs/HOST.md) (user guide), [`PROTOCOL.md`](docs/PROTOCOL.md) (wire spec), [`CLIENTS.md`](docs/CLIENTS.md) (client registry), [`RELEASING.md`](docs/RELEASING.md) (cutting releases). |
 | `.github/workflows/` | CI: build+test `zuko` + iOS app; publish release binaries. |
 

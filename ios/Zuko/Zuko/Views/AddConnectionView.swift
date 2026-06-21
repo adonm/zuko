@@ -10,10 +10,12 @@ import SwiftUI
 /// raw ticket never touches the UI surface. See [`ClaimSession`] + the
 /// `src/handoff.rs` Rust reference.
 struct AddConnectionView: View {
-    @EnvironmentObject private var store: ConnectionStore
+    @Environment(ConnectionStore.self) private var store
     @Environment(\.dismiss) private var dismiss
 
-    @StateObject private var claimSession = ClaimSession()
+    // @State (not @StateObject): ClaimSession is @Observable, so it follows
+    // the same Observation-based ownership rules as our other stores.
+    @State private var claimSession = ClaimSession()
 
     @State private var code: String = ""
     @State private var error: String?

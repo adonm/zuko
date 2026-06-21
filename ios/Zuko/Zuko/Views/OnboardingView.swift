@@ -61,9 +61,50 @@ struct OnboardingView: View {
             Text("Pair through the CLI: on another machine with `zuko` installed, run `zuko <code>`. That saves the host, which you can then connect to from any client.")
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
+
+            Divider().padding(.vertical, 4)
+
+            Label {
+                Text("Using the terminal").font(.headline)
+            } icon: {
+                Image(systemName: "lightbulb")
+                    .foregroundStyle(Color.accentColor)
+            }
+
+            VStack(alignment: .leading, spacing: 8) {
+                tip(
+                    icon: "magnifyingglass.circle",
+                    "Pinch the terminal to zoom font size live — coarse adjustment without leaving the session."
+                )
+                tip(
+                    icon: "keyboard.chevron.compact.down",
+                    "Tap the keyboard chevron in the top bar to hide the system keyboard and keep just the Esc/Tab/arrows/modifiers/Paste bar — doubles screen real estate for shell work. Tap again to bring the full keyboard back."
+                )
+                tip(
+                    icon: "paintpalette",
+                    "Tap the palette icon in the top bar for quick theme switching (Dracula, Catppuccin, Nord, …) or \"Browse all\" for the full 485-theme catalog with live preview."
+                )
+                tip(
+                    icon: "textformat",
+                    "Tap the Aa icon to grow or shrink the default font size. Persists across sessions."
+                )
+            }
         }
         .padding()
         .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 16))
+    }
+
+    /// A single tip row: icon + body text.
+    private func tip(icon: String, _ text: String) -> some View {
+        HStack(alignment: .top, spacing: 10) {
+            Image(systemName: icon)
+                .font(.subheadline)
+                .foregroundStyle(Color.accentColor)
+                .frame(width: 20, alignment: .center)
+            Text(text)
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+        }
     }
 
     /// A numbered, monospaced, copyable single-line command box.

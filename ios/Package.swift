@@ -11,6 +11,13 @@
 // handles the binary `ZukoRust.xcframework` inside ZukoFFI the same way xcodebuild
 // did (see `PackLib/Planner.swift`'s `BinaryTarget` resource handling).
 //
+// The terminal emulator is GhosttyTerminal from libghostty-spm — a Swift
+// wrapper around the libghostty static library with native SwiftUI/UIKit
+// views and a host-managed I/O backend (no PTY spawn, sandbox-safe). The
+// prior SwiftTerm dependency was replaced in the v0.5 redesign; the
+// `libghostty` XCFramework is a binary target so no source patching (à la
+// `patch-swiftterm-xtool.sh`) is needed for the xtool Linux→iOS cross build.
+//
 // On Linux/CI: `mise run build-ios` (unsigned) for smoke testing. The signed
 // TestFlight path still archives through Fastlane/XcodeGen until xtool supports
 // this repo's App Store export flow.
@@ -38,9 +45,11 @@ let package = Package(
         ),
     ],
     dependencies: [
-        // Versions mirror the legacy `project.yml` so a side-by-side build
-        // produces a bit-identical app.
-        .package(url: "https://github.com/migueldeicaza/SwiftTerm.git", from: "1.12.0"),
+        // libghostty-spm ships GhosttyTerminal (Swift wrapper around the
+        // libghostty XCFramework binary target). We use its host-managed I/O
+        // backend (`InMemoryTerminalSession`) so the app stays sandbox-safe —
+        // no PTY spawn, all bytes flow through `IrohSession`.
+        .package(url: "https://github.com/Lakr233/libghostty-spm.git", from: "1.0.1775374806"),
         .package(url: "https://github.com/n0-computer/iroh-ffi.git", from: "1.0.0"),
         // Local wrapper around the Rust staticlib. Built by
         // `scripts/build-ffi.sh` (cargo build --lib --release for each iOS
@@ -51,7 +60,10 @@ let package = Package(
         .target(
             name: "Zuko",
             dependencies: [
-                .product(name: "SwiftTerm", package: "SwiftTerm"),
+                .product(name: "GhosttyTerminal", package: "libghostty-spm"),
+                // 485 iTerm2-Color-Schemes themes (MIT) for the in-app
+                // theme picker on TerminalScreen.
+                .product(name: "GhosttyTheme", package: "libghostty-spm"),
                 .product(name: "IrohLib", package: "iroh-ffi"),
                 .product(name: "ZukoFFI", package: "ZukoFFI"),
             ],
@@ -70,9 +82,16 @@ let package = Package(
                 .copy("Assets.xcassets"),
             ],
             linkerSettings: [
-                // iroh's deps need Network.framework on iOS
-                // (nw_interface_get_index). Mirrors the `OTHER_LDFLAGS:
-                // -framework Network` in project.yml's base settings.
+                // Network.framework is also linked by iroh-ffi's own
+                // Package.swift (it ships `.linkedFramework("Network")` +
+                // `.linkedFramework("SystemConfiguration")` on every Apple
+                // platform, and `.linkedFramework("CoreWLAN", .when(platforms: [.macOS]))`
+                // for macOS WiFi enumeration). SwiftPM propagates those
+                // transitively, so this explicit link is redundant — kept as
+                // belt-and-suspenders so a future iroh-ffi drop can't
+                // silently break our link, and to mirror the `-framework
+                // Network` in project.yml's base settings (the legacy
+                // XcodeGen path doesn't see SwiftPM linkerSettings).
                 .linkedFramework("Network"),
             ]
         ),

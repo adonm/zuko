@@ -59,7 +59,7 @@ pub fn normalize_code(code: &str) -> String {
     code.trim()
         .to_lowercase()
         .chars()
-        .filter(|c| c.is_ascii_lowercase())
+        .filter(char::is_ascii_lowercase)
         .collect()
 }
 

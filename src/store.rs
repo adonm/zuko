@@ -94,13 +94,12 @@ pub fn touch(name: &str) -> Result<()> {
     let name = name.trim();
     let _guard = HostsLock::acquire()?;
     let mut entries = load();
-    if let Some(idx) = entries.iter().position(|(n, _)| n == name) {
-        if idx != 0 {
+    if let Some(idx) = entries.iter().position(|(n, _)| n == name)
+        && idx != 0 {
             let entry = entries.remove(idx);
             entries.insert(0, entry);
             store(&entries)?;
         }
-    }
     // If the name isn't found, no-op rather than inserting — `touch` only
     // reorders existing entries; it never adds.
     Ok(())
@@ -236,7 +235,11 @@ mod tests {
     /// Round-trip add/lookup/remove against an isolated XDG dir.
     fn isolated() -> tempfile::TempDir {
         let dir = tempfile::tempdir().unwrap();
-        std::env::set_var("XDG_CONFIG_HOME", dir.path());
+        // SAFETY: tests are serialised by the `TEST_LOCK` mutex taken in each
+        // `#[test]` body, so no other test can race the env mutation.
+        // `std::env::set_var` became `unsafe` in Rust 2024 (mutating global
+        // state can race with concurrent reads in multi-threaded programs).
+        unsafe { std::env::set_var("XDG_CONFIG_HOME", dir.path()) };
         dir
     }
 
@@ -364,8 +367,7 @@ mod tests {
         assert_eq!(
             perms & 0o777,
             0o600,
-            "hosts file must be 0600, got {:o}",
-            perms
+            "hosts file must be 0600, got {perms:o}"
         );
     }
 

@@ -52,7 +52,7 @@ use tempfile::TempDir;
 const TOKEN: &str = "hello-zuko-ITEST";
 
 // Generous timeouts: Iroh relay handshakes can be slow on CI runners.
-const HOST_ONLINE_TIMEOUT: Duration = Duration::from_secs(60);
+const HOST_ONLINE_TIMEOUT: Duration = Duration::from_mins(1);
 const CLIENT_WINDOW: Duration = Duration::from_secs(45);
 const SHARE_CODE_TIMEOUT: Duration = Duration::from_secs(45);
 const CLAIM_TIMEOUT: Duration = Duration::from_secs(90);
@@ -67,7 +67,7 @@ const CLAIM_TIMEOUT: Duration = Duration::from_secs(90);
 const SHARE_EXIT_TIMEOUT: Duration = Duration::from_secs(20);
 
 #[test]
-#[ignore]
+#[ignore = "requires live Iroh network + `zuko` binary on PATH; runs manually, not in CI"]
 fn e2e() -> Result<()> {
     let zuko = zuko_bin()?;
 
@@ -174,7 +174,7 @@ fn wait_for_exit(child: &mut Child, timeout: Duration) -> Result<ExitStatus> {
         if Instant::now() >= deadline {
             let _ = child.kill();
             let _ = child.wait();
-            bail!("timed out after {:?} waiting for child to exit", timeout);
+            bail!("timed out after {timeout:?} waiting for child to exit");
         }
         thread::sleep(Duration::from_millis(100));
     }
@@ -191,7 +191,7 @@ fn first_nonblank_line(stdout: std::process::ChildStdout, timeout: Duration) -> 
         loop {
             line.clear();
             match reader.read_line(&mut line) {
-                Ok(0) => break, // EOF
+                Ok(0) | Err(_) => break, // EOF or read error
                 Ok(_) => {
                     let trimmed = line.trim();
                     if !trimmed.is_empty() {
@@ -200,7 +200,6 @@ fn first_nonblank_line(stdout: std::process::ChildStdout, timeout: Duration) -> 
                     }
                     // else: blank line, keep reading.
                 }
-                Err(_) => break,
             }
         }
         let _ = tx.send(None);
@@ -208,7 +207,7 @@ fn first_nonblank_line(stdout: std::process::ChildStdout, timeout: Duration) -> 
     match rx.recv_timeout(timeout) {
         Ok(Some(s)) => Ok(s),
         Ok(None) => bail!("stdout closed with no non-blank line"),
-        Err(_) => bail!("timed out after {:?} waiting for stdout line", timeout),
+        Err(_) => bail!("timed out after {timeout:?} waiting for stdout line"),
     }
 }
 
@@ -217,10 +216,10 @@ fn first_nonblank_line(stdout: std::process::ChildStdout, timeout: Duration) -> 
 struct ProcGuard(Option<Child>);
 
 impl ProcGuard {
-    fn new(child: Child) -> Self {
+    const fn new(child: Child) -> Self {
         Self(Some(child))
     }
-    fn get_mut(&mut self) -> &mut Child {
+    const fn get_mut(&mut self) -> &mut Child {
         self.0.as_mut().expect("ProcGuard used after drop")
     }
 }
@@ -338,8 +337,7 @@ fn test_share_claim(zuko: &str, xdg: &Path, expected_ticket: &str) -> Result<()>
             // Before that fix this assertion would hang — invisible in the
             // old Python harness because its `finally` always SIGTERM'd share.
             eprintln!(
-                "waiting for `share` to exit on its own (≤{:?})…",
-                SHARE_EXIT_TIMEOUT
+                "waiting for `share` to exit on its own (≤{SHARE_EXIT_TIMEOUT:?})…"
             );
             let status = wait_for_exit(share.get_mut(), SHARE_EXIT_TIMEOUT)
                 .context("`share` did not exit on its own after claim")?;
@@ -413,13 +411,12 @@ fn test_host_connect(zuko: &str, xdg: &Path, ticket: &str) -> Result<()> {
         let mut buf = [0u8; 4096];
         loop {
             match reader.read(&mut buf) {
-                Ok(0) => break,
+                Ok(0) | Err(_) => break, // EOF or read error
                 Ok(n) => {
                     if let Ok(mut o) = reader_buf.lock() {
                         o.extend_from_slice(&buf[..n]);
                     }
                 }
-                Err(_) => break,
             }
         }
     });
@@ -448,8 +445,7 @@ fn test_host_connect(zuko: &str, xdg: &Path, ticket: &str) -> Result<()> {
         if typed {
             let saw_token = out_buf
                 .lock()
-                .map(|o| o.windows(token_bytes.len()).any(|w| w == token_bytes))
-                .unwrap_or(false);
+                .is_ok_and(|o| o.windows(token_bytes.len()).any(|w| w == token_bytes));
             if saw_token {
                 let _ = writer.write_all(b"exit\r");
                 // Give the shell a moment to honour `exit`, then reap.

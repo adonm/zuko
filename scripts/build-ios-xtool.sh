@@ -2,9 +2,13 @@
 # Build the iOS app through xtool.
 #
 # This is the single local/CI entrypoint. It builds the Rust FFI XCFramework,
-# bakes a concrete version into Info.plist for xtool, applies the SwiftTerm
-# Linux-host manifest patch, runs `xtool dev build`, restores Info.plist, then
-# patches embedded frameworks that are missing MinimumOSVersion.
+# bakes a concrete version into Info.plist for xtool, runs `xtool dev build`,
+# restores Info.plist, then patches embedded frameworks that are missing
+# MinimumOSVersion.
+#
+# (No SwiftTerm source patch is needed: libghostty-spm ships a pre-built
+# XCFramework binary target so there's nothing to patch for the xtool
+# Linux→iOS cross-compile.)
 set -eu
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -55,7 +59,6 @@ ZUKO_BUILD_NUMBER="$BUILD_NUMBER" sh "$ROOT/scripts/patch-ios-plist.sh"
 
 cd "$IOS_DIR"
 swift package resolve
-sh "$ROOT/scripts/patch-swiftterm-xtool.sh"
 
 xtool dev build --configuration "$CONFIGURATION" --triple "$TRIPLE"
 

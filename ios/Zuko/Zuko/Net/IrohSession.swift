@@ -1,4 +1,5 @@
 import Foundation
+import GhosttyTerminal
 import IrohLib
 
 enum SessionStatus: Equatable {
@@ -11,12 +12,20 @@ enum SessionStatus: Equatable {
     case failed(String)
 }
 
-/// Owns a single Iroh connection to a host and bridges it to SwiftTerm.
+/// Owns a single Iroh connection to a host and bridges it to GhosttyTerminal's
+/// host-managed I/O backend.
 ///
 /// Data flow:
-///   - host -> app:  recv loop parses DATA frames -> `onTerminalOutput`
-///   - app -> host:  SwiftTerm keystrokes -> `enqueueData` -> serial write pump
-///   - resize:       SwiftTerm grid size -> `enqueueResize` -> RESIZE frame
+///   - host -> app:  recv loop parses DATA frames -> `inMemorySession.receive`
+///   - app -> host:  GhosttyTerminal keystrokes -> writeHandler -> `enqueueData`
+///                   -> serial write pump
+///   - resize:       GhosttyTerminal grid size -> resizeHandler ->
+///                   `enqueueResize` -> RESIZE frame
+///
+/// The `InMemoryTerminalSession` is created lazily on first access (the view
+/// grabs it before calling `connect`). Its `@Sendable` write/resize handlers
+/// are fired from libghostty's C surface callbacks on arbitrary threads, so
+/// they hop to the main actor before touching any `IrohSession` state.
 ///
 /// ## Session resume (v0.4)
 ///
@@ -60,8 +69,38 @@ final class IrohSession: ObservableObject {
 
     @Published private(set) var status: SessionStatus = .idle
 
-    /// Called on the main actor with raw PTY output bytes to render.
-    var onTerminalOutput: ((Data) -> Void)?
+    /// The host-managed I/O bridge between GhosttyTerminal and the Iroh
+    /// connection. The terminal surface feeds keystrokes + resizes into this
+    /// (via the `@Sendable` write/resize handlers wired up at construction),
+    /// and the recv loop calls `receive(_:)` with each inbound DATA frame's
+    /// payload so libghostty renders it.
+    ///
+    /// Lazy so the handlers can capture `[weak self]` — `self` isn't usable
+    /// from `init` for that. The view accesses this before `connect(...)` runs
+    /// (it sets the surface backend), so the surface is attached by the time
+    /// the recv loop starts feeding bytes.
+    private(set) lazy var inMemorySession: InMemoryTerminalSession = { [weak self] in
+        // The handlers fire on libghostty's C surface callbacks (any thread).
+        // Hop to the main actor before touching IrohSession state.
+        // `Task { @MainActor … }` is the canonical hop in Swift 6; the cost
+        // (one hop per keystroke / per resize) is dwarfed by the AsyncStream
+        // + iroh send the pump already does. Data is `Sendable` so capturing
+        // it across the hop is safe; the viewport is converted to plain
+        // integers before the hop. `self` is captured weakly once, in the
+        // lazy initializer's capture list — the inner closures implicitly
+        // capture that optional by value (cheap; it holds the weak ref).
+        let write: @Sendable (Data) -> Void = { data in
+            Task { @MainActor in self?.enqueueData(data) }
+        }
+        let resize: @Sendable (InMemoryTerminalViewport) -> Void = { viewport in
+            let cols = UInt16(clamping: Int(viewport.columns))
+            let rows = UInt16(clamping: Int(viewport.rows))
+            Task { @MainActor in
+                self?.enqueueResize(cols: cols, rows: rows)
+            }
+        }
+        return InMemoryTerminalSession(write: write, resize: resize)
+    }()
 
     /// Fired on the main actor whenever the host assigns/updates our session
     /// id (after a WELCOME). The view persists it on the `Connection` so a
@@ -86,9 +125,9 @@ final class IrohSession: ObservableObject {
     /// apart from an external cancellation.
     private var disconnectRequested = false
 
-    /// Bumped when SwiftTerm reports a new grid size; read by the reconnect
-    /// loop so each HELLO carries the current size (and a resumed full-screen
-    /// app gets a SIGWINCH → redraw). Packed as cols<<16 | rows.
+    /// Bumped when GhosttyTerminal reports a new grid size; read by the
+    /// reconnect loop so each HELLO carries the current size (and a resumed
+    /// full-screen app gets a SIGWINCH → redraw). Packed as cols<<16 | rows.
     private var packedSize: UInt32 = (80 << 16) | 24
 
     func connect(ticket: String) {
@@ -135,7 +174,9 @@ final class IrohSession: ObservableObject {
         return false
     }
 
-    // MARK: - Outbound (called from SwiftTerm's delegate on the main actor)
+    // MARK: - Outbound (called from GhosttyTerminal's surface callbacks via
+    //                    the InMemoryTerminalSession handlers; hopped to the
+    //                    main actor before reaching here)
 
     func enqueueData(_ data: Data) {
         writeContinuation?.yield(Wire.encode(type: Wire.data, payload: data))
@@ -284,7 +325,13 @@ final class IrohSession: ObservableObject {
                 case Wire.data:
                     // Recovered from `.stalled` — we're hearing the host again.
                     if case .stalled = status { status = .connected }
-                    onTerminalOutput?(Data(frame.payload))
+                    // Hand the raw PTY bytes to libghostty for ANSI parse +
+                    // grid update. `receive(_:)` is lock-protected on the
+                    // InMemoryTerminalSession; if the surface hasn't attached
+                    // yet (early replay before the view appears) it drops them
+                    // — same lossy-but-safe behaviour as the old SwiftTerm
+                    // path, and the host's resume replay recovers.
+                    inMemorySession.receive(Data(frame.payload))
                 case Wire.ping:
                     pongContinuation?.yield(Wire.encodePong(nonce: Wire.decodeNonce(frame.payload)))
                 case Wire.welcome:
@@ -307,8 +354,8 @@ final class IrohSession: ObservableObject {
     ///
     /// Runs as a `Task.detached` **off the main actor** so output flood on the
     /// read loop can't starve outbound keystrokes. The read loop renders via
-    /// `onTerminalOutput` on the main actor (SwiftTerm's ANSI parse + grid
-    /// update is synchronous), and a main-actor write pump would only get
+    /// `inMemorySession.receive` on the main actor (libghostty's ANSI parse +
+    /// grid update is synchronous), and a main-actor write pump would only get
     /// scheduled in the gaps between those bursts — under dense output (`vim`
     /// redraw, `yes`, `cat hugefile`) the gaps shrink and keystroke latency
     /// spikes. Detached, the pump ships input on its own thread regardless of
@@ -322,7 +369,7 @@ final class IrohSession: ObservableObject {
         // `.bufferingOldest` caps the queue; `yield` returns `.dropped` when
         // full, which we intentionally ignore — the link is stalling and will
         // time out shortly, so dropping recent input beats growing memory or
-        // blocking SwiftTerm's delegate call on the main actor.
+        // blocking GhosttyTerminal's surface callback.
         //
         // `makeStream(of:bufferingPolicy:)` (Swift 6) is used instead of
         // `AsyncStream<Data>(.bufferingOldest(n)) { ... }` because the

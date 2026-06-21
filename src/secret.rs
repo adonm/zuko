@@ -61,8 +61,7 @@ mod tests {
         assert_eq!(
             perms & 0o777,
             0o600,
-            "secret file must be 0600, got {:o}",
-            perms
+            "secret file must be 0600, got {perms:o}"
         );
         assert_eq!(std::fs::read(&target).unwrap(), b"hello");
     }

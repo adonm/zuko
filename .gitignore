@@ -36,6 +36,10 @@ target/
 *.key
 zuko-key
 
+# Local TestFlight feedback archives (downloaded from ASC for review).
+# Keep them out of the tree — they're session artifacts, not source.
+testflight_feedback.zip
+
 # Apple signing material produced by `mise run setup-ios-signing`. Default
 # workspace is outside the repo (~/.config/zuko/ios-signing), but gitignore
 # these anyway in case someone overrides ZUKO_IOS_SIGNING_DIR into the tree.
