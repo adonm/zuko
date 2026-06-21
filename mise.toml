@@ -190,9 +190,9 @@ run = "sh scripts/release.sh ${@}"
 #   - `watch_files` runs *fast* checks on save: cargo fmt + clippy
 #     (Rust), swiftlint (Swift). Output is short — keeps the editor
 #     pane readable.
-#   - The slow check (full xtool iOS build) is gated to manifest /
-#     config file changes only, so it doesn't fire on every keystroke.
-#     Triggers `mise run preflight`, which is the same path CI runs.
+#   - The slow full xtool iOS build is NOT in watch_files — it's too
+#     disruptive for iterative dev. Run `mise run preflight` manually
+#     before pushing if you've touched iOS build config.
 
 [hooks.enter]
 # Run once when entering the project. Quick environment snapshot only —
@@ -258,42 +258,6 @@ if command -v swiftlint >/dev/null 2>&1; then
 else
     echo "(swiftlint not installed — run 'mise install')"
 fi
-"""
-
-# ───── watch_files: slow checks gated to manifest / config files ─────
-
-[[watch_files]]
-# xtool iOS build is ~2-3 min, far too slow for per-keystroke. Gate it
-# to the small set of files that *change the build configuration*:
-# Package.swift (dependencies, products), xtool.yml (bundle ID, custom
-# plist path), Info.plist (version sync), Cargo.toml (iOS staticlib
-# behavior). Source-level Swift changes get the fast swiftlint hook
-# above instead.
-#
-# Wraps `mise run build-ios` so the validation path is identical to CI
-# — if CI is going to fail, this hook surfaces it locally first.
-# Silent skip if xtool isn't installed (Linux without iOS dev setup,
-# or a rust-only contributor's machine).
-patterns = [
-    "ios/Package.swift",
-    "ios/xtool.yml",
-    "ios/Zuko/Zuko/Info.plist",
-    "Cargo.toml",
-]
-run = """
-if ! command -v xtool >/dev/null 2>&1; then
-    echo "(xtool not installed — skipping iOS build validation)"
-    exit 0
-fi
-sdk_status="$(xtool sdk status 2>&1 || true)"
-if printf '%s\n' "$sdk_status" | grep -qi 'not installed'; then
-    echo "(iOS SDK not installed — skipping iOS build validation)"
-    echo " on macOS: run 'mise run setup-ios' then 'xtool setup'"
-    echo " on Linux: run 'mise run setup-ios-sdk' (build-ios also does this automatically)"
-    exit 0
-fi
-echo "==> iOS build config changed; running xtool build validation..."
-mise run build-ios 2>&1 | tail -20
 """
 
 # ──────────────────── explicit check / preflight tasks ──────────────
