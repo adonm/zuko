@@ -58,12 +58,16 @@ jobs:
       # subsequent step. We persist via $GITHUB_ENV so each step inherits
       # the brew-augmented PATH without re-running shellenv.
       - name: Put Homebrew tools on PATH
+        # `brew install llvm` (from mise bootstrap above) kegs to
+        # /home/linuxbrew/.linuxbrew/opt/llvm/bin to avoid clashing with the
+        # system LLVM. `brew shellenv` only puts /home/linuxbrew/.linuxbrew/bin
+        # on PATH, so we have to layer the opt/llvm path explicitly for
+        # llvm-lipo + llvm-objcopy. swift is in the standard brew bin/.
         run: |
           BREW_PREFIX="$(/home/linuxbrew/.linuxbrew/bin/brew --prefix)"
           echo "${BREW_PREFIX}/bin" >> "$GITHUB_PATH"
           echo "${BREW_PREFIX}/sbin" >> "$GITHUB_PATH"
-          # Persist brew's full env (PATH + LDFLAGS + CPPFLAGS etc.) for
-          # any step that wants to source it explicitly.
+          echo "${BREW_PREFIX}/opt/llvm/bin" >> "$GITHUB_PATH"
           /home/linuxbrew/.linuxbrew/bin/brew shellenv >> "$GITHUB_ENV"
           swift --version
           llvm-lipo --version
