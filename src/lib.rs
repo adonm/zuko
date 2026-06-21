@@ -32,8 +32,6 @@ pub mod ffi;
 #[cfg(not(target_os = "ios"))]
 pub mod client;
 #[cfg(not(target_os = "ios"))]
-pub mod control;
-#[cfg(not(target_os = "ios"))]
 pub mod handoff;
 #[cfg(not(target_os = "ios"))]
 pub mod host;

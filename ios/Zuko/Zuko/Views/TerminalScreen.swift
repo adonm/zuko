@@ -71,19 +71,14 @@ struct TerminalScreen: View {
             // path (defaults) costs only three cheap equality checks.
             terminalState.setTheme(themeStore.currentTheme)
             applyFontSize(themeStore.fontSize)
-            // Resume the prior session if we have a saved id for this host;
-            // the host replays recent output.
-            session.onSessionID = { [connection] id in
-                store.updateSessionID(id, for: connection)
-            }
             // Attach the session's host-managed I/O backend before connect so
-            // the first HELLO carries the surface's actual grid size. This
+            // the first RESIZE carries the surface's actual grid size. This
             // access also realises `session.inMemorySession` (lazy) before the
             // read loop can touch it.
             terminalState.configuration = TerminalSurfaceOptions(
                 backend: .inMemory(session.inMemorySession)
             )
-            session.connect(ticket: connection.ticket, sessionID: connection.lastSessionID)
+            session.connect(ticket: connection.ticket)
         }
         .onChange(of: themeStore.selectedName) {
             // Live theme switch from the toolbar picker / browser sheet.
@@ -207,20 +202,11 @@ struct TerminalScreen: View {
     private var statusMessage: String? {
         switch session.status {
         case .connecting:
-            // Distinguish a fresh connect from a resume so the user knows
-            // their prior session (and PTY on the host) is being picked
-            // back up, not started from scratch.
-            return connection.lastSessionID != nil
-                ? "Resuming session…"
-                : "Connecting to host…"
-        case .reconnecting:
-            return "Reconnecting…"
-        case .stalled:
-            return "Connection stalled — will resume"
-        case .failed(let reason):
-            return "Failed: \(reason)"
+            return "Connecting to host…"
         case .disconnected(let reason):
             return reason == "disconnected" ? nil : reason
+        case .failed(let reason):
+            return "Failed: \(reason)"
         case .connected, .idle:
             return nil
         }

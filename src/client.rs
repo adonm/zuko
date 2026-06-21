@@ -5,55 +5,33 @@
 //! using the shared [`crate::wire`] framing. `vim`, `htop`, tab completion, and
 //! resize all work because the host runs a real PTY.
 //!
-//! ## Session resume (v0.4)
+//! ## Single-shot (v0.6)
 //!
-//! The connection runs in a reconnect loop: on a network drop (recv errors) we
-//! reconnect and send a `HELLO` carrying the session id the host assigned on
-//! the first connection. The host resumes the same PTY, replays its recent
-//! output, and we keep going — the shell's state survives the blip. On a
-//! genuine shell exit (recv EOF) we stop and exit. A bounded backoff spaces
-//! reconnect attempts; the user can `kill` the process to give up.
-//!
-//! ## Heartbeat
-//!
-//! We send a `PING` every 5 s and answer inbound `PING`s with `PONG`. If no
-//! frame arrives for ~10 s we print a "stalled" notice (iroh's QUIC keepalive
-//! keeps the transport alive, but this surfaces a stuck link to the user
-//! faster than the 15–30 s QUIC idle timeout).
+//! No auto-reconnect, no heartbeat, no session resume. The connection lives
+//! for as long as the iroh stream is open; on drop (network loss, host down,
+//! shell exit) the client exits and the user re-runs `zuko <host>` to get a
+//! fresh PTY. Users running long-lived work should do so inside `tmux`/
+//! `zellij`/`screen` on the host.
 //!
 //! ## Force-quit
 //!
 //! Because raw mode forwards Ctrl-C to the remote shell, a wedged connection
 //! has no escape: keystrokes disappear into the frame channel and the only
-//! recovery is the stall timer or killing the process from another terminal.
-//! Pressing Ctrl-C 3× within ~1 s, with no remote output between presses,
-//! force-exits the local client (exit code 130, the SIGINT convention). The
-//! "no output" gate is what distinguishes a wedged session from a silent but
-//! healthy one.
+//! recovery is killing the process from another terminal. Pressing Ctrl-C
+//! 3× within ~1 s, with no remote output between presses, force-exits the
+//! local client (exit code 130, the SIGINT convention). The "no output" gate
+//! is what distinguishes a wedged session from a silent but healthy one.
 
 use anyhow::{Context, Result};
-use iroh::endpoint::RecvStream;
-use iroh::{endpoint::presets, Endpoint, EndpointAddr};
+use iroh::{Endpoint, EndpointAddr, endpoint::presets};
 use iroh_tickets::endpoint::EndpointTicket;
-use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
+use std::time::Instant;
 use tokio::io::AsyncWriteExt as _;
-use tokio::sync::{mpsc, Notify};
+use tokio::sync::mpsc;
 
-use crate::wire::{
-    decode_nonce, ping_frame, pong_frame, resize_frame, try_parse_frame, Hello, Welcome, ALPN,
-    FLAG_HEARTBEAT, FLAG_RESUME, TYPE_DATA, TYPE_PING, TYPE_WELCOME,
-};
-
-/// Reconnect backoff: starts here, doubles, caps here.
-const BACKOFF_MIN: Duration = Duration::from_millis(500);
-const BACKOFF_MAX: Duration = Duration::from_secs(5);
-
-/// Heartbeat: send a PING this often, declare stalled after this long with no
-/// inbound frame at all.
-const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(5);
-const STALL_THRESHOLD: Duration = Duration::from_secs(10);
+use crate::wire::{ALPN, TYPE_DATA, resize_frame, try_parse_frame};
 
 /// Force-quit escape hatch: in raw mode Ctrl-C (0x03) is forwarded to the
 /// remote shell, so a wedged connection has no normal escape (keystrokes go
@@ -65,15 +43,7 @@ const STALL_THRESHOLD: Duration = Duration::from_secs(10);
 /// Abrupt exit is low-cost: a `zuko` session typically targets a shell inside
 /// tmux/zellij, so the remote work survives.
 const FORCE_QUIT_PRESSES: u32 = 3;
-const FORCE_QUIT_WINDOW: Duration = Duration::from_secs(1);
-
-/// Why a connection's read half ended — drives the reconnect loop.
-enum ReadEnd {
-    /// Recv hit EOF — the host closed the stream, i.e. the shell exited. Stop.
-    ShellExited,
-    /// Recv errored — network drop. Reconnect (resume the session).
-    Disconnected,
-}
+const FORCE_QUIT_WINDOW: std::time::Duration = std::time::Duration::from_secs(1);
 
 /// Connect to a host and bridge the local terminal to its shell, reconnecting
 /// on network drops until the remote shell exits.
@@ -98,14 +68,11 @@ pub async fn connect(ticket_str: &str) -> Result<()> {
     crossterm::terminal::enable_raw_mode().context("enable raw mode")?;
     let _guard = RawModeGuard;
 
-    // Outbound frame channel — persistent across reconnects. stdin + SIGWINCH
-    // + heartbeat push pre-framed bytes here; a per-connection writer task
-    // drains it into the current send stream. Between connections the receiver
-    // is stashed in a slot so a reconnect can pick it up and keep draining
-    // (keystrokes typed during the outage flush on reconnect).
+    // Outbound frame channel. stdin + SIGWINCH push pre-framed bytes here;
+    // the writer task drains it into the send stream. Bounded so a flood
+    // can't grow memory unbounded (the producer awaits, back-pressuring
+    // stdin reads).
     let (frame_tx, frame_rx) = mpsc::channel::<Vec<u8>>(64);
-    let frame_rx_slot: Arc<tokio::sync::Mutex<Option<mpsc::Receiver<Vec<u8>>>>> =
-        Arc::new(tokio::sync::Mutex::new(Some(frame_rx)));
 
     // Monotonic token bumped by the read loop whenever DATA is written to
     // stdout. The stdin thread samples it to detect "no remote output since
@@ -157,8 +124,8 @@ pub async fn connect(ticket_str: &str) -> Result<()> {
                         if b != 0x03 {
                             continue;
                         }
-                        let within_window = prev_at
-                            .is_some_and(|p| now.duration_since(p) <= FORCE_QUIT_WINDOW);
+                        let within_window =
+                            prev_at.is_some_and(|p| now.duration_since(p) <= FORCE_QUIT_WINDOW);
                         let output_unchanged = cur_seq == prev_at_seq;
                         burst = advance_burst(burst, within_window, output_unchanged);
                         prev_at = Some(now);
@@ -178,7 +145,7 @@ pub async fn connect(ticket_str: &str) -> Result<()> {
         let resize_tx = frame_tx.clone();
         let size_for_signal = size.clone();
         tokio::spawn(async move {
-            use tokio::signal::unix::{signal, SignalKind};
+            use tokio::signal::unix::{SignalKind, signal};
             let Ok(mut sig) = signal(SignalKind::window_change()) else {
                 return;
             };
@@ -193,219 +160,78 @@ pub async fn connect(ticket_str: &str) -> Result<()> {
         });
     }
 
-    let mut session_id: Option<[u8; 8]> = None;
-    let mut backoff = BACKOFF_MIN;
-    let stop = Arc::new(AtomicBool::new(false));
-    // Print the force-quit hint exactly once on the first successful connect,
-    // not on every reconnect (the user already knows).
-    let mut hint_printed = false;
+    // Single-shot connect (v0.6): no auto-reconnect. The user re-runs
+    // `zuko <host>` if the connection drops. This keeps the model simple and
+    // avoids the "silently lost state on reconnect" surprise that came with
+    // resuming to a fresh PTY.
+    let result: Result<()> = async {
+        let conn = endpoint
+            .connect(addr, ALPN)
+            .await
+            .context("dial host")?;
+        let (mut send, recv) = conn.open_bi().await.context("open bidi stream")?;
 
-    // Reconnect loop. Each iteration: dial, handshake (HELLO + initial RESIZE),
-    // run the session until the read half ends, then either stop (shell exited)
-    // or back off and reconnect (resume).
-    let result: Result<()> = loop {
-        let Ok(conn) = endpoint.connect(addr.clone(), ALPN).await else {
-            status_line(&format!(
-                "can't reach host, retrying in {:.1}s…",
-                backoff.as_secs_f64()
-            ));
-            tokio::time::sleep(backoff).await;
-            backoff = (backoff * 2).min(BACKOFF_MAX);
-            continue;
-        };
-        let Ok((mut send, recv)) = conn.open_bi().await else {
-            status_line(&format!(
-                "stream open failed, retrying in {:.1}s…",
-                backoff.as_secs_f64()
-            ));
-            tokio::time::sleep(backoff).await;
-            backoff = (backoff * 2).min(BACKOFF_MAX);
-            continue;
-        };
-
-        // Handshake: HELLO (caps + current size + session id) then a RESIZE.
-        // Sent directly on `send` BEFORE handing it to the writer, so they're
-        // guaranteed first on the wire (a resumed session's ring replay + the
-        // PTY's SIGWINCH redraw both depend on the size being known up front).
+        // Initial RESIZE — also acts as the v0.6 handshake (tells the host
+        // the terminal size before the first byte of input flows). Sent
+        // directly on `send` BEFORE handing it to the writer so it's
+        // guaranteed first on the wire.
         let (c, r) = unpack_size(size.load(Ordering::Relaxed));
-        let hello = Hello {
-            flags: FLAG_RESUME | FLAG_HEARTBEAT,
-            cols: c,
-            rows: r,
-            session_id,
-        };
-        if send.write_all(&hello.frame()).await.is_err()
-            || send.write_all(&resize_frame(c, r)).await.is_err()
-        {
-            // The brand-new stream already broke — treat as a disconnect.
-            status_line("handshake write failed, reconnecting…");
-            tokio::time::sleep(backoff).await;
-            backoff = (backoff * 2).min(BACKOFF_MAX);
-            continue;
-        }
+        send.write_all(&resize_frame(c, r))
+            .await
+            .context("send initial RESIZE")?;
 
-        // Hand the send stream to a writer that drains the (persistent) frame
-        // receiver. Take the receiver back from the slot so this writer owns
-        // it; on exit (cancel or send error) it puts it back for the next
-        // reconnect. `writer_stop` lets the loop cancel the writer on
-        // shell-exit (the send stream is still alive there, so the writer
-        // wouldn't end on its own — without this, `writer.await` would hang).
-        let frame_rx = {
-            let mut slot = frame_rx_slot.lock().await;
-            slot.take().expect("frame_rx present between connections")
-        };
-        let slot_for_writer = frame_rx_slot.clone();
-        let writer_stop = Arc::new(Notify::new());
-        let writer_stop_for_writer = writer_stop.clone();
+        // Writer: drains the frame channel (stdin + SIGWINCH) into the send
+        // stream. Runs until the channel closes or `send` errors.
         let writer = tokio::spawn(async move {
             let mut frame_rx = frame_rx;
-            let mut send = send;
-            loop {
-                tokio::select! {
-                    biased;
-                    () = writer_stop_for_writer.notified() => break,
-                    frame = frame_rx.recv() => {
-                        let Some(frame) = frame else { break; };
-                        if send.write_all(&frame).await.is_err() {
-                            break;
-                        }
-                    }
+            while let Some(frame) = frame_rx.recv().await {
+                if send.write_all(&frame).await.is_err() {
+                    break;
                 }
             }
             let _ = send.finish();
-            // Return the receiver so the next reconnect can keep draining.
-            *slot_for_writer.lock().await = Some(frame_rx);
         });
 
-        // Read the WELCOME (first frame) so we can adopt the host's session id.
-        // A legacy host (v0.3) that doesn't speak HELLO would never send one;
-        // we'd time out via the read erroring. Detect that: a non-WELCOME first
-        // frame or an early EOF bails and we reconnect.
-        let Ok((welcome, mut acc, recv)) = read_welcome(recv).await else {
-            status_line("host didn't send WELCOME (legacy peer?) — reconnecting…");
-            writer.await.ok();
-            tokio::time::sleep(backoff).await;
-            backoff = (backoff * 2).min(BACKOFF_MAX);
-            continue;
-        };
-        if let Some(id) = welcome.session_id {
-            session_id = Some(id);
-        }
+        // One-shot discoverability nudge for the force-quit hatch. Stays on
+        // its own line via status_line's CR/\r\n so the remote prompt draws
+        // cleanly under it.
+        status_line("connected — press Ctrl-C 3× to force-quit if it hangs");
 
-        // A fresh (non-resumed) connection resets the backoff. A resumed one
-        // does too — the resume succeeded, so the host is reachable.
-        backoff = BACKOFF_MIN;
-        if welcome.resumed() {
-            status_line("resumed session");
-        }
-        if !hint_printed {
-            // One-shot discoverability nudge for the force-quit hatch. Stays
-            // on its own line via status_line's CR/\r\n so the remote prompt
-            // draws cleanly under it.
-            status_line("connected — press Ctrl-C 3× to force-quit if it hangs");
-            hint_printed = true;
-        }
-
-        // Heartbeat: PING every interval, enqueued into the frame channel so
-        // the writer puts them on the wire alongside keystrokes.
-        let ping_tx = frame_tx.clone();
-        let stop_ping = stop.clone();
-        let heartbeat = tokio::spawn(async move {
-            let mut interval = tokio::time::interval(HEARTBEAT_INTERVAL);
-            let mut nonce: u64 = 0;
-            loop {
-                interval.tick().await;
-                if stop_ping.load(Ordering::Relaxed) {
-                    break;
-                }
-                nonce = nonce.wrapping_add(1);
-                if ping_tx.send(ping_frame(nonce)).await.is_err() {
-                    break;
-                }
-            }
-        });
-
-        // Read loop: DATA -> stdout, PING -> PONG, track last-heard for stall.
-        let last_heard = Arc::new(tokio::sync::Mutex::new(Instant::now()));
-        let last_heard_for_read = last_heard.clone();
-        let pong_tx = frame_tx.clone();
-        let stdout_seq_for_read = stdout_seq.clone();
-        let read_end = tokio::spawn(async move {
-            let mut recv = recv;
-            let mut tmp = vec![0u8; 16 * 1024];
-            loop {
-                match recv.read(&mut tmp).await {
-                    Ok(Some(n)) => {
-                        acc.extend_from_slice(&tmp[..n]);
-                        while let Some(f) = try_parse_frame(&mut acc) {
-                            *last_heard_for_read.lock().await = Instant::now();
-                            match f.typ {
-                                TYPE_DATA => {
-                                    let mut stdout = tokio::io::stdout();
-                                    if stdout.write_all(&f.payload).await.is_err()
-                                        || stdout.flush().await.is_err()
-                                    {
-                                        return ReadEnd::Disconnected;
-                                    }
-                                    // Bump the force-quit token: any DATA the
-                                    // remote sent resets the Ctrl-C burst so a
-                                    // responsive session never false-triggers.
-                                    stdout_seq_for_read.fetch_add(1, Ordering::Relaxed);
-                                }
-                                TYPE_PING => {
-                                    let _ =
-                                        pong_tx.send(pong_frame(decode_nonce(&f.payload))).await;
-                                }
-                                _ => {} // WELCOME (already consumed), PONG, unknown: ignore
+        // Read loop: DATA -> stdout. PONGs (replies to host PINGs, if any
+        // old peer sends them) and unknown types are ignored. Heartbeat
+        // removed in v0.6 — iroh's QUIC keepalive handles liveness.
+        let mut recv = recv;
+        let mut acc: Vec<u8> = Vec::with_capacity(16 * 1024);
+        let mut tmp = vec![0u8; 16 * 1024];
+        let read_result: Result<()> = loop {
+            match recv.read(&mut tmp).await {
+                Ok(Some(n)) => {
+                    acc.extend_from_slice(&tmp[..n]);
+                    while let Some(f) = try_parse_frame(&mut acc) {
+                        if f.typ == TYPE_DATA {
+                            let mut stdout = tokio::io::stdout();
+                            if stdout.write_all(&f.payload).await.is_err()
+                                || stdout.flush().await.is_err()
+                            {
+                                anyhow::bail!("stdout write failed");
                             }
+                            // Bump the force-quit token: any DATA the
+                            // remote sent resets the Ctrl-C burst.
+                            stdout_seq.fetch_add(1, Ordering::Relaxed);
                         }
+                        // PING, PONG, legacy HELLO/WELCOME, unknown: ignore
                     }
-                    Ok(None) => return ReadEnd::ShellExited,
-                    Err(_) => return ReadEnd::Disconnected,
                 }
+                Ok(None) => break Ok(()), // host closed → shell exited
+                Err(e) => break Err(e).context("connection read failed"),
             }
-        });
+        };
 
-        // Stall watcher: if no frame has arrived for STALL_THRESHOLD, print a
-        // notice once. Doesn't force a reconnect — iroh's QUIC idle timeout
-        // (15–30 s) will eventually error the read and trigger that.
-        let last_heard_for_stall = last_heard.clone();
-        let stop_stall = stop.clone();
-        let stall = tokio::spawn(async move {
-            loop {
-                tokio::time::sleep(Duration::from_secs(2)).await;
-                if stop_stall.load(Ordering::Relaxed) {
-                    break;
-                }
-                let elapsed = last_heard_for_stall.lock().await.elapsed();
-                if elapsed > STALL_THRESHOLD {
-                    status_line(&format!(
-                        "connection stalled (no data for {:.0}s), waiting…",
-                        elapsed.as_secs_f64()
-                    ));
-                }
-            }
-        });
-
-        let end = read_end.await.unwrap_or(ReadEnd::Disconnected);
-        stop.store(true, Ordering::Relaxed);
-        heartbeat.abort();
-        stall.abort();
-        // Cancel the writer and wait for it to return frame_rx to the slot.
-        // (On a network drop the writer's `send.write_all` also errors, but
-        // the notify guarantees it stops promptly in the shell-exit case too,
-        // where the send stream is still alive.)
-        writer_stop.notify_one();
-        writer.await.ok();
-
-        match end {
-            ReadEnd::ShellExited => break Ok(()),
-            ReadEnd::Disconnected => {
-                status_line("reconnecting…");
-                stop.store(false, Ordering::Relaxed);
-            }
-        }
-    };
+        // Cancel the writer (send stream may still be alive on shell-exit).
+        writer.abort();
+        read_result
+    }
+    .await;
 
     // Restore the terminal first, then surface any error on a clean (cooked) tty.
     drop(_guard);
@@ -417,30 +243,6 @@ pub async fn connect(ticket_str: &str) -> Result<()> {
     // would otherwise keep the process alive past the session end. The
     // RawModeGuard has already restored the terminal.
     std::process::exit(i32::from(result.is_err()));
-}
-
-/// Read the WELCOME frame (the host's first frame), returning it, the
-/// leftover accumulator (which may hold coalesced bytes from the same read),
-/// and the recv stream for the caller to keep reading on.
-async fn read_welcome(mut recv: RecvStream) -> Result<(Welcome, Vec<u8>, RecvStream)> {
-    let mut acc: Vec<u8> = Vec::with_capacity(16 * 1024);
-    let mut tmp = vec![0u8; 16 * 1024];
-    let first = loop {
-        if let Some(f) = try_parse_frame(&mut acc) {
-            break f;
-        }
-        match recv.read(&mut tmp).await? {
-            Some(n) => acc.extend_from_slice(&tmp[..n]),
-            None => anyhow::bail!("stream closed before WELCOME"),
-        }
-    };
-    if first.typ != TYPE_WELCOME {
-        anyhow::bail!("expected WELCOME, got frame type {:#x}", first.typ);
-    }
-    let welcome = Welcome::decode(&first.payload)?;
-    // `acc` still holds any bytes that arrived after WELCOME in the same read;
-    // the read loop processes them. Hand recv back so the caller owns it.
-    Ok((welcome, acc, recv))
 }
 
 /// Restore cooked terminal mode on scope exit (and on unwind/panic, since the

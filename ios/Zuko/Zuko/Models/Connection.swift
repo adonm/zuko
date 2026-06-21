@@ -5,39 +5,21 @@ import Foundation
 /// key) plus last-known addresses, so saved connections keep working across
 /// host restarts — Iroh's discovery resolves the current address on dial.
 ///
-/// `lastSessionID` is the host-assigned session id from the most recent
-/// session on this host (v0.4+). Sending it in HELLO on the next connect lets
-/// the host resume that session's PTY + scrollback — even across an app
-/// relaunch. It's optional + decoded with `decodeIfPresent` so pre-v0.4
-/// keychain entries (which lack the field) still load cleanly.
+/// v0.6 dropped session resume (and with it, the `lastSessionID` field).
+/// Each connect gets a fresh PTY on the host; for resumability, run
+/// `tmux`/`zellij`/`screen` inside the zuko session. Old keychain entries
+/// that still carry `lastSessionID` from a v0.4–v0.5 install load cleanly —
+/// Codable ignores unknown keys on decode by default.
 struct Connection: Identifiable, Codable, Hashable {
     var id: UUID
     var label: String
     var ticket: String
     var addedAt: Date
-    var lastSessionID: Data?
 
-    init(id: UUID = UUID(), label: String, ticket: String, addedAt: Date = .now, lastSessionID: Data? = nil) {
+    init(id: UUID = UUID(), label: String, ticket: String, addedAt: Date = .now) {
         self.id = id
         self.label = label.isEmpty ? "Host" : label
         self.ticket = ticket
         self.addedAt = addedAt
-        self.lastSessionID = lastSessionID
-    }
-
-    // Stable Codable keys so adding `lastSessionID` doesn't break entries
-    // written by older builds (the field is simply absent there → nil).
-    enum CodingKeys: String, CodingKey {
-        case id, label, ticket, addedAt, lastSessionID
-    }
-
-    init(from decoder: Decoder) throws {
-        let c = try decoder.container(keyedBy: CodingKeys.self)
-        id = try c.decode(UUID.self, forKey: .id)
-        label = try c.decode(String.self, forKey: .label)
-        ticket = try c.decode(String.self, forKey: .ticket)
-        addedAt = try c.decode(Date.self, forKey: .addedAt)
-        // Pre-v0.4 entries have no lastSessionID — nil is the right value.
-        lastSessionID = try c.decodeIfPresent(Data.self, forKey: .lastSessionID)
     }
 }
