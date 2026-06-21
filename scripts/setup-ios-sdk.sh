@@ -76,7 +76,7 @@ if [ -z "$bundle_dir" ]; then
         curl -fL "https://github.com/$REPO/releases/download/$TAG/$asset" \
             -o "$tarball"
     fi
-    tar -C "$CACHE_DIR" -xzf "$tarball"
+    tar -C "$CACHE_DIR" --warning=no-unknown-keyword -xzf "$tarball"
     rm -f "$tarball"
     bundle_dir="$(find "$CACHE_DIR" -maxdepth 1 -type d \( -name 'darwin.artifactbundle' -o -name 'darwin.xtoolsdk' \) -print | head -1)"
 fi
