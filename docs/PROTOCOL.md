@@ -5,9 +5,9 @@ Iroh bidirectional stream. This document is the spec for client authors — the
 CLI (`src/`) and the iOS app (`ios/Zuko/`) are reference implementations.
 
 zuko is **not** an RPC or a terminal emulator protocol. It is deliberately
-tiny: one stream, two frame types, raw bytes. The host runs a real PTY; the
-client renders it. Everything that works in a local terminal (`vim`, `htop`,
-resize, signals) works because the bytes are passed through verbatim.
+tiny: one stream, two frame types that matter, raw bytes. The host runs a real
+PTY; the client renders it. Everything that works in a local terminal (`vim`,
+`htop`, resize, signals) works because the bytes are passed through verbatim.
 
 ## Transport
 
@@ -40,98 +40,44 @@ across QUIC packets; receivers must accumulate bytes and parse greedily (see
 |------|------|-----------|---------|
 | `0x00` | `DATA` | both | raw terminal bytes |
 | `0x01` | `RESIZE` | client → host | `[cols: u16 BE][rows: u16 BE]` |
-| `0x02` | `HELLO` | client → host | `[flags:u8][cols:u16 BE][rows:u16 BE][sid_len:u8][sid]` |
-| `0x03` | `WELCOME` | host → client | `[flags:u8][sid_len:u8][sid]` |
-| `0x04` | `PING` | both | `[nonce: u64 BE]` (may be empty) |
-| `0x05` | `PONG` | both | `[nonce: u64 BE]` (may be empty) |
+| `0x04` | `PING` | both | `[nonce: u64 BE]` (legacy, ignored by v0.6+) |
+| `0x05` | `PONG` | both | `[nonce: u64 BE]` (legacy, ignored by v0.6+) |
 
 - **`DATA`** — client→host carries keystrokes; host→client carries PTY output.
   Bytes are forwarded verbatim. There is no encoding, escaping, or
   interpretation — a Ctrl-C is the byte `0x03`, a resize keystroke is whatever
   the terminal emulator sends.
 - **`RESIZE`** — tells the host to resize the PTY. May be sent any time the
-  client's window changes. Unknown frame types **must be ignored** (forward
-  compatibility — future types can be added without breaking old clients).
-- **`HELLO`** — the **first frame** a v0.4+ client sends after `open_bi`. It
-  carries the client's capability `flags`, its current terminal size (so the
-  host spawns/resizes the PTY correctly), and an optional session id to resume
-  (empty `sid_len` = start a fresh session). Subsumes the v0.3 leading `RESIZE`.
-- **`WELCOME`** — the host's **first frame** in reply. Carries the host's
-  capability `flags`, the session id it'll use (newly minted for a fresh
-  session, or the resumed id), and the `RESUMED` flag if this was a resume
-  (meaning a ring-buffer replay follows as `DATA` frames). A v0.3 host doesn't
-  speak `HELLO`/`WELCOME`; a v0.4 client falls back to a fresh session and its
-  first layout-pass `RESIZE` corrects the size.
-- **`PING`/`PONG`** — app-level heartbeat. Either side may send a `PING` at any
-  time; the recipient echoes the nonce back as `PONG`. Used to surface a
-  "stalled" state faster than the QUIC idle timeout (see [Heartbeat](#heartbeat)).
-
-### Capability flags (HELLO/WELCOME `flags`)
-
-| bit | name | meaning |
-|-----|------|---------|
-| `0x01` | `RESUME` | the peer supports session resume (HELLO: client; WELCOME: host) |
-| `0x02` | `HEARTBEAT` | the peer sends/understands PING/PONG |
-| `0x04` | `RESUMED` | WELCOME-only: this connection resumed an existing session |
+  client's window changes. **The first frame** the client sends after
+  `open_bi` must be a `RESIZE` carrying the initial size — that doubles as the
+  entire handshake (see [Connection lifecycle](#connection-lifecycle)).
+- **`PING`/`PONG`** — legacy heartbeat from v0.4–v0.5, kept reserved so old
+  peers don't confuse a v0.6 host. v0.6 clients and hosts ignore them (iroh's
+  QUIC keepalive handles transport-level liveness).
+- **Unknown types** — must be ignored (forward compatibility — future types
+  can be added without breaking old clients). Frame types `0x02` (`HELLO`)
+  and `0x03` (`WELCOME`) were used by v0.4–v0.5 for the session-resume
+  handshake; v0.6 dropped both, leaving the gap reserved.
 
 ## Connection lifecycle
 
 1. **Client dials** the host's ticket (see [Ticket](#ticket)) on ALPN `zuko/1`.
-2. **Client opens** the bidi stream and sends a `HELLO` with its capability
-   flags, current size, and an optional session id to resume. (The opener must
-   write first for the host's `accept_bi` to resolve, so `HELLO` doubles as the
-   stream-opening write — and carries the initial size, subsuming the v0.3
-   leading `RESIZE`.) A v0.3 client instead sends a bare `RESIZE`; the host
-   treats that as a legacy new-session handshake.
-3. **Host resolves the session:** if the `HELLO` carried a session id and that
-   session is still live, it **resumes** it (same PTY + shell, same cwd/editor/
-   running command); otherwise it **spawns** a fresh shell (`$SHELL`) on a PTY
-   at the requested size, with `TERM=xterm-256color`, in `$HOME` (overridable
-   via `--shell`, `--shell-args`, `--cwd`).
-4. **Host replies `WELCOME`** with its capability flags, the session id, and
-   the `RESUMED` bit set if this was a resume. On a resume, it then replays the
-   session's recent-output ring buffer as `DATA` frames before live output.
-5. **Pump:** client keystrokes → `DATA` → host writes to PTY; PTY output →
+2. **Client opens** the bidi stream and sends a single `RESIZE` with its
+   current terminal size. That's the entire handshake. (The opener must write
+   first for the host's `accept_bi` to resolve.)
+3. **Host spawns** a fresh shell (`$SHELL`) on a PTY at the requested size,
+   with `TERM=xterm-256color`, in the directory chosen by `zuko host --cwd`
+   (default `$HOME`).
+4. **Pump:** client keystrokes → `DATA` → host writes to PTY; PTY output →
    `DATA` → client renders. The client sends `RESIZE` whenever its window
-   changes (e.g. on `SIGWINCH`). Either side may send `PING`/`PONG` (see
-   [Heartbeat](#heartbeat)).
-6. **Detach vs. end:** a connection drop is a **detach** — the host keeps the
-   session alive (PTY reader keeps buffering into the ring buffer) so a client
-   can reconnect with the session id and resume. The session ends only when the
-   shell exits (host sees PTY EOF → closes the stream → client sees recv EOF →
-   stops) or an operator runs `zuko reap` on the host (kills idle sessions
-   over a threshold — default 1 hour — sparing the session it's run from).
-   The host kills the child when the session is reaped.
+   changes (e.g. on `SIGWINCH`).
+5. **End:** the connection runs until either the shell exits (host sees PTY
+   EOF → closes the stream → client sees recv EOF) or the network drops
+   (either side sees a stream error). Either way **the host kills the PTY** —
+   there's no session persistence, no auto-reconnect, nothing to resume.
 
-## Session resume
-
-A **session** is a PTY + shell + a bounded ring buffer of recent output
-(~1 MiB) that outlives any single connection. The host mints an 8-byte session
-id on first connect and returns it in `WELCOME`; the client sends it back in
-`HELLO` on reconnect. The session id is **not a secret** — the ticket already
-gates access, so anyone holding it can resume any of the host's sessions (same
-trust boundary as mosh's key).
-
-On resume the host replays the ring buffer (starting at the first newline, so
-line-oriented output is clean), then live-feeds. The client re-sends its
-current size in `HELLO`, which resizes the PTY and delivers `SIGWINCH` to
-full-screen apps (`vim`, `htop`) — they redraw, so a resume into a full-screen
-app recovers a clean screen despite the raw-byte replay (zuko has no
-server-side terminal emulator; this is the pragmatic alternative to mosh's
-state-sync).
-
-The iOS app persists the session id on the saved `Connection` (`lastSessionID`)
-so a relaunch can resume; the CLI keeps it in-process for the reconnect loop.
-
-## Heartbeat
-
-iroh's QUIC keepalive (5 s) keeps the transport alive across brief idle, but an
-app-level heartbeat surfaces a stuck link faster and lets the client show a
-"stalled" state. Both sides send `PING` every ~5 s and answer with `PONG`
-(echoing the nonce). If a client receives no frame at all for ~10 s it flips to
-a `stalled` UI state; the actual reconnect triggers when the QUIC idle timeout
-(15–30 s) errors the recv. The host doesn't gate reaping on heartbeat state —
-sessions live forever until the shell exits or `zuko reap` is invoked.
+For long-lived work that survives a disconnect, run `tmux`/`zellij`/`screen`
+*inside* the zuko session. That's the proper layer for resumability.
 
 ## Ticket
 
@@ -227,7 +173,7 @@ Every hop between the shell and the network has a bounded buffer, so a flood
 can't grow memory without limit — it back-pressures all the way back to the
 shell:
 
-- Host output path: PTY reader → bounded channel (128) → iroh send stream. When
+- Host output path: PTYreader → bounded channel (128) → iroh send stream. When
   full, the reader thread blocks → the kernel TTY buffer fills → the shell's
   own `write(2)` blocks. A verbose command simply *pauses* until the client
   catches up; it isn't buffered infinitely anywhere.
@@ -238,19 +184,24 @@ shell:
 
 The iOS outbound queue is capped (`bufferingOldest`, 256) so a user typing or
 pasting during a brownout can't grow memory; it drops the impatient tail
-rather than block the UI. The CLI keeps keystrokes in a bounded channel so
-they flush on reconnect.
+rather than block the UI.
 
-### Why no server-side terminal emulator
+### Why no session resume
 
-mosh runs the terminal emulator on the server so it can send screen *state* on
-resume. zuko replays raw *bytes* from the ring buffer instead — simpler, and
-keeps the client's terminal emulator (GhosttyTerminal, your local terminal) as the
-single source of rendering truth. The trade-off: a resume into a full-screen
-app may briefly show a mid-redraw screen, fixed by re-sending the size
-(→ `SIGWINCH` → redraw). Line-oriented output replays cleanly (the snapshot
-starts at the first newline). A future Tier-4 state-sync would remove the
-caveat at the cost of a much larger rewrite.
+v0.4–v0.5 had mosh-style session persistence: ring buffer, session registry,
+reaper, control socket. v0.6 dropped all of it. Each connection mints a fresh
+PTY, killed when the connection ends. The trade-off:
+
+- **Loss:** a network blip kills your shell state. Running `vim` and the
+  connection drops? `vim` dies with it.
+- **Gain:** no class of "stale session" / "two connections to one PTY" /
+  "garbled replay on resume" bugs. No heap growth from abandoned sessions.
+  No `zuko reap` operator burden. The host is ~60% smaller.
+
+Users who actually want resumability run `tmux`/`zellij`/`screen` *inside*
+the zuko session. Those tools are designed for it, handle redraw cleanly, and
+don't leak PTYs across host restarts. Pushing resume into zuko was a false
+economy.
 
 ## Security
 

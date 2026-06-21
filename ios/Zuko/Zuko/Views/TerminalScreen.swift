@@ -35,10 +35,7 @@ struct TerminalScreen: View {
 
     var body: some View {
         ZStack(alignment: .top) {
-            Color.black.ignoresSafeArea()
-            TerminalSurfaceView(context: terminalState)
-                .ignoresSafeArea(.container, edges: [.bottom])
-
+            terminalContent
             if let banner = statusMessage {
                 statusBar(banner)
             }
@@ -47,17 +44,66 @@ struct TerminalScreen: View {
         .navigationTitle(connection.label)
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
+            // Refresh stays as a top-level icon — it's the one users reach
+            // for mid-session (after a garbled reconnect, etc.). Font and
+            // theme are set-once-and-forget, so they fold into a single
+            // overflow Menu with Disconnect (destructive, lives behind a
+            // tap to avoid accidental hits). Two trailing items instead of
+            // four keeps the inline nav title from getting squeezed on
+            // iPhone.
             ToolbarItemGroup(placement: .topBarTrailing) {
-                fontMenu
-                themeMenu
                 refreshButton
-                Button {
-                    session.disconnect()
-                    dismiss()
+                Menu {
+                    Menu("Font size") {
+                        Button("A−  smaller") {
+                            themeStore.setFontSize(themeStore.fontSize - 1)
+                        }
+                        Text("\(Int(themeStore.fontSize.rounded())) pt")
+                        Button("A+  larger") {
+                            themeStore.setFontSize(themeStore.fontSize + 1)
+                        }
+                        Divider()
+                        Button("Reset to \(Int(ThemeStore.defaultFontSize)) pt") {
+                            themeStore.setFontSize(ThemeStore.defaultFontSize)
+                        }
+                    }
+                    Menu("Color theme") {
+                        Section("Popular") {
+                            ForEach(themeStore.popularThemes) { theme in
+                                Button {
+                                    themeStore.setTheme(theme.name)
+                                } label: {
+                                    if themeStore.selectedName == theme.name {
+                                        Label(theme.name, systemImage: "checkmark")
+                                    } else {
+                                        Text(theme.name)
+                                    }
+                                }
+                            }
+                        }
+                        Button {
+                            themeStore.setTheme(nil)
+                        } label: {
+                            if themeStore.selectedName == nil {
+                                Label("Default (Afterglow / Alabaster)", systemImage: "checkmark")
+                            } else {
+                                Text("Default (Afterglow / Alabaster)")
+                            }
+                        }
+                        Divider()
+                        Button("Browse all (\(GhosttyThemeCatalog.allThemes.count))…") {
+                            showingThemeBrowser = true
+                        }
+                    }
+                    Divider()
+                    Button("Disconnect", role: .destructive) {
+                        session.disconnect()
+                        dismiss()
+                    }
                 } label: {
-                    Image(systemName: "xmark.circle")
+                    Image(systemName: "ellipsis.circle")
                 }
-                .accessibilityLabel("Disconnect")
+                .accessibilityLabel("Appearance and session")
             }
         }
         .sheet(isPresented: $showingThemeBrowser) {
@@ -71,19 +117,14 @@ struct TerminalScreen: View {
             // path (defaults) costs only three cheap equality checks.
             terminalState.setTheme(themeStore.currentTheme)
             applyFontSize(themeStore.fontSize)
-            // Resume the prior session if we have a saved id for this host;
-            // the host replays recent output.
-            session.onSessionID = { [connection] id in
-                store.updateSessionID(id, for: connection)
-            }
             // Attach the session's host-managed I/O backend before connect so
-            // the first HELLO carries the surface's actual grid size. This
+            // the first RESIZE carries the surface's actual grid size. This
             // access also realises `session.inMemorySession` (lazy) before the
             // read loop can touch it.
             terminalState.configuration = TerminalSurfaceOptions(
                 backend: .inMemory(session.inMemorySession)
             )
-            session.connect(ticket: connection.ticket, sessionID: connection.lastSessionID)
+            session.connect(ticket: connection.ticket)
         }
         .onChange(of: themeStore.selectedName) {
             // Live theme switch from the toolbar picker / browser sheet.
@@ -98,6 +139,21 @@ struct TerminalScreen: View {
         }
     }
 
+    /// The terminal surface + touch-mouse overlay. Extracted from `body`
+    /// so Swift's type-checker can resolve the parent ZStack in reasonable
+    /// time — putting these in the body alongside the toolbar Menu above
+    /// pushes the body over the compiler's complexity budget.
+    private var terminalContent: some View {
+        ZStack(alignment: .top) {
+            Color.black.ignoresSafeArea()
+            TerminalSurfaceView(context: terminalState)
+                .ignoresSafeArea(.container, edges: [.bottom])
+            // Touch-to-mouse bridge for TUI apps that enable mouse capture
+            // (btop, yazi, zellij, vim+`set mouse=a`). See TouchMouseInput.swift.
+            TouchMouseInput()
+        }
+    }
+
     /// Rebuilds the terminal configuration with the current font size and
     /// pushes it to the controller. The package doesn't expose a single
     /// "set just the font size" call — `setTerminalConfiguration` replaces
@@ -109,71 +165,6 @@ struct TerminalScreen: View {
             $0.withFontSize(size)
         }
         terminalState.setTerminalConfiguration(config)
-    }
-
-    /// Type-size Menu: A− / A+ / reset, plus the live value. Stepper would
-    /// also work but Buttons give bigger tap targets and the menu closes
-    /// after each tap (acceptable — coarse adjustment; pinch-to-zoom covers
-    /// fine adjustment on the surface itself).
-    private var fontMenu: some View {
-        Menu {
-            Section("Font size") {
-                Button("A−  smaller") {
-                    themeStore.setFontSize(themeStore.fontSize - 1)
-                }
-                Text("\(Int(themeStore.fontSize.rounded())) pt")
-                Button("A+  larger") {
-                    themeStore.setFontSize(themeStore.fontSize + 1)
-                }
-            }
-            Section {
-                Button("Reset to \(Int(ThemeStore.defaultFontSize)) pt") {
-                    themeStore.setFontSize(ThemeStore.defaultFontSize)
-                }
-            }
-        } label: {
-            Image(systemName: "textformat")
-        }
-        .accessibilityLabel("Font size")
-    }
-
-    /// Palette-button dropdown for quick theme switching. Popular section +
-    /// "Browse all…" (opens the searchable sheet with the full 485 catalog).
-    /// Tap-to-apply; `.onChange(of: themeStore.selectedName)` above pushes
-    /// the new theme to the terminal surface immediately.
-    private var themeMenu: some View {
-        Menu {
-            Section("Popular") {
-                ForEach(themeStore.popularThemes) { theme in
-                    Button {
-                        themeStore.setTheme(theme.name)
-                    } label: {
-                        if themeStore.selectedName == theme.name {
-                            Label(theme.name, systemImage: "checkmark")
-                        } else {
-                            Text(theme.name)
-                        }
-                    }
-                }
-            }
-            Section {
-                Button {
-                    themeStore.setTheme(nil)
-                } label: {
-                    if themeStore.selectedName == nil {
-                        Label("Default (Afterglow / Alabaster)", systemImage: "checkmark")
-                    } else {
-                        Text("Default (Afterglow / Alabaster)")
-                    }
-                }
-            }
-            Button("Browse all (\(GhosttyThemeCatalog.allThemes.count))…") {
-                showingThemeBrowser = true
-            }
-        } label: {
-            Image(systemName: "paintpalette")
-        }
-        .accessibilityLabel("Color theme")
     }
 
     /// Force-clear the local surface and trigger a redraw on the host. Use
@@ -207,20 +198,11 @@ struct TerminalScreen: View {
     private var statusMessage: String? {
         switch session.status {
         case .connecting:
-            // Distinguish a fresh connect from a resume so the user knows
-            // their prior session (and PTY on the host) is being picked
-            // back up, not started from scratch.
-            return connection.lastSessionID != nil
-                ? "Resuming session…"
-                : "Connecting to host…"
-        case .reconnecting:
-            return "Reconnecting…"
-        case .stalled:
-            return "Connection stalled — will resume"
-        case .failed(let reason):
-            return "Failed: \(reason)"
+            return "Connecting to host…"
         case .disconnected(let reason):
             return reason == "disconnected" ? nil : reason
+        case .failed(let reason):
+            return "Failed: \(reason)"
         case .connected, .idle:
             return nil
         }

@@ -6,8 +6,6 @@ enum SessionStatus: Equatable {
     case idle
     case connecting
     case connected
-    case reconnecting
-    case stalled
     case disconnected(String)
     case failed(String)
 }
@@ -27,45 +25,25 @@ enum SessionStatus: Equatable {
 /// are fired from libghostty's C surface callbacks on arbitrary threads, so
 /// they hop to the main actor before touching any `IrohSession` state.
 ///
-/// ## Session resume (v0.4)
+/// ## Single-shot (v0.6)
 ///
-/// The session runs in a reconnect loop. On a network drop (recv errors) we
-/// reconnect and send a `HELLO` carrying the session id the host assigned on
-/// the first connection; the host resumes the same PTY, replays recent output,
-/// and we keep going. On a genuine shell exit (recv EOF) we stop. A bounded
-/// backoff spaces reconnect attempts; `disconnect()` stops the loop.
-///
-/// ## Heartbeat
-///
-/// We send a `PING` every ~5 s and answer inbound `PING`s with `PONG`. If no
-/// frame arrives for ~10 s we flip to `.stalled` (the UI shows it) — iroh's
-/// QUIC keepalive keeps the transport alive, but this surfaces a stuck link to
-/// the user faster than the 15–30 s QUIC idle timeout, after which the recv
-/// errors and we reconnect.
+/// No auto-reconnect, no heartbeat, no session resume. The connection lives
+/// for as long as the iroh stream is open; on drop (network loss, host down,
+/// shell exit) `status` flips to `.disconnected(reason)` and the user is
+/// prompted to reconnect by navigating back and tapping the connection again
+/// (or re-invoking `connect`). Users running long-lived work should do so
+/// inside `tmux`/`zellij`/`screen` on the host — that's the proper layer for
+/// resumability.
 @MainActor
 final class IrohSession: ObservableObject {
     static let alpn = Data("zuko/1".utf8)
 
     /// Bound on the outbound keystroke/resize queue. With a healthy network
     /// this never fills — frames are tiny and `send.writeAll` drains them
-    /// immediately — it's an OOM safety net for a brownout, where the link
-    /// times out within ~15–30 s anyway (iroh's path idle timeout). The default
-    /// `AsyncStream` buffering policy is `.unbounded`, so without this a user
-    /// typing or pasting during an interruption could grow memory without
-    /// limit. `.bufferingOldest` preserves the head of any in-flight input
-    /// (ordered terminal input is more load-bearing at the front of a sequence
-    /// than at the impatient tail) and drops new keystrokes under pressure
+    /// immediately — it's an OOM safety net. `.bufferingOldest` preserves the
+    /// head of any in-flight input and drops new keystrokes under pressure
     /// rather than blocking the main actor.
     private static let outboundFrameCap = 256
-
-    /// Reconnect backoff: starts here, doubles, caps here.
-    private static let backoffMin: Duration = .milliseconds(500)
-    private static let backoffMax: Duration = .seconds(5)
-
-    /// Heartbeat: PING interval + stall threshold (no inbound frame for this
-    /// long → `.stalled`).
-    private static let heartbeatInterval: Duration = .seconds(5)
-    private static let stallThresholdSeconds: Double = 10
 
     @Published private(set) var status: SessionStatus = .idle
 
@@ -108,58 +86,41 @@ final class IrohSession: ObservableObject {
         return InMemoryTerminalSession(write: write, resize: resize)
     }()
 
-    /// Fired on the main actor whenever the host assigns/updates our session
-    /// id (after a WELCOME). The view persists it on the `Connection` so a
-    /// later app launch can resume the same session. `nil` is passed when the
-    /// session ends or `disconnect()` clears it.
-    var onSessionID: ((Data?) -> Void)?
-
     private var endpoint: Endpoint?
     private var connection: IrohLib.Connection?
 
     private var runTask: Task<Void, Never>?
     private var writeContinuation: AsyncStream<Data>.Continuation?
 
-    /// The host-assigned session id for the current/recent session, echoed in
-    /// HELLO on reconnect so the host resumes the same PTY. Seeded from the
-    /// saved `Connection.lastSessionID` by `connect(ticket:sessionID:)`;
-    /// cleared by `disconnect()` (a fresh connect starts a new session).
-    private(set) var sessionID: Data?
-
-    /// Tracks whether `disconnect()` was called, so the cancellation handler
-    /// can tell an intentional disconnect (we set this, then cancel the task)
+    /// Tracks whether `disconnect()` was called, so the task's cancellation
+    /// handler can tell an intentional disconnect (we set this, then cancel)
     /// apart from an external cancellation.
     private var disconnectRequested = false
 
     /// Bumped when GhosttyTerminal reports a new grid size; read by the
-    /// reconnect loop so each HELLO carries the current size (and a resumed
-    /// full-screen app gets a SIGWINCH → redraw). Packed as cols<<16 | rows.
+    /// connect path so the initial RESIZE carries the current size. Packed as
+    /// cols<<16 | rows.
     private var packedSize: UInt32 = (80 << 16) | 24
 
+    /// Connect to a host. Single-shot in v0.6 — no resume, no reconnect loop.
+    /// On connection end the status flips to `.disconnected` or `.failed` and
+    /// the caller (or the user) decides whether to try again.
     func connect(ticket: String) {
-        connect(ticket: ticket, sessionID: nil)
-    }
-
-    /// Connect to a host, optionally resuming a prior session by its id.
-    /// `sessionID` is the saved `Connection.lastSessionID` (nil for a fresh
-    /// session). The host replays the session's recent output on resume.
-    func connect(ticket: String, sessionID: Data?) {
         guard !isConnecting else { return }
         disconnectRequested = false
-        self.sessionID = sessionID
         status = .connecting
         runTask?.cancel()
         let cleaned = ticket.trimmingCharacters(in: .whitespacesAndNewlines)
         runTask = Task { [weak self] in
             guard let self else { return }
-            await self.runReconnectLoop(ticket: cleaned)
+            await self.runOneConnection(ticket: cleaned)
         }
     }
 
     func disconnect() {
-        // Record intent *before* cancelling, so the cancellation handler that
-        // fires asynchronously sees it and keeps the "disconnected" status we
-        // set here (rather than overwriting it with "cancelled").
+        // Record intent *before* cancelling, so the connection task sees it
+        // and reports `.disconnected("disconnected")` rather than treating
+        // the cancellation as a failure.
         disconnectRequested = true
         runTask?.cancel()
         writeContinuation?.finish()
@@ -167,8 +128,6 @@ final class IrohSession: ObservableObject {
         let ep = endpoint
         connection = nil
         endpoint = nil
-        sessionID = nil
-        onSessionID?(nil)
         status = .disconnected("disconnected")
         // Best-effort graceful close off the hot path.
         Task { try? await ep?.close() }
@@ -176,7 +135,6 @@ final class IrohSession: ObservableObject {
 
     private var isConnecting: Bool {
         if case .connecting = status { return true }
-        if case .reconnecting = status { return true }
         return false
     }
 
@@ -193,162 +151,81 @@ final class IrohSession: ObservableObject {
         writeContinuation?.yield(Wire.encodeResize(cols: cols, rows: rows))
     }
 
-    // MARK: - Reconnect loop
+    // MARK: - Connection
 
-    private func runReconnectLoop(ticket: String) async {
+    /// Dial, send the initial RESIZE (v0.6 handshake — also tells the host
+    /// the terminal size before the first byte of input flows), pump bytes
+    /// both ways until the stream ends, then surface the outcome as
+    /// `.disconnected` or `.failed`.
+    private func runOneConnection(ticket: String) async {
         do {
             let ep = try await Endpoint.bind(options: EndpointOptions(preset: presetN0()))
             endpoint = ep
             let addr = try EndpointTicket.fromString(str: ticket).endpointAddr()
 
-            var backoff = Self.backoffMin
-            repeat {
-                if Task.isCancelled { return }
-                do {
-                    // Returns normally only on a genuine shell exit (recv
-                    // EOF) — in which case we stop reconnecting. Anything else
-                    // (dial/stream/handshake failure, mid-session drop) throws
-                    // and we back off + reconnect, resuming the session.
-                    try await runOneConnection(endpoint: ep, addr: addr)
-                    return
-                } catch is CancellationError {
-                    return
-                } catch {
-                    // Connection/stream/handshake failure → reconnect (resume).
-                    if disconnectRequested { return }
-                    // Finish the old write pump so its detached task ends
-                    // before the next connection starts a fresh one.
-                    writeContinuation?.finish()
-                    writeContinuation = nil
-                    connection = nil
-                    status = .reconnecting
-                    try? await Task.sleep(for: backoff)
-                    backoff = min(backoff * 2, Self.backoffMax)
-                }
-            } while !Task.isCancelled
+            let conn = try await ep.connect(addr: addr, alpn: Self.alpn)
+            connection = conn
+            let bi = try await conn.openBi()
+            let send = bi.send()
+            let recv = bi.recv()
+
+            // Initial RESIZE — acts as the v0.6 handshake (tells the host the
+            // grid size before any input flows). Sent directly on `send`
+            // before the write pump touches it, so it's guaranteed first on
+            // the wire.
+            let (cols, rows) = unpackSize(packedSize)
+            try await send.writeAll(buf: Wire.encodeResize(cols: cols, rows: rows))
+
+            // Start the write pump (detached, owns `send` — see its docs).
+            startWritePump(send: send)
+
+            status = .connected
+
+            // Read loop — runs until EOF (host closed → shell exited) or
+            // error (network drop). No heartbeat/stall watcher in v0.6.
+            try await readLoop(recv: recv)
+
+            writeContinuation?.finish()
+            writeContinuation = nil
+            connection = nil
+            status = .disconnected("session ended")
         } catch is CancellationError {
-            if !disconnectRequested { status = .disconnected("cancelled") }
+            if !disconnectRequested {
+                status = .disconnected("cancelled")
+            }
         } catch {
-            status = .failed(error.localizedDescription)
+            connection = nil
+            if disconnectRequested {
+                status = .disconnected("disconnected")
+            } else {
+                status = .failed(error.localizedDescription)
+            }
         }
-    }
-
-    /// Run one connection attempt: dial, open the bidi stream, do the
-    /// HELLO/WELCOME handshake, then drive the read loop + write pump +
-    /// heartbeat until the read half ends. Throws on any failure (the caller
-    /// backs off and reconnects). Returns normally on a genuine shell exit
-    /// (recv EOF → the loop is done and we stop reconnecting).
-    private func runOneConnection(endpoint: Endpoint, addr: EndpointAddr) async throws {
-        let conn = try await endpoint.connect(addr: addr, alpn: Self.alpn)
-        connection = conn
-        let bi = try await conn.openBi()
-        let send = bi.send()
-        let recv = bi.recv()
-
-        // Handshake: HELLO (caps + current size + session id) then a RESIZE.
-        // Sent directly on `send` before the write pump touches it, so they're
-        // guaranteed first on the wire (a resumed session's ring replay + the
-        // PTY's SIGWINCH redraw both depend on the size being known up front).
-        let (cols, rows) = unpackSize(packedSize)
-        let hello = Wire.encodeHello(
-            flags: Wire.flagResume | Wire.flagHeartbeat,
-            cols: cols,
-            rows: rows,
-            sessionID: sessionID
-        )
-        try await send.writeAll(buf: hello)
-        try await send.writeAll(buf: Wire.encodeResize(cols: cols, rows: rows))
-
-        // Start the write pump (detached, owns `send` — see its docs).
-        startWritePump(send: send)
-
-        status = .connected
-
-        // Read loop + heartbeat + stall watcher. Returns when recv ends:
-        // EOF → shell exited (stop), error → throw (reconnect).
-        try await readLoop(recv: recv)
-
-        // Shell exited cleanly — stop the reconnect loop. The write pump is
-        // finished + cancelled below; the caller returns normally.
-        writeContinuation?.finish()
-        status = .disconnected("session ended")
     }
 
     private func readLoop(recv: RecvStream) async throws {
         var buffer = Data()
-        let lastHeard = LastHeard()
-        let pongContinuation = writeContinuation
-
-        // Heartbeat: enqueue a PING every interval.
-        let pingContinuation = writeContinuation
-        let pingTask = Task.detached {
-            var nonce: UInt64 = 0
-            while !Task.isCancelled {
-                try? await Task.sleep(for: Self.heartbeatInterval)
-                if Task.isCancelled { break }
-                nonce &+= 1
-                pingContinuation?.yield(Wire.encodePing(nonce: nonce))
-            }
-        }
-
-        // Stall watcher: flip to `.stalled` if no frame has arrived for a while.
-        let stallTask = Task { [weak self] in
-            while !Task.isCancelled {
-                try? await Task.sleep(for: .seconds(2))
-                if Task.isCancelled { break }
-                guard let self else { break }
-                if lastHeard.elapsedSeconds() > Self.stallThresholdSeconds {
-                    if case .connected = self.status {
-                        self.status = .stalled
-                    }
-                }
-            }
-        }
-
-        defer {
-            pingTask.cancel()
-            stallTask.cancel()
-        }
-
         while !Task.isCancelled {
             let chunk: Data
             do {
                 chunk = try await recv.read(sizeLimit: 16 * 1024)
             } catch {
-                // Network drop → reconnect (resume).
-                pingTask.cancel(); stallTask.cancel()
                 throw error
             }
             if chunk.isEmpty {
-                // Recv EOF → the host closed the stream → shell exited. Stop.
-                pingTask.cancel(); stallTask.cancel()
+                // Recv EOF → the host closed the stream → shell exited.
                 return
             }
             buffer.append(chunk)
             while let frame = Wire.parse(&buffer) {
-                lastHeard.touch()
                 switch frame.type {
                 case Wire.data:
-                    // Recovered from `.stalled` — we're hearing the host again.
-                    if case .stalled = status { status = .connected }
                     // Hand the raw PTY bytes to libghostty for ANSI parse +
                     // grid update. `receive(_:)` is lock-protected on the
-                    // InMemoryTerminalSession; if the surface hasn't attached
-                    // yet (early replay before the view appears) it drops them
-                    // — same lossy-but-safe behaviour as the old SwiftTerm
-                    // path, and the host's resume replay recovers.
+                    // InMemoryTerminalSession.
                     inMemorySession.receive(Data(frame.payload))
-                case Wire.ping:
-                    pongContinuation?.yield(Wire.encodePong(nonce: Wire.decodeNonce(frame.payload)))
-                case Wire.welcome:
-                    // WELCOME is read by the handshake before the loop; if one
-                    // arrives here (e.g. a misbehaving host) just adopt its id.
-                    if let w = Wire.decodeWelcome(frame.payload) {
-                        sessionID = w.sessionID
-                        onSessionID?(w.sessionID)
-                    }
                 default:
-                    break // PONG, RESIZE inbound, unknown: ignore
+                    break // PING, PONG, legacy HELLO/WELCOME, unknown: ignore
                 }
             }
         }
@@ -409,13 +286,4 @@ final class IrohSession: ObservableObject {
     private func unpackSize(_ packed: UInt32) -> (UInt16, UInt16) {
         (UInt16(packed >> 16), UInt16(packed & 0xFFFF))
     }
-}
-
-/// A tiny "last time we heard from the host" tracker for the stall watcher.
-/// `touch()` resets; `elapsedSeconds()` reads. The read loop is main-actor-
-/// isolated so the accesses are serialised — no lock needed.
-private final class LastHeard {
-    private var when: Date = .now
-    func touch() { when = .now }
-    func elapsedSeconds() -> Double { -when.timeIntervalSinceNow }
 }

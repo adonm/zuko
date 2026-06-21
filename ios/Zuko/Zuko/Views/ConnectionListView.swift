@@ -23,9 +23,6 @@ struct ConnectionListView: View {
                                     .padding(.vertical, 6)
                             }
                             .buttonStyle(.borderedProminent)
-                            Text("No saved hosts yet.")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
                         }
                         .padding()
                     }

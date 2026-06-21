@@ -40,7 +40,6 @@
 //! so splitting on the first `\n` is unambiguous.
 
 use anyhow::{anyhow, bail, Context, Result};
-use backon::{ConstantBuilder, Retryable};
 use iroh::{endpoint::presets, Endpoint};
 use std::io::IsTerminal;
 use std::time::Duration;
@@ -337,43 +336,40 @@ pub async fn claim(
 
 /// Dial the throwaway host, retrying with constant backoff. The throwaway
 /// endpoint is resolved via the N0 DNS address-lookup, which can lag a couple
-/// seconds behind `zuko share` coming online; backon handles the tenacity.
+/// seconds behind `zuko share` coming online, so we retry until the outer
+/// deadline expires.
 ///
-/// `timeout_secs > 0` bounds the *total* wall time (across all attempts) via an
-/// outer deadline; `timeout_secs == 0` retries indefinitely (matches the
-/// `Claim --timeout` help and `share`'s `--timeout 0` semantics).
+/// `timeout_secs > 0` bounds the *total* wall time; `timeout_secs == 0`
+/// retries indefinitely (matches the `Claim --timeout` help and `share`'s
+/// `--timeout 0` semantics).
 async fn dial_throwaway(
     endpoint: &Endpoint,
     node_id: iroh::PublicKey,
     timeout_secs: u64,
 ) -> Result<iroh::endpoint::Connection> {
     // Constant 2s between attempts: long enough for DNS propagation, short
-    // enough that the outer deadline still allows many tries.
+    // enough that a typical 60 s timeout still allows ~30 tries.
     const DELAY: Duration = Duration::from_secs(2);
 
-    // `timeout_secs == 0` means "wait forever" — drop the retry cap so the
-    // only bound is the user's patience (or Ctrl-C). With a deadline we still
-    // cap retries so the backoff loop terminates even if every dial fails
-    // instantly; without one, the user has explicitly opted into forever.
-    let retry = (|| async { endpoint.connect(node_id, HANDOFF_ALPN).await }).retry(
-        ConstantBuilder::default()
-            .with_delay(DELAY)
-            .with_max_times(if timeout_secs == 0 {
-                usize::MAX
-            } else {
-                // ~2x the worst-case wall time (DELAY * attempts) so the
-                // outer deadline is always the binding constraint.
-                30
-            }),
-    );
+    let deadline = if timeout_secs == 0 {
+        None
+    } else {
+        Some(tokio::time::Instant::now() + Duration::from_secs(timeout_secs))
+    };
 
-    if timeout_secs == 0 {
-        return retry.await.context("dial throwaway endpoint");
+    loop {
+        match endpoint.connect(node_id, HANDOFF_ALPN).await {
+            Ok(conn) => return Ok(conn),
+            Err(_) => {
+                if let Some(deadline) = deadline
+                    && tokio::time::Instant::now() >= deadline
+                {
+                    anyhow::bail!("timed out after {timeout_secs}s");
+                }
+                tokio::time::sleep(DELAY).await;
+            }
+        }
     }
-    tokio::time::timeout(Duration::from_secs(timeout_secs), retry)
-        .await
-        .map_err(|_| anyhow::anyhow!("timed out after {timeout_secs}s"))?
-        .context("dial throwaway endpoint")
 }
 
 /// Read a uni recv stream to end, bailing if it exceeds `max` bytes.

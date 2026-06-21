@@ -61,6 +61,13 @@ let package = Package(
             name: "Zuko",
             dependencies: [
                 .product(name: "GhosttyTerminal", package: "libghostty-spm"),
+                // Direct dependency on the C wrapper (libghostty) — used by
+                // `TouchMouseInput.swift` to call `ghostty_surface_mouse_*`
+                // and `ghostty_surface_mouse_captured` via Mirror reflection,
+                // because the Swift `TerminalSurface` wrapper keeps those
+                // APIs `internal`. GhosttyTerminal transitively links the
+                // static lib so we don't pull in a second copy.
+                .product(name: "GhosttyKit", package: "libghostty-spm"),
                 // 485 iTerm2-Color-Schemes themes (MIT) for the in-app
                 // theme picker on TerminalScreen.
                 .product(name: "GhosttyTheme", package: "libghostty-spm"),
