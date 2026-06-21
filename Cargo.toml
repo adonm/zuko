@@ -62,8 +62,6 @@ crossterm = "0.28"
 clap = { version = "4", features = ["derive"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-# Retry/backoff for `zuko claim`'s dial (N0 DNS lookup lags `zuko share` online).
-backon = "1"
 # Cross-process advisory locking for the saved-hosts file (`zuko add`/`rm`).
 fs4 = "0.12"
 # Interactive host picker for bare `zuko` (arrow-key Select with filtering).

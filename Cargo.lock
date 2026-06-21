@@ -5092,7 +5092,6 @@ version = "0.6.0"
 dependencies = [
  "anyhow",
  "argon2",
- "backon",
  "clap",
  "crossterm 0.28.1",
  "fs4",

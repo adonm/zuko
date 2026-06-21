@@ -17,7 +17,6 @@ zuko connect <name>    attach a terminal to a saved host
 zuko <name>            shorthand for `zuko connect <name>`
 zuko ls                list saved hosts (by name)
 zuko rm <name>         remove a saved host
-zuko reap              kill idle sessions on this host (default: idle > 1h)
 ```
 
 Saved hosts live at `~/.config/zuko/hosts`; the host's persistent identity lives
@@ -73,9 +72,11 @@ zuko home                  # = zuko connect home (shorthand)
 ```
 
 The session is a real PTY — `vim`, `htop`, resize, and Ctrl-C all behave like a
-local shell. Exiting the remote shell (`exit` or Ctrl-D) ends the session for
-real; merely losing the connection does **not** — the client reconnects and
-resumes the same shell (see [Sessions & resume](#sessions--resume) below).
+local shell. Exiting the remote shell (`exit` or Ctrl-D) ends the session; so
+does a network drop. **There's no auto-reconnect or session resume** — each
+connect mints a fresh PTY on the host, killed when the connection ends. For
+long-lived work that survives disconnects, run `tmux`/`zellij`/`screen`
+*inside* the zuko session.
 
 ## Pairing: how `share` / `claim` work
 
@@ -126,43 +127,7 @@ zuko host --help
 | `--shell-args` | _(none)_ | Extra args for the shell. |
 | `--cwd` | `$HOME` | Working directory. |
 
-## Sessions & resume
-
-A zuko session — the PTY, the shell running in it, and a ~1 MiB ring buffer of
-recent output — **outlives the connection**. When a client disconnects (network
-drop, app backgrounded, laptop slept) the host *detaches*: the PTY reader keeps
-running and the ring buffer keeps filling, but nothing is sent over the network.
-A client that reconnects (with the session id the host assigned) resumes the
-same shell — recent output is replayed from the buffer, then live output flows
-again. State (cwd, running command, an open editor) is preserved across the
-blip and even across an app relaunch.
-
-A session ends, and the host reaps it, when:
-
-- the shell exits (the host sees PTY EOF), or
-- `zuko reap` is run on the host and the session has been idle (no PTY
-  output, no client keystrokes, no attach) for over the threshold — default
-  **1 hour**, override with `--idle-secs`. The session `zuko reap` is run
-  from is always spared (detected via `$ZUKO_SESSION_ID`, which the host sets
-  on every spawned shell), so a `zuko reap` inside a zuko session can't kill
-  its own shell out from under itself. Reaped sessions are killed + removed
-  from the registry; their shells get `SIGKILL` (same as the auto-reaper).
-- `zuko host` restarts (the shells get `SIGHUP`, same as restarting a tmux
-  server — there's no on-disk session persistence across host restarts yet).
-
-Sessions are **not** auto-reaped on a timer — a detached session with a live
-shell stays put forever (so resuming days later works). The trade-off is
-memory: an abandoned `vim` will sit there until you intervene. `zuko reap`
-is the operator-facing cleanup path; `logout`, restarting `zuko host`, or
-using your process manager on the host all work too.
-
-The CLI (`zuko connect`) auto-reconnects with a bounded backoff; the iOS app
-shows *Reconnecting…* / *Connection stalled* states and resumes on its own. The
-session id is **not a secret** — the ticket already gates access, so anyone
-holding it can resume any of the host's sessions (same trust boundary as mosh's
-key).
-
-### Force-quitting the CLI
+## Force-quitting the CLI
 
 The CLI runs the terminal in raw mode so Ctrl-C is forwarded to the remote
 shell (it has to be — that's how you interrupt a remote command). The
@@ -171,18 +136,14 @@ can't get you out. The escape hatch is **Ctrl-C 3× within ~1 s, with no
 remote output between presses** — that force-exits the client (code 130).
 The "no output" gate means interrupting a silent-but-healthy remote command
 (e.g. `find /`) doesn't false-trigger; only a session that's stopped
-responding altogether does. Since the remote shell is typically inside
-`tmux`/`zellij`, the abrupt detach doesn't lose any work.
+responding altogether does.
 
 ## Multiple devices
 
-Each session is its own independent PTY + shell. Several phones, terminals (or
-the same one multiple times) can be attached at once under the host's single
+Each connection is its own independent PTY + shell. Several phones, terminals
+(or the same one multiple times) can connect at once under the host's single
 stable identity — and because pairing happens through one-time codes, you can
-mint a fresh code per device without rotating anything. A second client
-resuming an already-attached session **roams** (takes over; the previous
-connection is dropped), matching the mosh/tmux model rather than mirroring one
-screen to many.
+mint a fresh code per device without rotating anything.
 
 ## Rotate the identity
 
