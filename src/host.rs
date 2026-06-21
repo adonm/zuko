@@ -725,6 +725,17 @@ async fn handle_client_frame(
 ) -> bool {
     match frame.typ {
         TYPE_DATA => {
+            // Verbose byte trace for input diagnostics. Enable with
+            // RUST_LOG=zuko=debug. Reads as: byte values in hex, ASCII in
+            // brackets where printable. Lets us verify LF→CR normalisation
+            // on the client and diagnose any other input quirks without
+            // needing to instrument the iOS side.
+            tracing::debug!(
+                target: "zuko::host::input",
+                bytes = ?frame.payload.iter().map(|b| format!("{:02x}", b)).collect::<Vec<_>>(),
+                ascii = %String::from_utf8_lossy(&frame.payload),
+                "client DATA frame"
+            );
             if pty_tx
                 .send(PtyCmd::Data(frame.payload.clone()))
                 .await
