@@ -58,7 +58,7 @@ jobs:
         # We keep this step for the apt-based entry.
         run: mise bootstrap packages install --yes
 
-      - name: Install swift + llvm via Homebrew
+      - name: Install swift + llvm + libxml2 via Homebrew
         # Explicit `brew install` because mise bootstrap above skips brew on
         # Ubuntu. /home/linuxbrew/.linuxbrew is preinstalled on ubuntu-latest
         # GitHub runners; we just have to call brew by full path because
@@ -68,14 +68,19 @@ jobs:
         # llvm provides llvm-lipo (fat-lib assembly) + llvm-objcopy (symbol
         # localization in build-ffi.sh).
         #
+        # libxml2: swift-sdk needs libxml2.so.16 at runtime, which is the
+        # SONAME shipped by Homebrew's libxml2 formula. The formula isn't
+        # auto-installed by `brew install swift` on the GitHub runner
+        # (system libxml2 may shadow it), so install explicitly to be sure.
+        #
         # `brew install` skips formulae that are already poured but not
         # linked (the ubuntu-latest runner ships swift 6.2.4 unlinked —
-        # Homebrew's "keg-only" state). `brew link --overwrite` after
-        # install forces the symlinks into $BREW_PREFIX/bin so swift +
-        # llvm binaries land on PATH.
+        # Homebrew's "keg-only" state). `brew link --overwrite --force`
+        # after install forces the symlinks into $BREW_PREFIX/bin so the
+        # binaries land on PATH.
         run: |
-          /home/linuxbrew/.linuxbrew/bin/brew install swift llvm
-          /home/linuxbrew/.linuxbrew/bin/brew link --overwrite --force swift llvm
+          /home/linuxbrew/.linuxbrew/bin/brew install swift llvm libxml2
+          /home/linuxbrew/.linuxbrew/bin/brew link --overwrite --force swift llvm libxml2
 
       - name: Put Homebrew tools on PATH
         # GITHUB_PATH writes affect every SUBSEQUENT step; this step uses
