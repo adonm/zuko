@@ -90,26 +90,13 @@ final class IrohSession: ObservableObject {
         // lazy initializer's capture list — the inner closures implicitly
         // capture that optional by value (cheap; it holds the weak ref).
         let write: @Sendable (Data) -> Void = { data in
-            // libghostty's host-managed backend forwards raw text bytes via
-            // this callback, skipping the LF→CR translation that its exec
-            // backend applies through `queueWrite`'s `linefeed` flag (the
-            // host-managed patch ignores that flag — see
-            // Patches/ghostty/0002-host-managed-io.patch). The iOS software
-            // keyboard's Return key calls `insertText("\n")`, which lands
-            // here as a raw 0x0A. Without translation, the host shell
-            // receives LF where it expects CR for Enter (terminal
-            // convention: hardware Return generates CR, and the kernel's
-            // ICRNL flag on the PTY translates CR→LF for the reader). Normalise
-            // LF→CR here so Enter behaves regardless of the shell's line
-            // discipline (canonical ICRNL translates back to LF for the
-            // reader; raw-mode readline binds `\r` to accept-line).
-            let normalised: Data
-            if data.contains(0x0A) {
-                normalised = Data(data.lazy.map { $0 == 0x0A ? 0x0D : $0 })
-            } else {
-                normalised = data
-            }
-            Task { @MainActor in self?.enqueueData(normalised) }
+            // Note: the LF→CR translation for software-keyboard Return is
+            // handled upstream by the UITerminalView.insertText swizzle
+            // (see TerminalInputFix.swift) — by the time bytes reach this
+            // callback, Return is already CR. Kept this handler pass-through
+            // rather than doubling the translation, so the swizzle is the
+            // single source of truth for line-ending normalisation.
+            Task { @MainActor in self?.enqueueData(data) }
         }
         let resize: @Sendable (InMemoryTerminalViewport) -> Void = { viewport in
             let cols = UInt16(clamping: Int(viewport.columns))

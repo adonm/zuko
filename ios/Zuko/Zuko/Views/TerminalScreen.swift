@@ -51,10 +51,13 @@ struct TerminalScreen: View {
                 fontMenu
                 themeMenu
                 refreshButton
-                Button("Disconnect") {
+                Button {
                     session.disconnect()
                     dismiss()
+                } label: {
+                    Image(systemName: "xmark.circle")
                 }
+                .accessibilityLabel("Disconnect")
             }
         }
         .sheet(isPresented: $showingThemeBrowser) {

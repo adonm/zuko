@@ -1,3 +1,4 @@
+import GhosttyTerminal
 import SwiftUI
 
 @main
@@ -8,6 +9,13 @@ struct ZukoApp: App {
     // @Observable types but emits a runtime hint about preferring @State.
     @State private var store = ConnectionStore()
     @State private var themeStore = ThemeStore()
+
+    init() {
+        // Translate `"\n"` → `"\r"` in UITerminalView.insertText before
+        // libghostty consumes it. Software-keyboard Return otherwise lands
+        // as LF where shells expect CR. See TerminalInputFix.swift.
+        UITerminalView.installInputFix()
+    }
 
     var body: some Scene {
         WindowGroup {
