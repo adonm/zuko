@@ -60,7 +60,7 @@ jobs:
       # Always beta on tag/release events; respect the dropdown on dispatch.
       LANE: ${{ (github.event_name == 'workflow_dispatch' && inputs.lane) || 'beta' }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
 
       # Resolve a build number that's strictly monotonic per marketing
       # version AND fits in Int32. App Store Connect requires every upload
@@ -83,7 +83,7 @@ jobs:
           xcodebuild -version
 
       - name: mise install (rust)
-        uses: jdx/mise-action@v4
+        uses: jdx/mise-action@e6a8b3978addb5a52f2b4cd9d91eafa7f0ab959d # v4.2.0
         with:
           cache: true
 
@@ -93,7 +93,7 @@ jobs:
       # targets the FFI script builds — ~10 min of pure recompute per run.
       # The key namespaces by workflow so the signed-build cache doesn't
       # collide with build-ios's (same code, different intent).
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
         with:
           key: ios-release
 
@@ -122,7 +122,7 @@ jobs:
         run: ZUKO_FFI_DEVICE_ONLY=1 sh scripts/build-ffi.sh
 
       - name: Import distribution certificate (.p12 from secret)
-        uses: apple-actions/import-codesign-certs@v7
+        uses: apple-actions/import-codesign-certs@5142e029c445c10ffc7149d172e540235a065466 # v7.0.0
         with:
           p12-file-base64: ${{ secrets.BUILD_CERTIFICATE_BASE64 }}
           p12-password: ${{ secrets.P12_PASSWORD }}
@@ -173,7 +173,7 @@ jobs:
           echo "Found $ipa"
 
       - name: Upload .ipa
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: Zuko-ipa
           path: ${{ steps.ipa.outputs.path }}

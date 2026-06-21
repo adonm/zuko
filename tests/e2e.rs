@@ -84,10 +84,8 @@ fn e2e() -> Result<()> {
     // The host keeps the long-lived ticket off stdout; read it from the
     // current_ticket file the daemon writes (the same source `zuko share`
     // reads).
-    let ticket = wait_for_nonempty_file(
-        &xdg.path().join("zuko/current_ticket"),
-        HOST_ONLINE_TIMEOUT,
-    )?;
+    let ticket =
+        wait_for_nonempty_file(&xdg.path().join("zuko/current_ticket"), HOST_ONLINE_TIMEOUT)?;
     eprintln!("host ticket: {}...", short(&ticket));
 
     // Run both checks; collect failures rather than bailing on the first so
@@ -155,7 +153,11 @@ fn wait_for_nonempty_file(path: &Path, timeout: Duration) -> Result<String> {
             }
         }
         if Instant::now() >= deadline {
-            bail!("timed out after {:?} waiting for {}", timeout, path.display());
+            bail!(
+                "timed out after {:?} waiting for {}",
+                timeout,
+                path.display()
+            );
         }
         thread::sleep(Duration::from_millis(250));
     }
@@ -189,7 +191,7 @@ fn first_nonblank_line(stdout: std::process::ChildStdout, timeout: Duration) -> 
         loop {
             line.clear();
             match reader.read_line(&mut line) {
-                Ok(0) => break,           // EOF
+                Ok(0) => break, // EOF
                 Ok(_) => {
                     let trimmed = line.trim();
                     if !trimmed.is_empty() {
@@ -254,7 +256,15 @@ fn test_share_claim(zuko: &str, xdg: &Path, expected_ticket: &str) -> Result<()>
     eprintln!("\n=== test: share ↔ claim ===");
 
     let mut share = zuko_cmd(zuko, xdg)
-        .args(["share", "--count", "1", "--timeout", "120", "--label", "e2e-host"])
+        .args([
+            "share",
+            "--count",
+            "1",
+            "--timeout",
+            "120",
+            "--label",
+            "e2e-host",
+        ])
         .stdout(Stdio::piped()) // the code lands on stdout
         .stderr(Stdio::inherit()) // banner visible under --nocapture
         .spawn()
@@ -298,10 +308,7 @@ fn test_share_claim(zuko: &str, xdg: &Path, expected_ticket: &str) -> Result<()>
         CLAIM_TIMEOUT + Duration::from_secs(30),
     )?;
     if !claim_status.success() {
-        bail!(
-            "`zuko claim` exited {}",
-            claim_status.code().unwrap_or(-1)
-        );
+        bail!("`zuko claim` exited {}", claim_status.code().unwrap_or(-1));
     }
 
     // Confirm it landed in the saved-hosts file under the right name+ticket.
