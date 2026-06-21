@@ -67,8 +67,15 @@ jobs:
         # swift 6.x provides the cross-compile toolchain for the iOS SDK;
         # llvm provides llvm-lipo (fat-lib assembly) + llvm-objcopy (symbol
         # localization in build-ffi.sh).
+        #
+        # `brew install` skips formulae that are already poured but not
+        # linked (the ubuntu-latest runner ships swift 6.2.4 unlinked —
+        # Homebrew's "keg-only" state). `brew link --overwrite` after
+        # install forces the symlinks into $BREW_PREFIX/bin so swift +
+        # llvm binaries land on PATH.
         run: |
           /home/linuxbrew/.linuxbrew/bin/brew install swift llvm
+          /home/linuxbrew/.linuxbrew/bin/brew link --overwrite --force swift llvm
 
       - name: Put Homebrew tools on PATH
         # GITHUB_PATH writes affect every SUBSEQUENT step; this step uses
