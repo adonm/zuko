@@ -141,6 +141,27 @@ The "no output" gate means interrupting a silent-but-healthy remote command
 (e.g. `find /`) doesn't false-trigger; only a session that's stopped
 responding altogether does.
 
+## Debugging a connection stall
+
+If a connection hangs on "connecting to host" (relay propagation, NAT
+traversal, or the host being unreachable), watch iroh's dial:
+
+```sh
+RUST_LOG=iroh=info zuko home     # info shows relay/direct path + handshake
+RUST_LOG=iroh=debug zuko home    # debug adds QUIC packet-level detail (noisy)
+```
+
+Logs go to stderr. The default (`zuko=info,iroh=warn`, same as `zuko host`)
+stays quiet so it doesn't corrupt the raw-mode terminal mid-session — opt in
+with `RUST_LOG` only when chasing a stall (verbose lines then land on the raw
+terminal by design). The host daemon's own logs are on
+`journalctl --user -u zuko-host -f` (Linux) or
+`~/.config/zuko/zuko-host.out.log` (macOS).
+
+The iOS app captures iroh at `info` level on-device: during a stall, open the
+**⋯ → Logs…** menu (under Font size / Color theme) to watch the dial live and
+copy or share the evidence. No Xcode or Console.app needed.
+
 ## Multiple devices
 
 Each connection is its own independent PTY + shell. Several phones, terminals

@@ -181,6 +181,7 @@ final class IrohSession: ObservableObject {
             ep = try await Endpoint.bind(options: EndpointOptions(preset: presetN0()))
             endpoint = ep
         } catch {
+            LogCapture.shared.log(.error, category: "net", "endpoint bind failed: \(error.localizedDescription)")
             status = .failed(error.localizedDescription)
             return
         }
@@ -202,6 +203,7 @@ final class IrohSession: ObservableObject {
                 reportCancellationIfNeeded()
                 return
             } catch {
+                LogCapture.shared.log(.warn, category: "net", "connection \(attempt == 0 ? "failed" : "dropped"): \(error.localizedDescription)")
                 attempt += 1
                 if await waitBeforeReconnect(after: error, attempt: attempt) == false {
                     return
@@ -226,6 +228,7 @@ final class IrohSession: ObservableObject {
             delaySeconds: seconds,
             reason: error.localizedDescription
         )
+        LogCapture.shared.log(.warn, category: "net", "reconnect attempt \(attempt) in \(seconds)s")
 
         do {
             try await Task.sleep(nanoseconds: delay)
@@ -251,8 +254,12 @@ final class IrohSession: ObservableObject {
     ) async throws {
         do {
             let addr = endpointTicket.endpointAddr()
+            // Stall boundary: the gap between this "dialing" line and the
+            // "connected" one below shows where iroh is stuck (relay/NAT).
+            LogCapture.shared.log(.info, category: "net", "dialing host")
             let conn = try await endpoint.connect(addr: addr, alpn: Self.alpn)
             connection = conn
+            LogCapture.shared.log(.info, category: "net", "connected — opening stream")
             let bi = try await conn.openBi()
             let send = bi.send()
             let recv = bi.recv()

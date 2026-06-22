@@ -280,8 +280,11 @@ pub async fn claim(
     no_connect: bool,
     timeout_secs: u64,
 ) -> Result<()> {
-    // No tracing subscriber here: if we connect, the terminal goes raw and any
-    // log output would corrupt it. Status goes to stderr; nothing to stdout.
+    // No tracing subscriber here: `client::connect` (called below when
+    // `!no_connect`) owns the subscriber and sets it up itself. The default
+    // `iroh=warn` keeps the raw terminal clean; bump with `RUST_LOG=iroh=info`
+    // to watch this handoff dial too. Status still goes to stderr; nothing to
+    // stdout.
     let secret = derive_key(code)?;
     let node_id = secret.public();
 

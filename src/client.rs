@@ -52,6 +52,21 @@ const FORCE_QUIT_WINDOW: std::time::Duration = std::time::Duration::from_secs(1)
 /// Connect to a host once and bridge the local terminal to its shell until the
 /// remote shell exits or the link drops.
 pub async fn connect(ticket_str: &str) -> Result<()> {
+    // Foreground iroh + zuko logs on stderr. Defaults mirror `zuko host`
+    // (`zuko=info,iroh=warn`): warn keeps a healthy session quiet so raw-mode
+    // terminal output isn't corrupted, while still surfacing real problems.
+    // To see the dial in detail (relay/direct, QUIC handshake) when chasing a
+    // stall, run:  RUST_LOG=iroh=info zuko <host>
+    // (Log lines land on the raw terminal by design in that case — the cost of
+    // opting into verbose output mid-session.)
+    tracing_subscriber::fmt()
+        .with_writer(std::io::stderr)
+        .with_env_filter(
+            tracing_subscriber::EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| "zuko=info,iroh=warn".into()),
+        )
+        .init();
+
     let ticket = ticket_str
         .parse::<EndpointTicket>()
         .with_context(|| "that doesn't look like a ticket")?;

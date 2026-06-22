@@ -32,6 +32,7 @@ struct TerminalScreen: View {
     @Environment(\.dismiss) private var dismiss
 
     @State private var showingThemeBrowser = false
+    @State private var showingLogs = false
     @State private var accessoryKeysVisible = false
     @State private var inputMode: TerminalInputMode = .keyboard
     @FocusState private var terminalFocused: Bool
@@ -100,6 +101,10 @@ struct TerminalScreen: View {
                         }
                     }
                     Divider()
+                    Button("Logs…") {
+                        showingLogs = true
+                    }
+                    Divider()
                     Button("Disconnect", role: .destructive) {
                         session.disconnect()
                         dismiss()
@@ -113,6 +118,9 @@ struct TerminalScreen: View {
         .sheet(isPresented: $showingThemeBrowser) {
             ThemeBrowserView()
                 .environment(themeStore)
+        }
+        .sheet(isPresented: $showingLogs) {
+            LogsView()
         }
         .task {
             // Apply persisted appearance prefs before connect so the first
