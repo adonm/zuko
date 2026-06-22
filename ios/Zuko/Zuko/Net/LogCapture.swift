@@ -87,11 +87,28 @@ final class LogCapture: ObservableObject {
         // writes to fd 1 directly, so iroh's tracing-fmt output now lands here.
         // O_APPEND makes every write() atomic at the byte level, so concurrent
         // app/iroh lines never interleave/corrupt each other mid-line.
-        let fd = open(url.path, O_WRONLY | O_CREAT | O_APPEND, 0o644)
-        guard fd >= 0 else { return }
-        dup2(fd, STDOUT_FILENO)
-        dup2(fd, STDERR_FILENO)
-        close(fd)
+        let opened = open(url.path, O_WRONLY | O_CREAT | O_APPEND, 0o644)
+        guard opened >= 0 else { return }
+
+        // Defensive fd hygiene: if iOS launched us with stdin/stdout/stderr
+        // closed, `open` can legally return 0, 1, or 2. Duplicating to a safe
+        // scratch fd first means the final `close(logFD)` can never close the
+        // stdout/stderr descriptors we just installed.
+        let logFD: Int32
+        if opened <= STDERR_FILENO {
+            let duplicated = fcntl(opened, F_DUPFD, STDERR_FILENO + 1)
+            close(opened)
+            guard duplicated >= 0 else { return }
+            logFD = duplicated
+        } else {
+            logFD = opened
+        }
+
+        guard dup2(logFD, STDOUT_FILENO) >= 0, dup2(logFD, STDERR_FILENO) >= 0 else {
+            close(logFD)
+            return
+        }
+        close(logFD)
 
         // Enable iroh tracing → stdout (now the file). setLogLevel calls
         // tracing's global `.init()` once; a second call anywhere is a no-op,

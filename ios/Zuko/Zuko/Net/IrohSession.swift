@@ -11,6 +11,17 @@ enum SessionStatus: Equatable {
     case failed(String)
 }
 
+private struct ConnectionPhaseTimeout: LocalizedError, Sendable {
+    let phase: String
+    let seconds: Int
+
+    var errorDescription: String? {
+        "\(phase) timed out after \(seconds)s"
+    }
+}
+
+private let connectionPhaseTimeoutNanoseconds: UInt64 = 20_000_000_000
+
 /// Owns a single Iroh connection to a host and bridges it to GhosttyTerminal's
 /// host-managed I/O backend.
 ///
@@ -130,6 +141,7 @@ final class IrohSession: ObservableObject {
         // and reports `.disconnected("disconnected")` rather than treating
         // the cancellation as a failure.
         disconnectRequested = true
+        LogCapture.shared.log(.info, category: "net", "disconnect requested")
         runTask?.cancel()
         writeContinuation?.finish()
         writeContinuation = nil
@@ -257,12 +269,18 @@ final class IrohSession: ObservableObject {
             // Stall boundary: the gap between this "dialing" line and the
             // "connected" one below shows where iroh is stuck (relay/NAT).
             LogCapture.shared.log(.info, category: "net", "dialing host")
-            let conn = try await endpoint.connect(addr: addr, alpn: Self.alpn)
+            let alpn = Self.alpn
+            let conn = try await Self.withConnectionTimeout(phase: "dial host") {
+                try await endpoint.connect(addr: addr, alpn: alpn)
+            }
             connection = conn
             LogCapture.shared.log(.info, category: "net", "connected — opening stream")
-            let bi = try await conn.openBi()
+            let bi = try await Self.withConnectionTimeout(phase: "open stream") {
+                try await conn.openBi()
+            }
             let send = bi.send()
             let recv = bi.recv()
+            LogCapture.shared.log(.info, category: "net", "stream open — sending attach")
 
             // Initial ATTACH — tells the host the grid size and the last
             // session token we saw. Zero token starts a fresh PTY; non-zero
@@ -270,9 +288,11 @@ final class IrohSession: ObservableObject {
             // Sent directly before the write pump touches the stream, so it's
             // guaranteed first on the wire.
             let (cols, rows) = unpackSize(packedSize)
-            try await send.writeAll(
-                buf: Wire.encodeAttach(token: sessionToken, cols: cols, rows: rows)
-            )
+            let attach = Wire.encodeAttach(token: sessionToken, cols: cols, rows: rows)
+            try await Self.withConnectionTimeout(phase: "send attach") {
+                try await send.writeAll(buf: attach)
+            }
+            LogCapture.shared.log(.info, category: "net", "attach sent")
 
             // Start the write pump (detached, owns `send` — see its docs).
             startWritePump(send: send)
@@ -306,6 +326,29 @@ final class IrohSession: ObservableObject {
         return min(delay, Self.reconnectMaxDelay)
     }
 
+    private static func withConnectionTimeout<T: Sendable>(
+        phase: String,
+        operation: @escaping @Sendable () async throws -> T
+    ) async throws -> T {
+        try await withThrowingTaskGroup(of: T.self) { group in
+            group.addTask(priority: .userInitiated) {
+                try await operation()
+            }
+            group.addTask {
+                try await Task.sleep(nanoseconds: connectionPhaseTimeoutNanoseconds)
+                throw ConnectionPhaseTimeout(
+                    phase: phase,
+                    seconds: Int(connectionPhaseTimeoutNanoseconds / 1_000_000_000)
+                )
+            }
+            defer { group.cancelAll() }
+            guard let result = try await group.next() else {
+                throw CancellationError()
+            }
+            return result
+        }
+    }
+
     private func readLoop(recv: RecvStream) async throws {
         var buffer = Data()
         while !Task.isCancelled {
@@ -336,6 +379,7 @@ final class IrohSession: ObservableObject {
                 case Wire.attached:
                     if let token = Wire.parseAttached(frame.payload) {
                         sessionToken = token
+                        LogCapture.shared.log(.info, category: "net", "host attached")
                     }
                 default:
                     break // PONG, legacy HELLO/WELCOME, unknown: ignore
