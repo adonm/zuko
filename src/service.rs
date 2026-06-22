@@ -241,10 +241,14 @@ fn prefer_stable_symlink(exe: PathBuf) -> PathBuf {
     let Ok(resolved_latest) = std::fs::canonicalize(&latest) else {
         return exe;
     };
+    let Ok(resolved_install_root) = std::fs::canonicalize(install_root) else {
+        return exe;
+    };
     // Reject symlinks that escape the install root (defence-in-depth against a
-    // weirdly-shaped dir we shouldn't trust). `canonicalize` returns an
-    // absolute path, so `starts_with` is a clean containment check.
-    if !resolved_latest.starts_with(install_root) {
+    // weirdly-shaped dir we shouldn't trust). Canonicalise both sides first:
+    // macOS temp paths can enter as `/var/...` while `canonicalize` returns
+    // `/private/var/...`, and comparing mixed spellings causes false rejects.
+    if !resolved_latest.starts_with(&resolved_install_root) {
         return exe;
     }
     let via_latest = latest.join(bin_name);
