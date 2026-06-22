@@ -38,3 +38,10 @@ line_length:
 type_body_length:
   warning: 500
   error: 800
+
+# Cohesive session/state classes (e.g. IrohSession) run ~400+ lines; the
+# limit matches type_body_length so a well-factored single-responsibility
+# class isn't forced into an arbitrary split. Mirrors the relaxed style above.
+file_length:
+  warning: 500
+  error: 800

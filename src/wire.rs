@@ -8,27 +8,24 @@
 //! [type: u8][len: u16 big-endian][payload: `len` bytes]
 //!   0x00 DATA    payload = raw terminal bytes (keystrokes up, PTY output down)
 //!   0x01 RESIZE  payload = [cols: u16 BE][rows: u16 BE]   (client -> host)
-//!   0x04 PING    payload = [nonce: u64 BE]   (bidirectional, heartbeat)
-//!   0x05 PONG    payload = [nonce: u64 BE]   (bidirectional, heartbeat)
+//!   0x04 PING    payload = [nonce: u64 BE]   (optional control/compat)
+//!   0x05 PONG    payload = [nonce: u64 BE]   (optional control/compat)
+//!   0x06 ATTACH  payload = [token: 16 bytes][cols: u16 BE][rows: u16 BE]
+//!   0x07 ATTACHED payload = [token: 16 bytes]
 //! ```
 //!
-//! ## Handshake (v0.6 — session-resume removed)
+//! ## Handshake
 //!
-//! The client opens the stream with a single `RESIZE` carrying its initial
-//! terminal size. The host spawns a fresh PTY at that size and starts
-//! streaming. No `HELLO`/`WELCOME` exchange, no session ids — each
-//! connection gets a new PTY, and when the connection ends (for any reason)
-//! the host kills the PTY. Users who want resumability run `tmux`/`zellij`/
-//! `screen` *inside* the zuko session; that's the proper layer for it.
+//! The client opens the stream with `ATTACH`: a 16-byte session token (zero for
+//! first attach) plus terminal size. The host replies `ATTACHED` with the token
+//! to reuse on short reconnects. Detached PTYs live only for a short in-memory
+//! lease and output while detached is discarded; there is no replay buffer.
 //!
 //! Unknown frame types **must be ignored** — the protocol is designed to
 //! gain types over time without breaking old peers. The legacy `HELLO`
-//! (0x02) and `WELCOME` (0x03) frame types used by v0.4–v0.5 are dropped
-//! from this module; if an old client sends a `HELLO`, a v0.6 host treats
-//! it as an unknown type and ignores it (then defaults to 80×24 until the
-//! first `RESIZE` arrives).
+//! (0x02) and `WELCOME` (0x03) frame types used by v0.4–v0.5 are reserved.
 
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 
 /// ALPN used for every zuko stream.
 pub const ALPN: &[u8] = b"zuko/1";
@@ -40,6 +37,11 @@ pub const TYPE_RESIZE: u8 = 0x01;
 // frames don't reuse the numbers if any old peer is still in the wild.
 pub const TYPE_PING: u8 = 0x04;
 pub const TYPE_PONG: u8 = 0x05;
+pub const TYPE_ATTACH: u8 = 0x06;
+pub const TYPE_ATTACHED: u8 = 0x07;
+pub const MAX_PAYLOAD_LEN: usize = u16::MAX as usize;
+pub const SESSION_TOKEN_LEN: usize = 16;
+pub type SessionToken = [u8; SESSION_TOKEN_LEN];
 
 pub struct ParsedFrame {
     pub typ: u8,
@@ -48,6 +50,10 @@ pub struct ParsedFrame {
 
 /// Encode one length-prefixed frame ready to write to the stream.
 pub fn frame(typ: u8, payload: &[u8]) -> Vec<u8> {
+    assert!(
+        payload.len() <= MAX_PAYLOAD_LEN,
+        "zuko frame payload exceeds u16 length prefix"
+    );
     let mut f = Vec::with_capacity(3 + payload.len());
     f.push(typ);
     f.extend_from_slice(&(payload.len() as u16).to_be_bytes());
@@ -66,12 +72,63 @@ pub fn resize_frame(cols: u16, rows: u16) -> Vec<u8> {
     frame(TYPE_RESIZE, &payload)
 }
 
-/// A `0x04 PING` / `0x05 PONG` frame carrying an 8-byte nonce.
+/// A `0x04 PING` / `0x05 PONG` frame carrying an 8-byte nonce. zuko doesn't
+/// require app-level heartbeats; these stay for cheap peer compatibility.
 pub fn ping_frame(nonce: u64) -> Vec<u8> {
     frame(TYPE_PING, &nonce.to_be_bytes())
 }
 pub fn pong_frame(nonce: u64) -> Vec<u8> {
     frame(TYPE_PONG, &nonce.to_be_bytes())
+}
+
+/// A `0x06 ATTACH` frame. An all-zero token asks the host for a fresh session;
+/// any other token asks to reattach a still-leased detached PTY.
+pub fn attach_frame(token: SessionToken, cols: u16, rows: u16) -> Vec<u8> {
+    let mut payload = Vec::with_capacity(SESSION_TOKEN_LEN + 4);
+    payload.extend_from_slice(&token);
+    payload.extend_from_slice(&cols.to_be_bytes());
+    payload.extend_from_slice(&rows.to_be_bytes());
+    frame(TYPE_ATTACH, &payload)
+}
+
+/// A `0x07 ATTACHED` frame carrying the token the client should use on the next
+/// reconnect. If the requested token expired, this will be a new token.
+pub fn attached_frame(token: SessionToken) -> Vec<u8> {
+    frame(TYPE_ATTACHED, &token)
+}
+
+pub fn parse_attach(payload: &[u8]) -> Option<(SessionToken, u16, u16)> {
+    if payload.len() != SESSION_TOKEN_LEN + 4 {
+        return None;
+    }
+    let mut token = [0u8; SESSION_TOKEN_LEN];
+    token.copy_from_slice(&payload[..SESSION_TOKEN_LEN]);
+    let cols = u16::from_be_bytes([payload[SESSION_TOKEN_LEN], payload[SESSION_TOKEN_LEN + 1]]);
+    let rows = u16::from_be_bytes([
+        payload[SESSION_TOKEN_LEN + 2],
+        payload[SESSION_TOKEN_LEN + 3],
+    ]);
+    Some((token, cols, rows))
+}
+
+pub fn parse_attached(payload: &[u8]) -> Option<SessionToken> {
+    if payload.len() != SESSION_TOKEN_LEN {
+        return None;
+    }
+    let mut token = [0u8; SESSION_TOKEN_LEN];
+    token.copy_from_slice(payload);
+    Some(token)
+}
+
+pub const fn empty_session_token(token: &SessionToken) -> bool {
+    let mut i = 0;
+    while i < SESSION_TOKEN_LEN {
+        if token[i] != 0 {
+            return false;
+        }
+        i += 1;
+    }
+    true
 }
 
 /// Decode a PING/PONG nonce. Returns 0 for an empty payload (a peer that sends
@@ -159,5 +216,21 @@ mod tests {
 
         // Empty-nonce pings are valid (degrade to 0).
         assert_eq!(decode_nonce(&[]), 0);
+    }
+
+    #[test]
+    fn attach_round_trip() {
+        let token = [7u8; SESSION_TOKEN_LEN];
+        let mut buf = attach_frame(token, 100, 40);
+        let f = try_parse_frame(&mut buf).unwrap();
+        assert_eq!(f.typ, TYPE_ATTACH);
+        assert_eq!(parse_attach(&f.payload), Some((token, 100, 40)));
+
+        let mut buf = attached_frame(token);
+        let f = try_parse_frame(&mut buf).unwrap();
+        assert_eq!(f.typ, TYPE_ATTACHED);
+        assert_eq!(parse_attached(&f.payload), Some(token));
+        assert!(empty_session_token(&[0u8; SESSION_TOKEN_LEN]));
+        assert!(!empty_session_token(&token));
     }
 }

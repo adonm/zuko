@@ -52,9 +52,9 @@ import UIKit
 // are both `internal` in libghostty-spm. We Mirror-reflect on the
 // stored `ctrl`/`alt`/`command` activation enums (also internal) and
 // pattern-match against their `String(describing:)` form. Brittle
-// against upstream enum-case renames, but the failure mode is benign:
-// if the reflection misses, we fall through to the original
-// `insertText` and the terminal behaves as it does today.
+// against upstream enum-case renames, but the failure mode is fail-closed:
+// if the reflection misses, we fall through to the original `insertText`
+// so we don't accidentally bypass and drop a sticky Ctrl/Alt/Cmd modifier.
 //
 // Swizzle scope: `UITerminalView` is final in the SwiftUI representable,
 // so subclassing isn't an option. Method swizzling is the lightest-touch
@@ -95,8 +95,18 @@ extension UITerminalView {
         // original implementation — calling it forwards to the pre-swizzle
         // code. Use it for cases we don't want to claim (sticky modifiers,
         // non-ASCII text).
+        if zuko_hardwareKeyWasAlreadyHandled() {
+            // Hardware keyboard presses are delivered first through
+            // `pressesBegan`, which may already send the byte directly to
+            // the in-memory backend and set `hardwareKeyHandled` so UIKit's
+            // follow-up `insertText` is suppressed. Preserve that upstream
+            // duplicate-suppression path before our ASCII bypass can fire.
+            self.zuko_insertText(text)
+            return
+        }
+
         let isAllASCII = text.utf8.allSatisfy { $0 < 0x80 }
-        if isAllASCII, !zuko_hasActiveStickyModifiers(), case let .inMemory(session) = configuration.backend {
+        if isAllASCII, zuko_hasActiveStickyModifiers() == false, case let .inMemory(session) = configuration.backend {
             // Bypass ghostty for plain ASCII input. Translate LF → CR
             // (canonical Unix Return convention; the PTY's ICRNL flag
             // translates CR→LF for the reader) and collapse CRLF pairs
@@ -127,8 +137,8 @@ extension UITerminalView {
         self.zuko_insertText(text)
     }
 
-    /// True if any of the accessory bar's sticky modifiers (Ctrl/Alt/Cmd)
-    /// is currently armed or locked. We need to know because the original
+    /// Whether any accessory-bar sticky modifier (Ctrl/Alt/Cmd) is currently
+    /// armed or locked. We need to know because the original
     /// `insertText` consumes the modifier and dispatches via
     /// `handleStickyTextInput` → `sendControlByte` → `sendInput`, which
     /// works correctly; bypassing it would lose the modifier.
@@ -136,27 +146,39 @@ extension UITerminalView {
     /// Reads the internal `stickyModifiers` state via `Mirror` reflection
     /// (the type itself is internal in libghostty-spm). The activation
     /// enum cases are matched as strings so we don't need to import the
-    /// internal enum — brittle against upstream renames, but a missed
-    /// match just means we fall through to the original path.
-    private func zuko_hasActiveStickyModifiers() -> Bool {
+    /// internal enum — brittle against upstream renames, but a missed match
+    /// returns `nil` so callers fail closed to the original path.
+    private func zuko_hasActiveStickyModifiers() -> Bool? {
         #if targetEnvironment(macCatalyst)
             return false
         #else
             let viewMirror = Mirror(reflecting: self)
             guard let sticky = viewMirror.descendant("stickyModifiers") else {
-                return false
+                return nil
             }
             let stickyMirror = Mirror(reflecting: sticky)
             for mod in ["ctrl", "alt", "command"] {
-                if let activation = stickyMirror.descendant(mod) {
-                    let desc = String(describing: activation).lowercased()
-                    if desc == "armed" || desc == "locked" {
-                        return true
-                    }
+                guard let activation = stickyMirror.descendant(mod) else {
+                    return nil
+                }
+                let desc = String(describing: activation).lowercased()
+                if desc == "armed" || desc == "locked" {
+                    return true
+                }
+                if desc != "inactive" {
+                    return nil
                 }
             }
             return false
         #endif
+    }
+
+    /// True when libghostty-spm's hardware-key path has already handled this
+    /// keypress and expects `insertText` to only clear the suppression flag.
+    private func zuko_hardwareKeyWasAlreadyHandled() -> Bool {
+        Mirror(reflecting: self).children
+            .first { $0.label == "hardwareKeyHandled" }?
+            .value as? Bool ?? false
     }
 }
 

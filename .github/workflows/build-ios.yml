@@ -3,8 +3,49 @@ name: ios
 on:
   push:
     branches: [main]
+    paths:
+      - '.github/workflows/build-ios.yml'
+      - '.swiftlint.yml'
+      - 'Cargo.lock'
+      - 'Cargo.toml'
+      - 'ios/**'
+      - 'mise.toml'
+      - 'scripts/build-ffi.sh'
+      - 'scripts/build-ios-xtool.sh'
+      - 'scripts/patch-ios-plist.sh'
+      - 'scripts/patch-iroh-framework.sh'
+      - 'scripts/setup-ios-sdk.sh'
+      - 'scripts/setup-xtool.sh'
+      - 'scripts/version.sh'
+      - 'src/**'
+      - 'uniffi-bindgen.rs'
+      - 'uniffi.toml'
   pull_request:
+    paths:
+      - '.github/workflows/build-ios.yml'
+      - '.swiftlint.yml'
+      - 'Cargo.lock'
+      - 'Cargo.toml'
+      - 'ios/**'
+      - 'mise.toml'
+      - 'scripts/build-ffi.sh'
+      - 'scripts/build-ios-xtool.sh'
+      - 'scripts/patch-ios-plist.sh'
+      - 'scripts/patch-iroh-framework.sh'
+      - 'scripts/setup-ios-sdk.sh'
+      - 'scripts/setup-xtool.sh'
+      - 'scripts/version.sh'
+      - 'src/**'
+      - 'uniffi-bindgen.rs'
+      - 'uniffi.toml'
   workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 # Bump in lockstep with bootstrap-xtoolsdk.yml's `tag` input. The SDK is large,
 # so Linux CI downloads it once per tag and then restores it from actions/cache.

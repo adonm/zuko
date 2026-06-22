@@ -30,10 +30,14 @@ import PackageDescription
 let package = Package(
     name: "Zuko",
     platforms: [
-        // Must match iroh-ffi's floor + the N0 relay stack
-        // (nw_path_is_ultra_constrained). Kept in sync with `project.yml`'s
-        // `deploymentTarget` until the legacy xcodegen path is removed.
-        .iOS(.v26),
+        // Must match iroh-ffi's floor: iroh-ffi 1.0's binary XCFramework was
+        // built against the iOS 26.5 SDK (its object files carry
+        // LC_VERSION_MIN_IPHONEOS 26.5), so anything lower trips
+        //   ld64.lld: warning: Iroh.framework/Iroh(...o) has version 26.5.0,
+        //   which is newer than target minimum of 26.0.0
+        // Kept in sync with `project.yml`'s `deploymentTarget` + the
+        // IPHONEOS_DEPLOYMENT_TARGET baked into scripts/build-ffi.sh.
+        .iOS("26.5"),
     ],
     products: [
         // xtool's PackLib picks the single `.autoLibrary` product as the main

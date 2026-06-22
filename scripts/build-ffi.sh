@@ -25,9 +25,11 @@ LIB_NAME="zuko"
 OUT_DIR="$ROOT/ios/ZukoFFI"
 TARGET_DIR=$(cargo metadata --format-version 1 --no-deps | python3 -c 'import json,sys;print(json.load(sys.stdin)["target_directory"])')
 
-# iOS deployment target — must match the ZukoFFI Package.swift platforms and
-# iroh-ffi's (17.5). The N0 relay stack (nw_path_is_ultra_constrained) needs it.
-export IPHONEOS_DEPLOYMENT_TARGET="26.0"
+# iOS deployment target — must match the ZukoFFI/ios Package.swift platforms
+# and iroh-ffi's binary floor (26.5: iroh-ffi 1.0 was built against the iOS
+# 26.5 SDK; building our staticlib against a lower target makes ld64.lld warn
+# that our object files have an older version than the app's minimum).
+export IPHONEOS_DEPLOYMENT_TARGET="26.5"
 
 DEVICE_ONLY="${ZUKO_FFI_DEVICE_ONLY:-0}"
 
@@ -79,22 +81,48 @@ build_and_localize() {
     # matching in the other arguments (NOT a `--wildcard-` prefix on
     # each flag, which the tool rejects as unknown). Wildcards need LLVM
     # 10+; Rust 1.96 ships LLVM 19, so plenty of headroom.
+    #
+    # NOTE: this is a real localizing pass on Darwin (where llvm-objcopy
+    # handles Mach-O), but a SILENT NO-OP on Linux — llvm-objcopy's
+    # --localize-symbol path only mutates ELF, not Mach-O. The sanity
+    # check below detects both cases and reacts per-host:
+    #   Darwin  → classic ld64 errors on duplicate `_rust_*` definitions
+    #             between our archive and Iroh.framework; localization
+    #             must take effect, so an unlocalized symbol is fatal.
+    #   Linux   → SwiftPM/xtool links via ld64.lld, which tolerates
+    #             duplicate globals from static archives (first def
+    #             wins). The no-op is safe; we log and continue.
     "$OBJCOPY" --wildcard \
         --localize-symbol='_rust_*' \
         --localize-symbol='__rust_*' \
-        "$lib"
-    # Sanity check: nm should now show either 'U' (undefined — the
-    # symbol is now an external reference, will be resolved from
-    # Iroh.framework's archive at link time) or 'r'/'t' (local text).
-    # Both are success states for localization. If nm still shows 'T'
-    # (global text), the localization silently failed and the linker
-    # will re-trip the duplicate-symbol error in CI — surface it loudly.
-    syms="$(nm "$lib" 2>/dev/null | grep -E ' _rust_eh_personality$' | awk '{ if ($3 == "_rust_eh_personality") print $2; else if ($2 == "_rust_eh_personality") print $1 }' | sort -u)"
-    case "$syms" in
-        U|t|r|"t r"|"r t") echo "    $target: _rust_eh_personality localized ($syms)" ;;
-        T|"T U"|"U T") echo "    $target: ERROR — _rust_eh_personality still global (T); localization failed" >&2; exit 1 ;;
-        *) echo "    $target: WARNING — _rust_eh_personality visibility unexpected: '$syms'" >&2 ;;
-    esac
+        "$lib" 2>/dev/null || true
+    # Sanity check: count object files where _rust_eh_personality is
+    # still global (uppercase 'T'). After localization, it should be
+    # either lowercase 't' (localized) or 'U' (undefined — referenced
+    # from our other object files, resolved from Iroh.framework at link
+    # time). awk handles nm's column layout robustly regardless of
+    # whether the address column is present; previous grep+sort pipeline
+    # produced newline-joined 'T\nU' that the case statement couldn't
+    # match against its space-separated literals.
+    globals=$(nm "$lib" 2>/dev/null \
+        | awk '$0 ~ /^[0-9a-f]+ T _rust_eh_personality$/ { n++ } END { print n+0 }')
+    if [ "$globals" -eq 0 ]; then
+        echo "    $target: _rust_eh_personality localized"
+    else
+        case "$(uname -s)" in
+            Darwin)
+                echo "    $target: ERROR — _rust_eh_personality still global in $globals object file(s);" >&2
+                echo "             llvm-objcopy failed to localize; classic ld64 will reject the duplicate" >&2
+                echo "             vs. Iroh.framework. Update Xcode's llvm-tools or use nmedit." >&2
+                exit 1
+                ;;
+            *)
+                echo "    $target: _rust_eh_personality still global in $globals object file(s) —"
+                echo "             llvm-objcopy can't localize Mach-O on $(uname -s); ld64.lld"
+                echo "             (SwiftPM/xtool) tolerates the duplicate vs. Iroh.framework, continuing"
+                ;;
+        esac
+    fi
 }
 
 build_and_localize aarch64-apple-ios

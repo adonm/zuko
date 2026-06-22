@@ -66,12 +66,11 @@ final class ClaimSession {
         let seed: Data
         do {
             seed = try ZukoFFI.deriveHandoffKey(code: code)
-        } catch let DeriveKeyError.DerivationFailed(message) {
+        } catch {
+            let message = Self.derivationMessage(error)
+            LogCapture.shared.log(.error, category: "claim", "key derivation failed: \(message)")
             status = .failed(message)
             throw ClaimError.derivationFailed(message)
-        } catch {
-            status = .failed(error.localizedDescription)
-            throw ClaimError.derivationFailed(error.localizedDescription)
         }
 
         // 2. Construct the SecretKey + NodeId we'll dial.
@@ -95,6 +94,7 @@ final class ClaimSession {
         //    The lookup lags `zuko share` coming online by a few seconds, so
         //    retry with constant backoff (matches the CLI's `dial_throwaway`).
         status = .dialing
+        LogCapture.shared.log(.info, category: "claim", "dialing sharing host")
         let addr = EndpointAddr(id: nodeId, relayUrl: nil, addresses: [])
         let conn: IrohLib.Connection
         do {
@@ -102,7 +102,9 @@ final class ClaimSession {
                 endpoint: endpoint, addr: addr, alpn: Self.alpn, timeout: 60
             )
         } catch {
+            try? await endpoint.close()
             let msg = "couldn't reach the sharing host — is `zuko share` still running and the code correct?"
+            LogCapture.shared.log(.error, category: "claim", "dial failed: \(error.localizedDescription)")
             status = .failed(msg)
             throw ClaimError.dialFailed(msg)
         }
@@ -110,6 +112,7 @@ final class ClaimSession {
         // 5. Accept the unidirectional stream + read the `<label>\n<ticket>`
         //    payload to end.
         status = .reading
+        LogCapture.shared.log(.info, category: "claim", "reading ticket")
         var recv = try await conn.acceptUni()
         let payloadData = try await Self.readToEnd(&recv, max: Self.maxPayload)
 
@@ -124,25 +127,37 @@ final class ClaimSession {
             status = .failed("payload wasn't UTF-8")
             throw ClaimError.handoffFailed("payload wasn't UTF-8")
         }
-        // Split on the first newline: `<label>\n<ticket>`. Labels have no
-        // newlines (sanitised by `zuko share`), and tickets never contain
-        // whitespace, so the split is unambiguous.
-        let label: String
-        let ticket: String
-        if let nl = payload.firstIndex(of: "\n") {
-            label = String(payload[..<nl])
-            ticket = String(payload[payload.index(after: nl)...]).trimmingCharacters(in: .whitespacesAndNewlines)
-        } else {
-            label = "host"
-            ticket = payload.trimmingCharacters(in: .whitespacesAndNewlines)
-        }
+        let (label, ticket) = Self.parsePayload(payload)
         guard !ticket.isEmpty else {
+            LogCapture.shared.log(.error, category: "claim", "host sent an empty ticket")
             status = .failed("host sent an empty ticket")
             throw ClaimError.handoffFailed("empty ticket")
         }
 
+        LogCapture.shared.log(.info, category: "claim", "claimed host: \(label)")
         status = .idle
         return (label: label, ticket: ticket)
+    }
+
+    /// Extract the human message from a `deriveHandoffKey` failure: the typed
+    /// `DeriveKeyError.DerivationFailed` carries one; anything else falls back
+    /// to the localized description. Centralised so the original two catch
+    /// branches collapse into one.
+    private static func derivationMessage(_ error: Error) -> String {
+        if case let DeriveKeyError.DerivationFailed(message) = error { return message }
+        return error.localizedDescription
+    }
+
+    /// Split `<label>\n<ticket>` on the first newline. Labels are newline-free
+    /// (sanitised by `zuko share`), and tickets never contain whitespace.
+    private static func parsePayload(_ payload: String) -> (label: String, ticket: String) {
+        guard let nl = payload.firstIndex(of: "\n") else {
+            return ("host", payload.trimmingCharacters(in: .whitespacesAndNewlines))
+        }
+        let label = String(payload[..<nl])
+        let ticket = String(payload[payload.index(after: nl)...])
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        return (label, ticket)
     }
 
     func reset() {

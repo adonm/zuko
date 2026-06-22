@@ -71,6 +71,6 @@ if [ -z "$app" ] || [ ! -d "$app" ]; then
     exit 1
 fi
 
-IPHONEOS_DEPLOYMENT_TARGET="26.0" sh "$ROOT/scripts/patch-iroh-framework.sh" "$app"
+IPHONEOS_DEPLOYMENT_TARGET="26.5" sh "$ROOT/scripts/patch-iroh-framework.sh" "$app"
 
 echo "Built + patched: $IOS_DIR/$app"

@@ -11,24 +11,19 @@ enum HostSetup {
     /// (`curl https://mise.run | sh`).
     static let zukoInstallCommand = "mise use --global github:adonm/zuko && zuko install"
 
-    /// Mint a one-time pairing code on the host. The iOS app doesn't speak
-    /// the pairing protocol yet — pair through the CLI on another machine
-    /// (`zuko <code>`) to save the host, then it's available here.
+    /// Mint a one-time pairing code on the host. The iOS add-host sheet claims
+    /// this directly via the same handoff protocol as `zuko <code>`.
     static let shareCommand = "zuko share"
 
-    /// The string prefix every Iroh `EndpointTicket` starts with. Iroh's
-    /// ticket string form is `<KIND><base32 of bytes>` lowercased, and
-    /// `EndpointTicket::KIND == "endpoint"` (see iroh-tickets 1.0). Used by
-    /// the paste-ticket UI as a hint for what a valid ticket looks like.
-    /// Stable across Iroh 1.x; if a future Iroh bumps the KIND, the host's
-    /// tickets would stop round-tripping through `EndpointTicket.fromString`
-    /// anyway, so this would surface as a parse error rather than silent
-    /// breakage.
-    static let ticketPrefix = "endpoint"
 }
 
 /// Reusable card explaining how to set up a host.
 struct OnboardingView: View {
+    private static let introText = "Run this once on the Mac/Linux box you want to shell into. "
+        + "`zuko install` sets up a background daemon (systemd on Linux, launchd on macOS) "
+        + "that keeps a persistent, end-to-end-encrypted Iroh session. Prerequisite: "
+        + "[mise](https://mise.jdx.dev) on the host (`curl https://mise.run | sh`)."
+
     @State private var copiedStep: Int?
 
     var body: some View {
@@ -40,7 +35,7 @@ struct OnboardingView: View {
                     .foregroundStyle(Color.accentColor)
             }
 
-            Text("Run this once on the Mac/Linux box you want to shell into. `zuko install` sets up a background daemon (systemd on Linux, launchd on macOS) that keeps a persistent, end-to-end-encrypted Iroh session. Prerequisite: [mise](https://mise.jdx.dev) on the host (`curl https://mise.run | sh`).")
+            Text(Self.introText)
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
 
@@ -58,7 +53,9 @@ struct OnboardingView: View {
 
             Divider().padding(.vertical, 4)
 
-            Text("Pair through the CLI: on another machine with `zuko` installed, run `zuko <code>`. That saves the host, which you can then connect to from any client.")
+            Text("Tap +, type the `zuko share` code, and the app saves the host. "
+                + "The real ticket arrives over an E2E-encrypted Iroh stream "
+                + "and never touches the clipboard.")
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
 
@@ -78,7 +75,17 @@ struct OnboardingView: View {
                 )
                 tip(
                     icon: "arrow.clockwise",
-                    "Refresh icon clears + redraws the screen (handy after a reconnect)."
+                    "Refresh icon asks the remote PTY to redraw without clearing zellij/tmux panes."
+                )
+                tip(
+                    icon: "command.circle",
+                    "Command-circle toggles the iOS shortcut-key row (Esc, Tab, arrows, Ctrl/Alt/Cmd). "
+                        + "It starts hidden so the default keyboard is plain."
+                )
+                tip(
+                    icon: "hand.tap",
+                    "Hand-tap toggles cursor/tap mode: the keyboard stays hidden, taps become mouse clicks, "
+                        + "and one-finger swipes scroll TUI panes like opencode or zellij."
                 )
                 tip(
                     icon: "rectangle.split.2x1",
@@ -126,7 +133,7 @@ struct OnboardingView: View {
 /// A monospaced, copyable single-line command box.
 struct CopyableCommand: View {
     let command: String
-    var onCopy: (() -> Void)? = nil
+    var onCopy: (() -> Void)?
     @State private var copied = false
 
     var body: some View {

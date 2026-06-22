@@ -11,6 +11,13 @@ struct ZukoApp: App {
     @State private var themeStore = ThemeStore()
 
     init() {
+        // Start log capture FIRST — before any iroh endpoint binds — so every
+        // iroh tracing line from the very first dial is captured. This
+        // redirects stdout/stderr to the log file and calls
+        // `IrohLib.setLogLevel(.info)`. Idempotent; a no-op on the second call.
+        // See LogCapture.swift for why this beats tracing-oslog / LogView here.
+        LogCapture.shared.start()
+
         // Translate `"\n"` → `"\r"` in UITerminalView.insertText before
         // libghostty consumes it. Software-keyboard Return otherwise lands
         // as LF where shells expect CR. See TerminalInputFix.swift.

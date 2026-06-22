@@ -9,7 +9,10 @@
 //! ## What `install` does
 //!
 //! 1. Resolve the running `zuko` binary's absolute path (so the unit keeps
-//!    working even if `PATH` changes later).
+//!    working even if `PATH` changes later). If the binary lives under a
+//!    mise/asdf-style versioned install dir with a `latest` sibling symlink,
+//!    the path is routed through `latest` so a mise upgrade that deletes the
+//!    old version dir doesn't strand the unit on a stale path.
 //! 2. Resolve the persistent `~/.config/zuko/key` path (creating the dir, not
 //!    the key — `zuko host` writes the key on first run).
 //! 3. Write a thin `zuko-host-run` wrapper at `~/.local/bin/zuko-host-run`
@@ -39,7 +42,7 @@
 //! - **Other platforms:** `install` refuses with a clear message; the host
 //!   can still be run in the foreground with `zuko host`.
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -129,7 +132,9 @@ pub fn install(args: &InstallArgs) -> Result<()> {
         args.key.display()
     );
     if args.no_start {
-        eprintln!("  (--no-start: service enabled but not started; start it with the platform tool when ready)");
+        eprintln!(
+            "  (--no-start: service enabled but not started; start it with the platform tool when ready)"
+        );
     }
     match svc {
         Service::Systemd if !args.no_start => {
@@ -157,7 +162,9 @@ pub fn install(args: &InstallArgs) -> Result<()> {
         }
         Service::Launchd => {
             eprintln!();
-            eprintln!("start later with:    launchctl load ~/Library/LaunchAgents/dev.adonm.zuko.host.plist");
+            eprintln!(
+                "start later with:    launchctl load ~/Library/LaunchAgents/dev.adonm.zuko.host.plist"
+            );
             eprintln!("pair a device with:  zuko share   (after starting)");
         }
     }
@@ -182,12 +189,76 @@ pub fn uninstall() -> Result<()> {
 // ──────────────────────────────── resolver ─────────────────────────────────
 
 /// The absolute path to the currently-running `zuko` binary. The unit points
-/// at this directly (through the wrapper) so it survives PATH changes.
+/// at this directly (through the wrapper) so it survives PATH changes. If the
+/// binary sits under a mise/asdf-style versioned install dir, the returned
+/// path goes through the install root's `latest` symlink so a mise upgrade
+/// that deletes the old version dir keeps the unit running (see
+/// [`prefer_stable_symlink`]).
 fn resolve_self_exe() -> Result<PathBuf> {
     // std::env::current_exe resolves symlinks on Linux and macOS, so a mise
     // shim's exec'd target is what we get — exactly what we want for the unit
-    // to keep working.
-    std::env::current_exe().context("resolve current zuko binary path")
+    // to keep working. `prefer_stable_symlink` then opportunistically rewrites
+    // the versioned path to go through mise's `latest` symlink, so an upgrade
+    // that deletes the versioned dir doesn't take the unit down with exit 127.
+    let exe = std::env::current_exe().context("resolve current zuko binary path")?;
+    Ok(prefer_stable_symlink(exe))
+}
+
+/// Rewrite a mise/asdf-style versioned binary path to go through the install
+/// root's `latest` symlink instead of the version-pinned dir.
+///
+/// Layout this handles:
+/// ```text
+/// <install_root>/<version_dir>/<bin>   ← current_exe() resolves here
+/// <install_root>/latest -> ./<version_dir>
+/// ```
+/// and rewrites to `<install_root>/latest/<bin>`. mise maintains `latest`
+/// (plus major/minor variants) and *deletes* the versioned dir on upgrade —
+/// so a wrapper that pins `<install_root>/0.6.5/zuko` exits 127 the moment
+/// mise upgrades zuko under the user, leaving the systemd unit crash-looping.
+/// Routing through `latest` keeps the wrapper valid across upgrades without
+/// forcing a re-`install` each time.
+///
+/// Conservative: only rewrites when (a) a `latest` entry exists in the install
+/// root, (b) it resolves to a directory *inside* the same install root (not an
+/// escaped symlink), and (c) `<install_root>/latest/<bin>` exists as a real
+/// file. Any miss returns the original path unchanged — this function never
+/// makes the path *less* valid than what `current_exe()` produced.
+fn prefer_stable_symlink(exe: PathBuf) -> PathBuf {
+    // Layout: <install_root>/<version_dir>/<bin_name>.
+    let Some(bin_name) = exe.file_name() else {
+        return exe;
+    };
+    let Some(version_dir) = exe.parent() else {
+        return exe;
+    };
+    let Some(install_root) = version_dir.parent() else {
+        return exe;
+    };
+    let latest = install_root.join("latest");
+    // `canonicalize` follows the symlink and fails if it's missing or broken,
+    // which is exactly the gate we want.
+    let Ok(resolved_latest) = std::fs::canonicalize(&latest) else {
+        return exe;
+    };
+    let Ok(resolved_install_root) = std::fs::canonicalize(install_root) else {
+        return exe;
+    };
+    // Reject symlinks that escape the install root (defence-in-depth against a
+    // weirdly-shaped dir we shouldn't trust). Canonicalise both sides first:
+    // macOS temp paths can enter as `/var/...` while `canonicalize` returns
+    // `/private/var/...`, and comparing mixed spellings causes false rejects.
+    if !resolved_latest.starts_with(&resolved_install_root) {
+        return exe;
+    }
+    let via_latest = latest.join(bin_name);
+    // Final gate: confirm `latest/<bin>` is a real file. Never rewrite to a
+    // path that isn't there right now.
+    if via_latest.is_file() {
+        via_latest
+    } else {
+        exe
+    }
 }
 
 fn home_dir() -> PathBuf {
@@ -547,5 +618,101 @@ mod tests {
         assert!(body.contains("ExecStart=\"/home/me/.local/bin/zuko-host-run\""));
         assert!(body.contains("WantedBy=default.target"));
         assert!(body.contains("Restart=on-failure"));
+    }
+
+    // ── prefer_stable_symlink ──
+    //
+    // These cover the mise-upgrade regression: `zuko install` ran under 0.6.5,
+    // mise upgraded to 0.6.6 and deleted the 0.6.5 dir, and the wrapper pinned
+    // to `…/0.6.5/zuko` left the systemd unit crash-looping with exit 127.
+    // Routing through mise's `latest` symlink (maintained across upgrades)
+    // fixes it.
+
+    #[test]
+    fn prefer_stable_symlink_passes_through_path_without_parents() {
+        // A bare filename has no version dir or install root to inspect; the
+        // function must return the input unchanged rather than panicking.
+        assert_eq!(
+            prefer_stable_symlink(PathBuf::from("zuko")),
+            PathBuf::from("zuko")
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn prefer_stable_symlink_rewrites_through_latest() {
+        use std::os::unix::fs::symlink;
+        // Layout mirrors mise's install root on disk:
+        //   <root>/0.6.5/zuko          ← current_exe() resolves here
+        //   <root>/latest -> ./0.6.5
+        let dir = tempfile::tempdir().unwrap();
+        let install_root = dir.path().join("installs").join("github-adonm-zuko");
+        let version_dir = install_root.join("0.6.5");
+        std::fs::create_dir_all(&version_dir).unwrap();
+        let bin = version_dir.join("zuko");
+        std::fs::write(&bin, b"#! /bin/sh\n").unwrap();
+        symlink("./0.6.5", install_root.join("latest")).unwrap();
+
+        let got = prefer_stable_symlink(bin.clone());
+        assert_eq!(got, install_root.join("latest").join("zuko"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn prefer_stable_symlink_leaves_path_alone_when_no_latest() {
+        // No `latest` symlink → mise (or asdf, or a hand-installed binary)
+        // isn't present; pin the versioned path as before.
+        let dir = tempfile::tempdir().unwrap();
+        let version_dir = dir.path().join("0.6.5");
+        std::fs::create_dir_all(&version_dir).unwrap();
+        let bin = version_dir.join("zuko");
+        std::fs::write(&bin, b"#! /bin/sh\n").unwrap();
+
+        assert_eq!(prefer_stable_symlink(bin.clone()), bin);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn prefer_stable_symlink_falls_back_when_latest_bin_missing() {
+        // `latest` exists and points inside the install root, but its target
+        // dir doesn't contain our binary. Don't rewrite to a broken path.
+        use std::os::unix::fs::symlink;
+        let dir = tempfile::tempdir().unwrap();
+        let install_root = dir.path().join("installs").join("github-adonm-zuko");
+        let v1 = install_root.join("0.6.5");
+        let v2 = install_root.join("0.6.6");
+        std::fs::create_dir_all(&v1).unwrap();
+        std::fs::create_dir_all(&v2).unwrap();
+        // Binary only under the *old* version dir; `latest` points at the new
+        // one which has no `zuko`. Rewrite would produce a non-existent path.
+        let bin = v1.join("zuko");
+        std::fs::write(&bin, b"#! /bin/sh\n").unwrap();
+        symlink("./0.6.6", install_root.join("latest")).unwrap();
+
+        assert_eq!(prefer_stable_symlink(bin.clone()), bin);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn prefer_stable_symlink_rejects_escaped_latest_symlink() {
+        // Defence-in-depth: if `latest` points outside the install root, the
+        // containment check must trip and the original path is preserved.
+        // (A hostile or misconfigured install dir shouldn't get a free pass
+        // to rewrite the wrapper at an arbitrary location.)
+        use std::os::unix::fs::symlink;
+        let dir = tempfile::tempdir().unwrap();
+        let install_root = dir.path().join("installs").join("github-adonm-zuko");
+        let version_dir = install_root.join("0.6.5");
+        std::fs::create_dir_all(&version_dir).unwrap();
+        let bin = version_dir.join("zuko");
+        std::fs::write(&bin, b"#! /bin/sh\n").unwrap();
+        // `latest` resolves to a dir outside install_root that also happens to
+        // contain a `zuko` — both gates the rewrite relies on.
+        let outside = dir.path().join("elsewhere");
+        std::fs::create_dir_all(&outside).unwrap();
+        std::fs::write(outside.join("zuko"), b"#! /bin/sh\n").unwrap();
+        symlink(&outside, install_root.join("latest")).unwrap();
+
+        assert_eq!(prefer_stable_symlink(bin.clone()), bin);
     }
 }

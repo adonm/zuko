@@ -10,11 +10,15 @@
 //! file is written through [`crate::secret::write_secret_0600`]: atomic
 //! temp + rename with `0600` perms, identical to the host key.
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use std::path::PathBuf;
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime};
 
 use crate::secret::write_secret_0600;
+
+/// `zuko host` refreshes current_ticket every 30s. Treat much older files as
+/// stale so `zuko share` doesn't hand out a ticket from a dead/old host.
+const CURRENT_TICKET_MAX_AGE: Duration = Duration::from_secs(5 * 60);
 
 /// `~/.config/zuko/current_ticket` (follows `XDG_CONFIG_HOME`).
 pub fn current_ticket_path() -> PathBuf {
@@ -34,6 +38,22 @@ pub fn write_current_ticket(ticket: &str) -> Result<()> {
 /// Read and trim the live ticket. Used by `zuko share`.
 pub fn read_current_ticket() -> Result<String> {
     let path = current_ticket_path();
+    let meta = std::fs::metadata(&path).with_context(|| {
+        format!(
+            "stat {} (is `zuko host` running? it writes the current ticket there)",
+            path.display()
+        )
+    })?;
+    let age = meta
+        .modified()
+        .ok()
+        .and_then(|mtime| SystemTime::now().duration_since(mtime).ok());
+    if !current_ticket_age_is_fresh(age) {
+        bail!(
+            "{} is stale (is `zuko host` running? it refreshes this file every 30s)",
+            path.display()
+        );
+    }
     let ticket = std::fs::read_to_string(&path).with_context(|| {
         format!(
             "read {} (is `zuko host` running? it writes the current ticket there)",
@@ -45,6 +65,10 @@ pub fn read_current_ticket() -> Result<String> {
         bail!("{} is empty (is `zuko host` running?)", path.display());
     }
     Ok(ticket)
+}
+
+fn current_ticket_age_is_fresh(age: Option<Duration>) -> bool {
+    age.is_some_and(|age| age <= CURRENT_TICKET_MAX_AGE)
 }
 
 /// Poll `current_ticket` until it exists with non-empty contents or `timeout`
@@ -67,5 +91,20 @@ pub fn wait_for_current_ticket(timeout: Duration) -> Result<String> {
             );
         }
         std::thread::sleep(Duration::from_millis(500));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn current_ticket_freshness_accepts_recent_mtime_only() {
+        assert!(current_ticket_age_is_fresh(Some(Duration::from_secs(30))));
+        assert!(current_ticket_age_is_fresh(Some(CURRENT_TICKET_MAX_AGE)));
+        assert!(!current_ticket_age_is_fresh(Some(
+            CURRENT_TICKET_MAX_AGE + Duration::from_secs(1)
+        )));
+        assert!(!current_ticket_age_is_fresh(None));
     }
 }

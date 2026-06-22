@@ -51,7 +51,7 @@ frame format. See [`docs/CLIENTS.md`](docs/CLIENTS.md) for the full list and
 | Client | Status | Stack | Source |
 |--------|--------|-------|--------|
 | **CLI** | shipped | Rust 2024 edition + crossterm | the `zuko` binary (`zuko connect`) |
-| **iOS** | shipped | Swift 6.2 + [GhosttyTerminal](https://github.com/Lakr233/libghostty-spm) + IrohLib | [`ios/Zuko/`](ios/Zuko) |
+| **iOS / iPadOS** | shipped | Swift 6.2 + [GhosttyTerminal](https://github.com/Lakr233/libghostty-spm) + IrohLib | [`ios/Zuko/`](ios/Zuko) |
 | Android | planned | — | — |
 | Linux GUI (relm4) | planned | — | — |
 
@@ -101,21 +101,24 @@ zuko ls                            # list saved hosts
 zuko home                          # = zuko connect home (shorthand)
 ```
 
-**iOS** — see [`ios/Zuko/README.md`](ios/Zuko/README.md) for building the app
-from source (Simulator or device).
+**iOS / iPadOS** — see [`ios/Zuko/README.md`](ios/Zuko/README.md) for building
+the universal app from source (Simulator or device).
 
 ## Session lifetime
 
-Each connection mints a **fresh PTY** on the host, killed when the connection
-ends (network drop, app close, or shell exit — all the same). There's no
-auto-reconnect or session resume; reconnect by re-running `zuko <host>` or
-tapping the connection again. For long-lived work that survives disconnects,
-run `tmux`/`zellij`/`screen` *inside* the zuko session — that's the proper
-layer for resumability.
+Each new session mints a **PTY** on the host, killed when the shell exits. A
+short client/network drop detaches that PTY for a 5-minute in-memory lease; the
+iOS app auto-redials with the lease token and reattaches. Output produced while
+detached is discarded (no replay buffer), and the CLI still exits on drop. For
+long-lived work that survives long disconnects or host restarts, run
+`tmux`/`zellij`/`screen` *inside* the zuko session.
 
 If the session wedges hard (keystrokes vanish), **Ctrl-C 3× within ~1 s** with
 no remote output between presses force-exits the CLI — see
 [`docs/HOST.md`](docs/HOST.md#force-quitting-the-cli) for the detail.
+
+`zuko share` reads the live `current_ticket` refreshed by `zuko host`; stale
+ticket files are rejected so pairing fails closed if the host service is gone.
 
 ## Wire protocol
 
@@ -142,7 +145,7 @@ capability flags, the ticket-handoff ALPN) is in
   --global github:adonm/zuko` installs the prebuilt binary; `cargo` is only
   needed to build from source.
 - CLI client: same — `mise use --global github:adonm/zuko`.
-- iOS client: iOS 26+ (IrohLib requirement), Xcode 26+.
+- iOS/iPadOS client: iOS 26.5+ / iPadOS 26.5+ (IrohLib requirement), Xcode 26+.
 
 ## Security notes
 

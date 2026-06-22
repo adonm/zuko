@@ -77,7 +77,7 @@ jobs:
 
       - name: Select newest Xcode
         run: |
-          xcode="$(ls -d /Applications/Xcode*.app | sort -V | tail -1)"
+          xcode="$(find /Applications -maxdepth 1 -name 'Xcode*.app' -type d | sort -V | tail -1)"
           echo "Selecting $xcode"
           sudo xcode-select -s "$xcode"
           xcodebuild -version
@@ -99,6 +99,14 @@ jobs:
 
       - name: Install signed-release tooling (xcodegen via brew; fastlane via bundler)
         run: mise run setup-ios-release
+
+      - name: Cache bundler gems
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        with:
+          path: ios/vendor/bundle
+          key: ${{ runner.os }}-bundler-${{ hashFiles('ios/Gemfile') }}
+          restore-keys: |
+            ${{ runner.os }}-bundler-
 
       # Resolve the bundler-driven fastlane from ios/Gemfile so the build
       # is reproducible against the pinned gem versions (instead of whatever
@@ -163,7 +171,7 @@ jobs:
           # Skip the interactive "fastlane update available" prompt and any
           # related prompts; CI is non-interactive.
           FASTLANE_SKIP_NEWEST_CHECK: "1"
-        run: bundle exec fastlane $LANE
+        run: bundle exec fastlane "$LANE"
 
       - name: Locate .ipa
         id: ipa

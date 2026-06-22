@@ -41,12 +41,12 @@
 use std::io::{BufRead, BufReader, Read, Write};
 use std::path::Path;
 use std::process::{Child, Command, ExitStatus, Stdio};
-use std::sync::{mpsc, Arc, Mutex};
+use std::sync::{Arc, Mutex, mpsc};
 use std::time::{Duration, Instant};
 use std::{fs, thread};
 
-use anyhow::{bail, Context, Result};
-use portable_pty::{native_pty_system, CommandBuilder as PtyCommand, PtySize};
+use anyhow::{Context, Result, bail};
+use portable_pty::{CommandBuilder as PtyCommand, PtySize, native_pty_system};
 use tempfile::TempDir;
 
 const TOKEN: &str = "hello-zuko-ITEST";
@@ -336,9 +336,7 @@ fn test_share_claim(zuko: &str, xdg: &Path, expected_ticket: &str) -> Result<()>
             // host's `serve_handoff` return and `share`'s loop terminate.
             // Before that fix this assertion would hang — invisible in the
             // old Python harness because its `finally` always SIGTERM'd share.
-            eprintln!(
-                "waiting for `share` to exit on its own (≤{SHARE_EXIT_TIMEOUT:?})…"
-            );
+            eprintln!("waiting for `share` to exit on its own (≤{SHARE_EXIT_TIMEOUT:?})…");
             let status = wait_for_exit(share.get_mut(), SHARE_EXIT_TIMEOUT)
                 .context("`share` did not exit on its own after claim")?;
             if !status.success() {
@@ -448,14 +446,30 @@ fn test_host_connect(zuko: &str, xdg: &Path, ticket: &str) -> Result<()> {
                 .is_ok_and(|o| o.windows(token_bytes.len()).any(|w| w == token_bytes));
             if saw_token {
                 let _ = writer.write_all(b"exit\r");
-                // Give the shell a moment to honour `exit`, then reap.
-                thread::sleep(Duration::from_secs(1));
-                let _ = child.wait();
+                // Give the shell a moment to honour `exit`, then reap with a
+                // timeout so a terminal EOF regression doesn't wedge the test.
+                let deadline = Instant::now() + Duration::from_secs(5);
+                loop {
+                    if child.try_wait().ok().flatten().is_some() {
+                        break;
+                    }
+                    if Instant::now() >= deadline {
+                        let _ = child.kill();
+                        let _ = child.wait();
+                        break;
+                    }
+                    thread::sleep(Duration::from_millis(100));
+                }
                 success = true;
                 break;
             }
         }
         thread::sleep(Duration::from_millis(200));
+    }
+
+    if !success {
+        let _ = child.kill();
+        let _ = child.wait();
     }
 
     // Reap the reader thread (returns once the master side is closed, which

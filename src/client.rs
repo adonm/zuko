@@ -7,11 +7,12 @@
 //!
 //! ## Single-shot (v0.6)
 //!
-//! No auto-reconnect, no heartbeat, no session resume. The connection lives
-//! for as long as the iroh stream is open; on drop (network loss, host down,
-//! shell exit) the client exits and the user re-runs `zuko <host>` to get a
-//! fresh PTY. Users running long-lived work should do so inside `tmux`/
-//! `zellij`/`screen` on the host.
+//! No app-level heartbeat and no protocol resume. The CLI is intentionally
+//! single-shot: on drop (network loss, host down, shell exit) it restores the
+//! local terminal and exits; the user re-runs `zuko <host>` for a fresh PTY.
+//! Mobile clients may auto-redial transient drops, but every successful redial
+//! still starts a fresh PTY. Users running long-lived work should do so inside
+//! `tmux`/`zellij`/`screen` on the host.
 //!
 //! ## Force-quit
 //!
@@ -31,7 +32,10 @@ use std::time::Instant;
 use tokio::io::AsyncWriteExt as _;
 use tokio::sync::mpsc;
 
-use crate::wire::{ALPN, TYPE_DATA, resize_frame, try_parse_frame};
+use crate::wire::{
+    ALPN, SESSION_TOKEN_LEN, TYPE_DATA, TYPE_PING, attach_frame, decode_nonce, pong_frame,
+    resize_frame, try_parse_frame,
+};
 
 /// Force-quit escape hatch: in raw mode Ctrl-C (0x03) is forwarded to the
 /// remote shell, so a wedged connection has no normal escape (keystrokes go
@@ -45,17 +49,32 @@ use crate::wire::{ALPN, TYPE_DATA, resize_frame, try_parse_frame};
 const FORCE_QUIT_PRESSES: u32 = 3;
 const FORCE_QUIT_WINDOW: std::time::Duration = std::time::Duration::from_secs(1);
 
-/// Connect to a host and bridge the local terminal to its shell, reconnecting
-/// on network drops until the remote shell exits.
+/// Connect to a host once and bridge the local terminal to its shell until the
+/// remote shell exits or the link drops.
 pub async fn connect(ticket_str: &str) -> Result<()> {
+    // Foreground iroh + zuko logs on stderr. Defaults mirror `zuko host`
+    // (`zuko=info,iroh=warn`): warn keeps a healthy session quiet so raw-mode
+    // terminal output isn't corrupted, while still surfacing real problems.
+    // To see the dial in detail (relay/direct, QUIC handshake) when chasing a
+    // stall, run:  RUST_LOG=iroh=info zuko <host>
+    // (Log lines land on the raw terminal by design in that case — the cost of
+    // opting into verbose output mid-session.)
+    tracing_subscriber::fmt()
+        .with_writer(std::io::stderr)
+        .with_env_filter(
+            tracing_subscriber::EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| "zuko=info,iroh=warn".into()),
+        )
+        .init();
+
     let ticket = ticket_str
         .parse::<EndpointTicket>()
         .with_context(|| "that doesn't look like a ticket")?;
     let addr: EndpointAddr = ticket.into();
 
     let (cols, rows) = crossterm::terminal::size().unwrap_or((80, 24));
-    // Current terminal size, updated by SIGWINCH across reconnects. Packed as
-    // cols<<16 | rows in a u32 so the reconnect path can read it lock-free.
+    // Current terminal size, updated by SIGWINCH. Packed as cols<<16 | rows in
+    // a u32 so the connect path can read it lock-free.
     let size: Arc<AtomicU32> = Arc::new(AtomicU32::new(pack_size(cols, rows)));
 
     // Connect *before* entering raw mode so connect errors print to a normal,
@@ -77,9 +96,8 @@ pub async fn connect(ticket_str: &str) -> Result<()> {
     // Monotonic token bumped by the read loop whenever DATA is written to
     // stdout. The stdin thread samples it to detect "no remote output since
     // the previous Ctrl-C", which is the gate for the 3× Ctrl-C force-quit
-    // hatch. Process-wide (not reset on reconnect) — a successful resume
-    // replays recent output and bumps this, which is exactly the "remote is
-    // alive again" signal we want to reset the burst.
+    // hatch. Any remote output bumps this, which is exactly the "remote is
+    // alive" signal we want to reset the burst.
     let stdout_seq: Arc<AtomicU64> = Arc::new(AtomicU64::new(0));
 
     // stdin -> DATA frames. A dedicated OS thread does blocking reads (the
@@ -160,25 +178,20 @@ pub async fn connect(ticket_str: &str) -> Result<()> {
         });
     }
 
-    // Single-shot connect (v0.6): no auto-reconnect. The user re-runs
-    // `zuko <host>` if the connection drops. This keeps the model simple and
-    // avoids the "silently lost state on reconnect" surprise that came with
-    // resuming to a fresh PTY.
+    // Single-shot CLI connect: the user re-runs `zuko <host>` if the link
+    // drops. This keeps raw-mode terminal recovery boring and avoids implying
+    // session state survived when the next dial would be a fresh PTY.
     let result: Result<()> = async {
-        let conn = endpoint
-            .connect(addr, ALPN)
-            .await
-            .context("dial host")?;
+        let conn = endpoint.connect(addr, ALPN).await.context("dial host")?;
         let (mut send, recv) = conn.open_bi().await.context("open bidi stream")?;
 
-        // Initial RESIZE — also acts as the v0.6 handshake (tells the host
-        // the terminal size before the first byte of input flows). Sent
-        // directly on `send` BEFORE handing it to the writer so it's
-        // guaranteed first on the wire.
+        // Initial ATTACH — zero token means "fresh PTY". Sent directly on
+        // `send` BEFORE handing it to the writer so it's guaranteed first on
+        // the wire.
         let (c, r) = unpack_size(size.load(Ordering::Relaxed));
-        send.write_all(&resize_frame(c, r))
+        send.write_all(&attach_frame([0u8; SESSION_TOKEN_LEN], c, r))
             .await
-            .context("send initial RESIZE")?;
+            .context("send initial ATTACH")?;
 
         // Writer: drains the frame channel (stdin + SIGWINCH) into the send
         // stream. Runs until the channel closes or `send` errors.
@@ -197,9 +210,9 @@ pub async fn connect(ticket_str: &str) -> Result<()> {
         // cleanly under it.
         status_line("connected — press Ctrl-C 3× to force-quit if it hangs");
 
-        // Read loop: DATA -> stdout. PONGs (replies to host PINGs, if any
-        // old peer sends them) and unknown types are ignored. Heartbeat
-        // removed in v0.6 — iroh's QUIC keepalive handles liveness.
+        // Read loop: DATA -> stdout. PINGs are answered for compatibility
+        // with older/future peers; PONGs and unknown types are ignored.
+        // Heartbeat removed in v0.6 — iroh's QUIC keepalive handles liveness.
         let mut recv = recv;
         let mut acc: Vec<u8> = Vec::with_capacity(16 * 1024);
         let mut tmp = vec![0u8; 16 * 1024];
@@ -208,18 +221,25 @@ pub async fn connect(ticket_str: &str) -> Result<()> {
                 Ok(Some(n)) => {
                     acc.extend_from_slice(&tmp[..n]);
                     while let Some(f) = try_parse_frame(&mut acc) {
-                        if f.typ == TYPE_DATA {
-                            let mut stdout = tokio::io::stdout();
-                            if stdout.write_all(&f.payload).await.is_err()
-                                || stdout.flush().await.is_err()
-                            {
-                                anyhow::bail!("stdout write failed");
+                        match f.typ {
+                            TYPE_DATA => {
+                                let mut stdout = tokio::io::stdout();
+                                if stdout.write_all(&f.payload).await.is_err()
+                                    || stdout.flush().await.is_err()
+                                {
+                                    anyhow::bail!("stdout write failed");
+                                }
+                                // Bump the force-quit token: any DATA the
+                                // remote sent resets the Ctrl-C burst.
+                                stdout_seq.fetch_add(1, Ordering::Relaxed);
                             }
-                            // Bump the force-quit token: any DATA the
-                            // remote sent resets the Ctrl-C burst.
-                            stdout_seq.fetch_add(1, Ordering::Relaxed);
+                            TYPE_PING => {
+                                if let Some(reply) = control_reply_frame(f.typ, &f.payload) {
+                                    let _ = frame_tx.send(reply).await;
+                                }
+                            }
+                            _ => {}
                         }
-                        // PING, PONG, legacy HELLO/WELCOME, unknown: ignore
                     }
                 }
                 Ok(None) => break Ok(()), // host closed → shell exited
@@ -239,10 +259,7 @@ pub async fn connect(ticket_str: &str) -> Result<()> {
         eprintln!("\nzuko: {e:#}");
     }
 
-    // Force exit: the stdin reader thread is blocked on a blocking read and
-    // would otherwise keep the process alive past the session end. The
-    // RawModeGuard has already restored the terminal.
-    std::process::exit(i32::from(result.is_err()));
+    result
 }
 
 /// Restore cooked terminal mode on scope exit (and on unwind/panic, since the
@@ -259,6 +276,10 @@ const fn pack_size(cols: u16, rows: u16) -> u32 {
 }
 const fn unpack_size(packed: u32) -> (u16, u16) {
     ((packed >> 16) as u16, (packed & 0xFFFF) as u16)
+}
+
+fn control_reply_frame(typ: u8, payload: &[u8]) -> Option<Vec<u8>> {
+    (typ == TYPE_PING).then(|| pong_frame(decode_nonce(payload)))
 }
 
 /// Print a status line without corrupting the terminal: a CR, the message,
@@ -356,5 +377,20 @@ mod tests {
             burst = advance_burst(burst, true, true);
             assert!(burst >= FORCE_QUIT_PRESSES);
         }
+    }
+
+    #[test]
+    fn replies_to_ping_for_peer_compatibility() {
+        let reply = control_reply_frame(crate::wire::TYPE_PING, &42u64.to_be_bytes()).unwrap();
+        let mut buf = reply;
+        let frame = crate::wire::try_parse_frame(&mut buf).unwrap();
+        assert_eq!(frame.typ, crate::wire::TYPE_PONG);
+        assert_eq!(crate::wire::decode_nonce(&frame.payload), 42);
+    }
+
+    #[test]
+    fn ignores_non_ping_control_frames() {
+        assert!(control_reply_frame(crate::wire::TYPE_PONG, &[]).is_none());
+        assert!(control_reply_frame(0xFF, &[]).is_none());
     }
 }

@@ -138,8 +138,10 @@ struct ThemeSwatch: View {
     /// at 5 dots so every row stays the same width.
     private var swatchHexes: [String] {
         var hexes = [definition.background, definition.foreground]
-        for index in 0..<3 where definition.palette[index] != nil {
-            hexes.append(definition.palette[index]!)
+        for index in 0..<3 {
+            if let hex = definition.palette[index] {
+                hexes.append(hex)
+            }
         }
         return Array(hexes.prefix(5))
     }

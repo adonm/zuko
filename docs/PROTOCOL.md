@@ -40,8 +40,10 @@ across QUIC packets; receivers must accumulate bytes and parse greedily (see
 |------|------|-----------|---------|
 | `0x00` | `DATA` | both | raw terminal bytes |
 | `0x01` | `RESIZE` | client → host | `[cols: u16 BE][rows: u16 BE]` |
-| `0x04` | `PING` | both | `[nonce: u64 BE]` (legacy, ignored by v0.6+) |
-| `0x05` | `PONG` | both | `[nonce: u64 BE]` (legacy, ignored by v0.6+) |
+| `0x04` | `PING` | both | `[nonce: u64 BE]` (optional control/compat) |
+| `0x05` | `PONG` | both | `[nonce: u64 BE]` (optional control/compat) |
+| `0x06` | `ATTACH` | client → host | `[token: 16 bytes][cols: u16 BE][rows: u16 BE]` |
+| `0x07` | `ATTACHED` | host → client | `[token: 16 bytes]` |
 
 - **`DATA`** — client→host carries keystrokes; host→client carries PTY output.
   Bytes are forwarded verbatim. There is no encoding, escaping, or
@@ -51,9 +53,15 @@ across QUIC packets; receivers must accumulate bytes and parse greedily (see
   client's window changes. **The first frame** the client sends after
   `open_bi` must be a `RESIZE` carrying the initial size — that doubles as the
   entire handshake (see [Connection lifecycle](#connection-lifecycle)).
-- **`PING`/`PONG`** — legacy heartbeat from v0.4–v0.5, kept reserved so old
-  peers don't confuse a v0.6 host. v0.6 clients and hosts ignore them (iroh's
-  QUIC keepalive handles transport-level liveness).
+- **`PING`/`PONG`** — optional control frames kept for compatibility. zuko does
+  not require application heartbeats (Iroh/QUIC owns transport liveness), but
+  peers should answer `PING` with `PONG` carrying the same nonce.
+- **`ATTACH`/`ATTACHED`** — optional reconnect lease. New clients send `ATTACH`
+  as the first frame. A zero token asks for a fresh PTY; a non-zero token asks
+  to reattach a still-leased detached PTY. The host replies with `ATTACHED`
+  carrying the token to use next time. If the requested token expired or is
+  unknown, the host silently starts a fresh PTY and returns a new token. Legacy
+  clients may still send first-frame `RESIZE` and get a fresh PTY.
 - **Unknown types** — must be ignored (forward compatibility — future types
   can be added without breaking old clients). Frame types `0x02` (`HELLO`)
   and `0x03` (`WELCOME`) were used by v0.4–v0.5 for the session-resume
@@ -62,22 +70,30 @@ across QUIC packets; receivers must accumulate bytes and parse greedily (see
 ## Connection lifecycle
 
 1. **Client dials** the host's ticket (see [Ticket](#ticket)) on ALPN `zuko/1`.
-2. **Client opens** the bidi stream and sends a single `RESIZE` with its
-   current terminal size. That's the entire handshake. (The opener must write
-   first for the host's `accept_bi` to resolve.)
+2. **Client opens** the bidi stream and sends `ATTACH` with its last token and
+   current terminal size. First connection uses an all-zero token. Legacy
+   clients may send `RESIZE` instead, which always creates a fresh PTY. The
+   opener must write first for the host's `accept_bi` to resolve. A host should
+   bound this handshake with a short timeout, clamp zero dimensions to at least
+   `1×1`, and if a non-handshake frame arrives first, spawn at `80×24` but still
+   process that frame rather than discard input.
 3. **Host spawns** a fresh shell (`$SHELL`) on a PTY at the requested size,
-   with `TERM=xterm-256color`, in the directory chosen by `zuko host --cwd`
-   (default `$HOME`).
+   or reattaches the requested still-leased PTY. Fresh shells use
+   `TERM=xterm-256color`, in the directory chosen by `zuko host --cwd` (default
+   `$HOME`). The host sends `ATTACHED` with the active token.
 4. **Pump:** client keystrokes → `DATA` → host writes to PTY; PTY output →
    `DATA` → client renders. The client sends `RESIZE` whenever its window
    changes (e.g. on `SIGWINCH`).
 5. **End:** the connection runs until either the shell exits (host sees PTY
    EOF → closes the stream → client sees recv EOF) or the network drops
-   (either side sees a stream error). Either way **the host kills the PTY** —
-   there's no session persistence, no auto-reconnect, nothing to resume.
+   (either side sees a stream error). Shell exit kills the PTY immediately. A
+   network/client drop detaches the PTY for a short host lease (currently 5
+   minutes); reconnecting with the token reattaches it. Output while detached is
+   discarded — there is no replay buffer.
 
-For long-lived work that survives a disconnect, run `tmux`/`zellij`/`screen`
-*inside* the zuko session. That's the proper layer for resumability.
+For long-lived work that survives long disconnects or host restarts, run
+`tmux`/`zellij`/`screen` *inside* the zuko session. The lease is only a mobile
+handover safety net.
 
 ## Ticket
 
@@ -90,9 +106,10 @@ string starting with `endpointa`. It encodes:
 
 Because the secret key is persistent, the node id is stable across restarts and
 IP changes; Iroh's discovery resolves the current address on dial, so a saved
-ticket keeps working. The host writes the ticket to
-`~/.config/zuko/current_ticket` for `zuko share` to read; clients receive it
-exclusively through the [handoff](#ticket-handoff) flow.
+ticket keeps working. The host writes and refreshes the ticket at
+`~/.config/zuko/current_ticket` for `zuko share` to read; `share` rejects stale
+files rather than handing out a ticket from a stopped host. Clients receive the
+ticket exclusively through the [handoff](#ticket-handoff) flow.
 
 ## Ticket handoff
 
@@ -120,7 +137,7 @@ code (the [croc](https://github.com/schollz/croc) model). `zuko share` and
 
 The throwaway endpoint is reached by node id through Iroh's N0 DNS address
 lookup, which can lag a couple of seconds behind `share` coming online, so a
-claimer retries the dial for a short window.
+claimer retries the dial until its overall timeout expires.
 
 ## Implementing a client
 
@@ -132,12 +149,14 @@ A minimal client, in any language with Iroh bindings (Rust `iroh`, Swift
    read the real ticket off the uni stream.
 2. Parse the ticket → `EndpointAddr`.
 3. `Endpoint::builder(presets::N0).bind()`; `connect(addr, b"zuko/1")`.
-4. `open_bi()` → `(send, recv)`. Send an initial `RESIZE`.
+4. `open_bi()` → `(send, recv)`. Send initial `ATTACH` (or legacy `RESIZE`).
 5. Put the local terminal into raw mode. Pump:
    - keystrokes → `DATA` frames on `send`;
    - `DATA` frames from `recv` → render to the terminal;
    - window-size changes → `RESIZE` frames.
-6. End when `recv` closes or the connection drops; restore the terminal.
+6. Store the token from `ATTACHED`. End when `recv` closes or the connection
+   drops; restore the terminal. If you auto-redial transient drops, reuse the
+   token so short disconnects reattach the same PTY.
 
 Reference code:
 
@@ -183,20 +202,22 @@ shell:
   frame (~64 KiB, the `u16` wire max) and renders synchronously.
 
 The iOS outbound queue is capped (`bufferingOldest`, 256) so a user typing or
-pasting during a brownout can't grow memory; it drops the impatient tail
-rather than block the UI.
+pasting during a brownout can't grow memory; it drops the impatient tail rather
+than block the UI. During reconnect backoff there is intentionally no input
+buffer — keystrokes typed while no stream exists are discarded instead of being
+replayed later into a possibly reattached shell.
 
-### Why no session resume
+### Why only a short lease, not full session replay
 
 v0.4–v0.5 had mosh-style session persistence: ring buffer, session registry,
-reaper, control socket. v0.6 dropped all of it. Each connection mints a fresh
-PTY, killed when the connection ends. The trade-off:
+reaper, control socket. The current design keeps only the useful mobile part:
+a short in-memory PTY lease keyed by a random token. The trade-off:
 
-- **Loss:** a network blip kills your shell state. Running `vim` and the
-  connection drops? `vim` dies with it.
-- **Gain:** no class of "stale session" / "two connections to one PTY" /
-  "garbled replay on resume" bugs. No heap growth from abandoned sessions.
-  No `zuko reap` operator burden. The host is ~60% smaller.
+- **Loss:** output produced while detached is gone. Reattached fullscreen apps
+  may need a redraw (`SIGWINCH`, refresh button, or app-specific redraw).
+- **Gain:** short mobile drops keep the process alive without replay buffers,
+  durable state, control sockets, or abandoned sessions that live forever. A
+  replaced attachment is exclusive; abandoned leases are killed after minutes.
 
 Users who actually want resumability run `tmux`/`zellij`/`screen` *inside*
 the zuko session. Those tools are designed for it, handle redraw cleanly, and

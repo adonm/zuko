@@ -30,14 +30,15 @@
 //! [type: u8][len: u16 big-endian][payload: `len` bytes]
 //!   0x00 DATA    payload = raw terminal bytes (keystrokes up, PTY output down)
 //!   0x01 RESIZE  payload = [cols: u16 BE][rows: u16 BE]   (client -> host, also first frame)
-//!   0x04 PING    payload = [nonce: u64 BE]   (bidirectional heartbeat)
-//!   0x05 PONG    payload = [nonce: u64 BE]   (bidirectional heartbeat)
+//!   0x04 PING    payload = [nonce: u64 BE]   (optional control/compat)
+//!   0x05 PONG    payload = [nonce: u64 BE]   (optional control/compat)
+//!   0x06 ATTACH  payload = [token: 16 bytes][cols: u16 BE][rows: u16 BE]
+//!   0x07 ATTACHED payload = [token: 16 bytes]
 //! ```
 //!
-//! v0.6 dropped session resume (the mosh-style ring buffer + session
-//! registry) — each connection mints a fresh PTY on the host, killed when
-//! the connection ends. Users who want resumability run `tmux`/`zellij`/
-//! `screen` inside the zuko session.
+//! zuko keeps only short in-memory PTY leases for reconnects — no replay buffer
+//! or durable session database. Users who want robust resumability run
+//! `tmux`/`zellij`/`screen` inside the zuko session.
 
 use anyhow::Result;
 use clap::{Args, Parser, Subcommand};
@@ -230,10 +231,9 @@ async fn connect_by_name(name: &str) -> Result<()> {
 /// - **No saved hosts** → first-run pairing/serve hint (unchanged).
 /// - **Saved hosts, non-TTY** (piped/scripted) → name listing + hint, so
 ///   scripts don't hang waiting for picker input.
-/// - **Saved hosts, TTY, exactly one** → connect to it directly (no point
-///   showing a one-item picker).
-/// - **Saved hosts, TTY, two or more** → interactive `inquire::Select`
-///   picker; on cancel (Esc) we exit cleanly without connecting.
+/// - **Saved hosts, TTY** → interactive `inquire::Select` picker, even when
+///   there is only one host. Bare `zuko` should ask before opening a shell;
+///   `zuko <name>` remains the fast path.
 async fn bare_zuko_menu() -> Result<()> {
     let saved = store::saved_names();
     if saved.is_empty() {
@@ -246,12 +246,9 @@ async fn bare_zuko_menu() -> Result<()> {
         print_saved_hosts_listing(&saved);
         return Ok(());
     }
-    if saved.len() == 1 {
-        let name = saved.into_iter().next().expect("len == 1");
-        eprintln!("connecting to {name} (the only saved host)");
-        return connect_by_name(&name).await;
-    }
-    // Interactive TTY with 2+ hosts: arrow-key picker with type-to-filter.
+    // Interactive TTY: arrow-key picker with type-to-filter. This intentionally
+    // still prompts for a one-item list so bare `zuko` never surprises the user
+    // by immediately entering raw terminal mode.
     match Select::new("Select a host to connect:", saved).prompt() {
         Ok(name) => connect_by_name(&name).await,
         Err(InquireError::OperationCanceled | InquireError::OperationInterrupted) => {
