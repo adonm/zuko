@@ -51,7 +51,7 @@ frame format. See [`docs/CLIENTS.md`](docs/CLIENTS.md) for the full list and
 | Client | Status | Stack | Source |
 |--------|--------|-------|--------|
 | **CLI** | shipped | Rust 2024 edition + crossterm | the `zuko` binary (`zuko connect`) |
-| **iOS** | shipped | Swift 6.2 + [GhosttyTerminal](https://github.com/Lakr233/libghostty-spm) + IrohLib | [`ios/Zuko/`](ios/Zuko) |
+| **iOS / iPadOS** | shipped | Swift 6.2 + [GhosttyTerminal](https://github.com/Lakr233/libghostty-spm) + IrohLib | [`ios/Zuko/`](ios/Zuko) |
 | Android | planned | — | — |
 | Linux GUI (relm4) | planned | — | — |
 
@@ -101,8 +101,8 @@ zuko ls                            # list saved hosts
 zuko home                          # = zuko connect home (shorthand)
 ```
 
-**iOS** — see [`ios/Zuko/README.md`](ios/Zuko/README.md) for building the app
-from source (Simulator or device).
+**iOS / iPadOS** — see [`ios/Zuko/README.md`](ios/Zuko/README.md) for building
+the universal app from source (Simulator or device).
 
 ## Session lifetime
 
@@ -145,7 +145,7 @@ capability flags, the ticket-handoff ALPN) is in
   --global github:adonm/zuko` installs the prebuilt binary; `cargo` is only
   needed to build from source.
 - CLI client: same — `mise use --global github:adonm/zuko`.
-- iOS client: iOS 26.5+ (IrohLib requirement), Xcode 26+.
+- iOS/iPadOS client: iOS 26.5+ / iPadOS 26.5+ (IrohLib requirement), Xcode 26+.
 
 ## Security notes
 

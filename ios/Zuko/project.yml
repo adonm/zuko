@@ -53,14 +53,13 @@ targets:
         # strictly-increasing build number on every upload. Bump these
         # defaults when you cut a release so a fresh `mise run build-ios`
         # matches the binary version.
-        MARKETING_VERSION: "0.6.6"
+        MARKETING_VERSION: "0.6.10"
         CURRENT_PROJECT_VERSION: "1"
-        TARGETED_DEVICE_FAMILY: "1"  # iPhone only — avoids iPad multitasking
-        # orientation requirements that need UISupportedInterfaceOrientations~ipad
-        # (the ~ipad variant can't be set via INFOPLIST_KEY_* build settings, and
-        # the Info.plist file merge with GENERATE_INFOPLIST_FILE=YES was unreliable).
-        # Add iPad back ("1,2") once the plist merge is sorted — a terminal app
-        # benefits from iPad's screen real estate.
+        # Universal iPhone + iPad app. The app already declares all iPad
+        # orientations below (and in Info.plist), which is required when iPad
+        # multitasking is supported. Keep this in sync with xtool's default
+        # UIDeviceFamily ([1, 2]) for local/CI builds.
+        TARGETED_DEVICE_FAMILY: "1,2"
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
         SUPPORTS_MACCATALYST: NO

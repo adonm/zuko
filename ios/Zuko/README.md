@@ -1,8 +1,8 @@
-# Zuko (iOS)
+# Zuko (iOS / iPadOS)
 
-The **iOS client** for [zuko](../../) — remote terminals over Iroh. It speaks
-the same [wire protocol](../../docs/PROTOCOL.md) as the CLI client and dials the
-same `zuko host` daemon. Local and PR builds are driven by
+The **iOS/iPadOS client** for [zuko](../../) — remote terminals over Iroh. It
+speaks the same [wire protocol](../../docs/PROTOCOL.md) as the CLI client and
+dials the same `zuko host` daemon. Local and PR builds are driven by
 [xtool](https://github.com/xtool-org/xtool) from [`../Package.swift`](../Package.swift)
 and [`../xtool.yml`](../xtool.yml).
 
@@ -33,7 +33,9 @@ Dependencies are resolved as Swift Packages:
 - [libghostty-spm](https://github.com/Lakr233/libghostty-spm) `~> 1.0` (products `GhosttyTerminal` + `GhosttyTheme`) — the terminal emulator + a 485-theme catalog. Wraps the libghostty static library; the app uses its host-managed I/O backend (`InMemoryTerminalSession`) so it stays sandbox-safe (no PTY spawn — all bytes flow through `IrohSession`).
 - [iroh-ffi](https://github.com/n0-computer/iroh-ffi) `~> 1.0` (product `IrohLib`) — networking.
 
-iOS deployment target is **26.5** (matches iroh-ffi's binary floor).
+iOS/iPadOS deployment target is **26.5** (matches iroh-ffi's binary floor).
+The app is universal (`UIDeviceFamily` iPhone + iPad) and supports portrait and
+landscape on iPad.
 
 ## Layout
 
@@ -97,7 +99,7 @@ Fastlane/XcodeGen archive path — see [`../DISTRIBUTION.md`](../DISTRIBUTION.md
   doesn't see SwiftPM linkerSettings). The README mention of CoreWLAN
   applies only to macOS — iOS correctly omits it.
 - IrohLib needs `Network.framework` linked on iOS; `Package.swift` links it.
-- Targets **iOS 26.5** / **Swift 6.2** with `strict-concurrency` enabled.
+- Targets **iOS/iPadOS 26.5** / **Swift 6.2** with `strict-concurrency` enabled.
   Owns its observable models with the Swift 5.9+ `@Observable` macro
   (`ThemeStore`, `ConnectionStore`, `ClaimSession`); `IrohSession` stays on
   `ObservableObject` + `@Published` because most of its state is internal

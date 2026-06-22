@@ -10,14 +10,15 @@ frame types.
 | Client | Status | Stack | Source |
 |--------|--------|-------|--------|
 | **CLI** | shipped | Rust + [crossterm](https://crates.io/crates/crossterm) | [`src/`](../src) — `zuko connect` (part of the `zuko` binary) |
-| **iOS** | shipped | Swift + [GhosttyTerminal](https://github.com/Lakr233/libghostty-spm) + [IrohLib](https://github.com/n0-computer/iroh-ffi) | [`ios/Zuko/`](../ios/Zuko) |
+| **iOS / iPadOS** | shipped | Swift + [GhosttyTerminal](https://github.com/Lakr233/libghostty-spm) + [IrohLib](https://github.com/n0-computer/iroh-ffi) | [`ios/Zuko/`](../ios/Zuko) |
 | Android | planned | Kotlin/Rust via the crate's [uniffi](https://mozilla.github.io/uniffi.rs/) FFI surface | — |
 | Linux GUI | planned | Rust + [relm4](https://relm4.org/) | — |
 | Web | idea | — | — |
 
 The CLI lives in the same `zuko` binary as the host — `mise use --global
 github:adonm/zuko` gives you both (`zuko host` to serve, `zuko connect` to
-attach). The iOS app is built from source (or [TestFlight from CI](../ios/DISTRIBUTION.md)).
+attach). The universal iOS/iPadOS app is built from source (or
+[TestFlight from CI](../ios/DISTRIBUTION.md)).
 
 ## Writing a client
 

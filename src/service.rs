@@ -628,7 +628,10 @@ mod tests {
     fn prefer_stable_symlink_passes_through_path_without_parents() {
         // A bare filename has no version dir or install root to inspect; the
         // function must return the input unchanged rather than panicking.
-        assert_eq!(prefer_stable_symlink(PathBuf::from("zuko")), PathBuf::from("zuko"));
+        assert_eq!(
+            prefer_stable_symlink(PathBuf::from("zuko")),
+            PathBuf::from("zuko")
+        );
     }
 
     #[cfg(unix)]
