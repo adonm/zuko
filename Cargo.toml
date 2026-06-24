@@ -1,6 +1,6 @@
 [package]
 name = "zuko"
-version = "0.6.12"
+version = "0.6.13"
 edition = "2024"
 license = "Apache-2.0"
 description = "Remote terminals over Iroh: the host daemon and reference CLI client."
@@ -73,6 +73,11 @@ inquire = "0.7"
 petname = { version = "3", default-features = false, features = ["default-words"] }
 # RNG for generate_code (petname's generate_into takes a &mut dyn Rng).
 rand = "0.10"
+# SHA-256 for deriving a stable, per-(client,host) reattach token from the
+# client's persistent key (so a client always lands on the same host PTY
+# across reconnects and process restarts). Already compiled transitively via
+# iroh/ring; listed directly so we don't lean on a transitive crate.
+sha2 = "0.10"
 
 [dev-dependencies]
 tempfile = "3"
