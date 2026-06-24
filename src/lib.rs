@@ -29,6 +29,8 @@ uniffi::setup_scaffolding!();
 pub mod code;
 pub mod ffi;
 
+#[cfg(all(target_os = "linux", feature = "gui-app"))]
+pub mod app;
 #[cfg(not(target_os = "ios"))]
 pub mod client;
 #[cfg(not(target_os = "ios"))]
@@ -107,4 +109,59 @@ pub struct HostArgs {
     /// Directory to start the shell in.
     #[arg(long)]
     pub cwd: Option<PathBuf>,
+}
+
+/// `zuko app` configuration: run one Wayland GUI app inside a terminal-backed
+/// kiosk compositor. Linux-only because the implementation uses Smithay/EGL and
+/// a Wayland server socket.
+#[cfg(target_os = "linux")]
+#[derive(clap::Args, Clone, Debug)]
+pub struct AppArgs {
+    /// List discoverable desktop/Flatpak app aliases and exit.
+    #[arg(long)]
+    pub list: bool,
+
+    /// Print the resolved launch command/env and exit without starting the
+    /// compositor. Useful when a Flatpak shows a blank screen.
+    #[arg(long)]
+    pub dry_run: bool,
+
+    /// Draw a generated Kitty graphics test pattern and exit. This does not
+    /// start Wayland, EGL, or the child app; use it first to prove terminal
+    /// graphics survive the local terminal / zuko PTY path.
+    #[arg(long)]
+    pub test_pattern: bool,
+
+    /// Let the child app write stdout/stderr to this terminal. Normal mode
+    /// suppresses child logs so they do not corrupt the Kitty graphics stream.
+    #[arg(long)]
+    pub debug_child: bool,
+
+    /// Disable common browser subprocess sandboxes. Useful on hosts/containers
+    /// where Firefox logs `CanCreateUserNamespace() clone() failure: EPERM`.
+    #[arg(long)]
+    pub no_sandbox: bool,
+
+    /// Maximum terminal frame ship rate. Rendering/damage can run faster; this
+    /// caps the expensive readback + Kitty output path.
+    #[arg(long, default_value_t = 8)]
+    pub fps: u16,
+
+    /// Scale the hosted app's logical output before rendering to the terminal.
+    #[arg(long, default_value_t = 1.0)]
+    pub scale: f32,
+
+    /// Force software rendering for apps that fail on EGL/GPU paths.
+    #[arg(long)]
+    pub software: bool,
+
+    /// Child command and arguments. Put zuko app flags before the command; use
+    /// `--` before child flags, e.g. `zuko app --fps 5 -- firefox --new-window`.
+    #[arg(
+        required_unless_present_any = ["list", "test_pattern"],
+        trailing_var_arg = true,
+        allow_hyphen_values = true,
+        value_name = "COMMAND"
+    )]
+    pub command: Vec<String>,
 }

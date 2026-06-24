@@ -1,6 +1,6 @@
 [package]
 name = "zuko"
-version = "0.6.12"
+version = "0.6.13"
 edition = "2024"
 license = "Apache-2.0"
 description = "Remote terminals over Iroh: the host daemon and reference CLI client."
@@ -41,6 +41,13 @@ thiserror = "1"
 # binary wrapper (see [[bin]] above) to generate Swift bindings at build time.
 uniffi = { version = "0.31", features = ["cli"] }
 
+[features]
+default = []
+# Smithay links libxkbcommon, so keep the implementation feature-gated until
+# release builders/CI provide that system library. The CLI still exposes
+# `zuko app` and reports a clear build-feature error without this feature.
+gui-app = ["dep:smithay", "dep:base64", "dep:png", "dep:libc"]
+
 # Host/client-only deps — NOT compiled for iOS (the FFI build only needs
 # `code.rs` + `ffi.rs`, which are synchronous and pull in none of these).
 # `portable-pty` uses Linux/macOS ioctl symbols that don't exist on iOS;
@@ -58,7 +65,7 @@ iroh = "1.0"
 iroh-tickets = "1.0"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "io-util", "signal", "time"] }
 portable-pty = "0.8"
-crossterm = "0.28"
+crossterm = "0.29"
 clap = { version = "4", features = ["derive"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
@@ -73,6 +80,24 @@ inquire = "0.7"
 petname = { version = "3", default-features = false, features = ["default-words"] }
 # RNG for generate_code (petname's generate_into takes a &mut dyn Rng).
 rand = "0.10"
+# SHA-256 for deriving a stable, per-(client,host) reattach token from the
+# client's persistent key (so a client always lands on the same host PTY
+# across reconnects and process restarts). Already compiled transitively via
+# iroh/ring; listed directly so we don't lean on a transitive crate.
+sha2 = "0.10"
+# Parse Exec= lines from .desktop files for `zuko app <alias>` resolution.
+shell-words = "1"
+
+# Linux-only single-app terminal GUI (`zuko app`). Kept off macOS/iOS: the
+# compositor path depends on Linux Wayland plumbing and should not bloat or
+# break the normal host/client builds on Apple platforms.
+# Renderer is Pixman (pure-CPU 2D rasterizer), NOT GLES/EGL: that drops the
+# libEGL/libGLES/glow stack and keeps zuko app free of GPU/OpenGL driver deps.
+[target.'cfg(target_os = "linux")'.dependencies]
+smithay = { version = "0.7", default-features = false, features = ["renderer_pixman", "wayland_frontend", "desktop"], optional = true }
+base64 = { version = "0.22", optional = true }
+png = { version = "0.18", optional = true }
+libc = { version = "0.2", optional = true }
 
 [dev-dependencies]
 tempfile = "3"
@@ -89,3 +114,13 @@ opt-level = "z"
 lto = true
 codegen-units = 1
 strip = "symbols"
+
+# [TEMP-PATCH] crossterm 0.28.1/0.29.0 panic on SGR-pixel mouse: the unix
+# parser does an unchecked `coord - 1` that overflows (panics in debug) when a
+# terminal reports a 0-based pixel coordinate (Ghostty on the top row),
+# crashing `zuko app` on click. The fix (saturating_sub) is on crossterm
+# master but UNRELEASED, so we patch from git until a fixed version ships on
+# crates.io. Drop this patch + re-pin to the published crate once ≥0.29.1 (or
+# whatever release includes the "Fix integer underflow" CHANGELOG entry) lands.
+[patch.crates-io]
+crossterm = { git = "https://github.com/crossterm-rs/crossterm.git", rev = "3cea5b2d1d0c1cd4f285d18791b32e4b15e9bc0e" }

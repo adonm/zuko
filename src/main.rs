@@ -115,6 +115,12 @@ enum Command {
         #[arg(long, default_value_t = 60)]
         timeout: u64,
     },
+
+    /// Run one Wayland GUI app inside this terminal (Linux only). When invoked
+    /// inside `zuko <host>`, the existing PTY/Iroh link carries the Kitty image
+    /// stream back to your local terminal.
+    #[cfg(target_os = "linux")]
+    App(zuko::AppArgs),
 }
 
 #[derive(Args, Clone, Debug)]
@@ -186,6 +192,12 @@ async fn main() -> Result<()> {
             no_connect,
             timeout,
         }) => handoff::claim(&code, r#as, no_connect, timeout).await,
+        #[cfg(all(target_os = "linux", feature = "gui-app"))]
+        Some(Command::App(args)) => zuko::app::run(args),
+        #[cfg(all(target_os = "linux", not(feature = "gui-app")))]
+        Some(Command::App(_args)) => anyhow::bail!(
+            "this zuko binary was built without `zuko app`; rebuild with `--features gui-app` (requires libxkbcommon/EGL runtime libraries)"
+        ),
         None => match cli.name {
             // Bare `zuko <input>`: the power-user shortcut. Distinguish a
             // saved-host name (the common case after the first claim) from a

@@ -5,14 +5,31 @@
 //! using the shared [`crate::wire`] framing. `vim`, `htop`, tab completion, and
 //! resize all work because the host runs a real PTY.
 //!
-//! ## Single-shot (v0.6)
+//! ## Auto-resume (v0.6.13+)
 //!
-//! No app-level heartbeat and no protocol resume. The CLI is intentionally
-//! single-shot: on drop (network loss, host down, shell exit) it restores the
-//! local terminal and exits; the user re-runs `zuko <host>` for a fresh PTY.
-//! Mobile clients may auto-redial transient drops, but every successful redial
-//! still starts a fresh PTY. Users running long-lived work should do so inside
-//! `tmux`/`zellij`/`screen` on the host.
+//! The CLI mirrors the iOS client's reconnect policy: on a transient drop
+//! (network error, host unreachable, relay churn) it redials with bounded
+//! exponential backoff and resends the host-issued session token so the host
+//! reattaches the same PTY while its detached lease is alive. Clean shell exit
+//! (host sends EOF) is **not** retried — the client exits normally. The 3×
+//! Ctrl-C force-quit hatch remains the escape from a wedged-but-not-dead link.
+//!
+//! Auto-resume rides the host's existing short detached lease: there is still
+//! no replay buffer, output while detached is still discarded, and a reconnect
+//! after the lease expires (host restart, long outage) lands on a fresh PTY.
+//! Users running long-lived work should still do so inside `tmux`/`zellij`/
+//! `screen` on the host — that's the layer robust to host restarts.
+//!
+//! ## Stable per-(client, host) PTY
+//!
+//! The client keeps a persistent identity at `~/.config/zuko/client_key` and
+//! derives a deterministic reattach token from (client key, host id). It sends
+//! that token on the first ATTACH, so the host creates-or-reattaches **the
+//! same PTY** for a given client+host — across auto-resumes *and* across fresh
+//! `zuko <host>` invocations. Two terminals sharing the identity take over one
+//! PTY (last attach wins; the previous one sees EOF and exits); use `tmux`/
+//! `zellij` for independent shells. Legacy clients (no persistent key, iOS for
+//! now) keep getting fresh PTYs per connect — unchanged behaviour.
 //!
 //! ## Force-quit
 //!
@@ -33,8 +50,8 @@ use tokio::io::AsyncWriteExt as _;
 use tokio::sync::mpsc;
 
 use crate::wire::{
-    ALPN, SESSION_TOKEN_LEN, TYPE_DATA, TYPE_PING, attach_frame, decode_nonce, pong_frame,
-    resize_frame, try_parse_frame,
+    ALPN, SESSION_TOKEN_LEN, SessionToken, TYPE_ATTACHED, TYPE_DATA, TYPE_PING, attach_frame,
+    decode_nonce, parse_attached, pong_frame, resize_frame, try_parse_frame,
 };
 
 /// Force-quit escape hatch: in raw mode Ctrl-C (0x03) is forwarded to the
@@ -72,14 +89,26 @@ pub async fn connect(ticket_str: &str) -> Result<()> {
         .with_context(|| "that doesn't look like a ticket")?;
     let addr: EndpointAddr = ticket.into();
 
+    // Persistent client identity (`~/.config/zuko/client_key`). A stable key
+    // does two things: it gives the client a stable Iroh node id, and — more
+    // importantly — it lets us derive a deterministic reattach token for this
+    // (client, host) pair. Sending that token on the first ATTACH means the
+    // host reuses the same PTY across reconnects *and* across fresh `zuko
+    // <host>` invocations, instead of minting a new shell each time.
+    let client_key = crate::secret::load_or_create_key(&client_key_path())
+        .context("load client identity key")?;
+    let initial_token = derive_session_token(&client_key, &addr);
+
     let (cols, rows) = crossterm::terminal::size().unwrap_or((80, 24));
     // Current terminal size, updated by SIGWINCH. Packed as cols<<16 | rows in
     // a u32 so the connect path can read it lock-free.
     let size: Arc<AtomicU32> = Arc::new(AtomicU32::new(pack_size(cols, rows)));
 
     // Connect *before* entering raw mode so connect errors print to a normal,
-    // cooked terminal instead of a half-set-up raw one.
+    // cooked terminal instead of a half-set-up raw one. Bind with the
+    // persistent client key so the node id is stable too.
     let endpoint = Endpoint::builder(presets::N0)
+        .secret_key(client_key)
         .bind()
         .await
         .context("bind local endpoint")?;
@@ -91,7 +120,7 @@ pub async fn connect(ticket_str: &str) -> Result<()> {
     // the writer task drains it into the send stream. Bounded so a flood
     // can't grow memory unbounded (the producer awaits, back-pressuring
     // stdin reads).
-    let (frame_tx, frame_rx) = mpsc::channel::<Vec<u8>>(64);
+    let (frame_tx, mut frame_rx) = mpsc::channel::<Vec<u8>>(64);
 
     // Monotonic token bumped by the read loop whenever DATA is written to
     // stdout. The stdin thread samples it to detect "no remote output since
@@ -178,80 +207,38 @@ pub async fn connect(ticket_str: &str) -> Result<()> {
         });
     }
 
-    // Single-shot CLI connect: the user re-runs `zuko <host>` if the link
-    // drops. This keeps raw-mode terminal recovery boring and avoids implying
-    // session state survived when the next dial would be a fresh PTY.
-    let result: Result<()> = async {
-        let conn = endpoint.connect(addr, ALPN).await.context("dial host")?;
-        let (mut send, recv) = conn.open_bi().await.context("open bidi stream")?;
-
-        // Initial ATTACH — zero token means "fresh PTY". Sent directly on
-        // `send` BEFORE handing it to the writer so it's guaranteed first on
-        // the wire.
-        let (c, r) = unpack_size(size.load(Ordering::Relaxed));
-        send.write_all(&attach_frame([0u8; SESSION_TOKEN_LEN], c, r))
-            .await
-            .context("send initial ATTACH")?;
-
-        // Writer: drains the frame channel (stdin + SIGWINCH) into the send
-        // stream. Runs until the channel closes or `send` errors.
-        let writer = tokio::spawn(async move {
-            let mut frame_rx = frame_rx;
-            while let Some(frame) = frame_rx.recv().await {
-                if send.write_all(&frame).await.is_err() {
-                    break;
-                }
+    // Auto-resume loop: keep redialing transient drops until the remote shell
+    // exits cleanly. The first attempt sends the client's stable derived token
+    // (so the host creates-or-reattaches the same PTY for this client); the
+    // host replies ATTACHED with the real token, which we resend on every
+    // reconnect so the host reattaches the same PTY while its detached lease
+    // is alive. Connect/open/ATTACH/write errors are treated as transient
+    // (Dropped) and retried with backoff; only a clean recv EOF (shell exit)
+    // ends the session. This mirrors the iOS client's reconnect policy.
+    let mut token: SessionToken = initial_token;
+    let mut backoff = ReconnectBackoff::new();
+    let ctx = ConnCtx {
+        endpoint: &endpoint,
+        addr: &addr,
+        size: &size,
+        frame_tx: &frame_tx,
+        stdout_seq: &stdout_seq,
+    };
+    let result: Result<()> = loop {
+        match run_one_connection(&ctx, &mut token, &mut frame_rx, &mut backoff).await {
+            Ok(ConnOutcome::ShellExited) => break Ok(()),
+            Ok(ConnOutcome::Dropped) => {
+                status_line(&format!(
+                    "link lost — reconnecting in {:?} (Ctrl-C 3× to give up)",
+                    backoff.next_delay()
+                ));
+                backoff.sleep().await;
+                continue;
             }
-            let _ = send.finish();
-        });
-
-        // One-shot discoverability nudge for the force-quit hatch. Stays on
-        // its own line via status_line's CR/\r\n so the remote prompt draws
-        // cleanly under it.
-        status_line("connected — press Ctrl-C 3× to force-quit if it hangs");
-
-        // Read loop: DATA -> stdout. PINGs are answered for compatibility
-        // with older/future peers; PONGs and unknown types are ignored.
-        // Heartbeat removed in v0.6 — iroh's QUIC keepalive handles liveness.
-        let mut recv = recv;
-        let mut acc: Vec<u8> = Vec::with_capacity(16 * 1024);
-        let mut tmp = vec![0u8; 16 * 1024];
-        let read_result: Result<()> = loop {
-            match recv.read(&mut tmp).await {
-                Ok(Some(n)) => {
-                    acc.extend_from_slice(&tmp[..n]);
-                    while let Some(f) = try_parse_frame(&mut acc) {
-                        match f.typ {
-                            TYPE_DATA => {
-                                let mut stdout = tokio::io::stdout();
-                                if stdout.write_all(&f.payload).await.is_err()
-                                    || stdout.flush().await.is_err()
-                                {
-                                    anyhow::bail!("stdout write failed");
-                                }
-                                // Bump the force-quit token: any DATA the
-                                // remote sent resets the Ctrl-C burst.
-                                stdout_seq.fetch_add(1, Ordering::Relaxed);
-                            }
-                            TYPE_PING => {
-                                if let Some(reply) = control_reply_frame(f.typ, &f.payload) {
-                                    let _ = frame_tx.send(reply).await;
-                                }
-                            }
-                            _ => {}
-                        }
-                    }
-                }
-                Ok(None) => break Ok(()), // host closed → shell exited
-                Err(e) => break Err(e).context("connection read failed"),
-            }
-        };
-
-        // Cancel the writer (send stream may still be alive on shell-exit).
-        writer.abort();
-        read_result
-    }
-    .await;
+            // A local fatal error (e.g. stdout write failed): stop retrying.
+            Err(e) => break Err(e),
+        }
+    };
 
     // Restore the terminal first, then surface any error on a clean (cooked) tty.
     drop(_guard);
@@ -260,6 +247,192 @@ pub async fn connect(ticket_str: &str) -> Result<()> {
     }
 
     result
+}
+
+/// Outcome of one connect→pump attempt, driving the auto-resume loop.
+enum ConnOutcome {
+    /// Host closed the stream cleanly → remote shell exited. Stop retrying.
+    ShellExited,
+    /// Transient failure (dial/open/write/read error). Retry with backoff.
+    Dropped,
+}
+
+/// Bounded exponential backoff between reconnect attempts. Mirrors the iOS
+/// client: 1s base, doubling, capped at 15s. Reset to the base whenever a
+/// connection reaches the live-pump phase (handshake bytes left the wire), so
+/// a healthy link that blips doesn't inherit a huge delay from an earlier long
+/// outage.
+struct ReconnectBackoff {
+    delay: std::time::Duration,
+}
+
+impl ReconnectBackoff {
+    const BASE: std::time::Duration = std::time::Duration::from_secs(1);
+    const MAX: std::time::Duration = std::time::Duration::from_secs(15);
+
+    fn new() -> Self {
+        Self { delay: Self::BASE }
+    }
+
+    /// Delay that will be slept on the next [`Self::sleep`].
+    fn next_delay(&self) -> std::time::Duration {
+        self.delay
+    }
+
+    async fn sleep(&mut self) {
+        tokio::time::sleep(self.delay).await;
+        self.delay = Self::next_after(self.delay);
+    }
+
+    fn reset(&mut self) {
+        self.delay = Self::BASE;
+    }
+
+    /// Pure doubling step with the [`MAX`] cap. Extracted from [`sleep`] so the
+    /// progression is unit-testable without a real timer.
+    fn next_after(current: std::time::Duration) -> std::time::Duration {
+        current.saturating_mul(2).min(Self::MAX)
+    }
+}
+
+/// Shared, immutable handles one reconnect attempt reads through. Grouping
+/// them keeps [`run_one_connection`]'s argument list short (clippy-clean) and
+/// the auto-resume loop legible.
+struct ConnCtx<'a> {
+    endpoint: &'a Endpoint,
+    addr: &'a EndpointAddr,
+    size: &'a std::sync::atomic::AtomicU32,
+    frame_tx: &'a mpsc::Sender<Vec<u8>>,
+    stdout_seq: &'a std::sync::atomic::AtomicU64,
+}
+
+/// Open one connection, complete the ATTACH handshake, and pump both
+/// directions until the connection ends. Updates `token` from the host's
+/// ATTACHED reply so the next attempt reattaches the same PTY. Transient
+/// failures return `Ok(Dropped)`; only a clean remote EOF returns
+/// `Ok(ShellExited)`. A local stdout write failure (terminal gone) is fatal
+/// and returns `Err`.
+async fn run_one_connection(
+    ctx: &ConnCtx<'_>,
+    token: &mut SessionToken,
+    frame_rx: &mut mpsc::Receiver<Vec<u8>>,
+    backoff: &mut ReconnectBackoff,
+) -> Result<ConnOutcome> {
+    // Dial + open the bidi stream. Any failure here is transient: the host
+    // may be down, roaming between relays, or the network briefly flaked.
+    // `connect` consumes the EndpointAddr, so clone the borrowed handle —
+    // dialing is cheap and we redo it on every reconnect.
+    let conn = match ctx.endpoint.connect(ctx.addr.clone(), ALPN).await {
+        Ok(c) => c,
+        Err(_) => return Ok(ConnOutcome::Dropped),
+    };
+    let (mut send, mut recv) = match conn.open_bi().await {
+        Ok(p) => p,
+        Err(_) => return Ok(ConnOutcome::Dropped),
+    };
+
+    // Initial ATTACH — the current token (zero on first attach, the host's
+    // issued token on reconnect). Sent on `send` before the pump starts so
+    // it's guaranteed first on the wire.
+    let (c, r) = unpack_size(ctx.size.load(Ordering::Relaxed));
+    if send.write_all(&attach_frame(*token, c, r)).await.is_err() {
+        return Ok(ConnOutcome::Dropped);
+    }
+    // Handshake bytes are on the wire — this connection is live. Reset the
+    // backoff so the next drop after a healthy stretch starts fresh.
+    backoff.reset();
+    status_line("connected — Ctrl-C 3× to force-quit if it hangs");
+
+    // Pump both directions concurrently. stdin/SIGWINCH frames drain into
+    // `send`; recv frames parse into stdout / ATTACH-token capture / PONG
+    // replies. Either side ending tears down this connection; the outer loop
+    // decides whether to reconnect based on the outcome.
+    let mut acc: Vec<u8> = Vec::with_capacity(16 * 1024);
+    let mut tmp = vec![0u8; 16 * 1024];
+    loop {
+        tokio::select! {
+            // outbound: stdin + SIGWINCH frames -> send stream
+            frame = frame_rx.recv() => match frame {
+                Some(bytes) => {
+                    if send.write_all(&bytes).await.is_err() {
+                        return Ok(ConnOutcome::Dropped);
+                    }
+                }
+                None => {
+                    // All frame producers gone (stdin closed + SIGWINCH task
+                    // ended — effectively client teardown). Finish the send
+                    // half and drain remaining output until the shell exits.
+                    let _ = send.finish();
+                    loop {
+                        match recv.read(&mut tmp).await {
+                            Ok(Some(n)) => {
+                                acc.extend_from_slice(&tmp[..n]);
+                                process_buffered_frames(
+                                    &mut acc, token, ctx.stdout_seq, None,
+                                )
+                                .await?;
+                            }
+                            Ok(None) => return Ok(ConnOutcome::ShellExited),
+                            Err(_) => return Ok(ConnOutcome::Dropped),
+                        }
+                    }
+                }
+            },
+            // inbound: recv stream -> parse -> stdout / token / pong
+            read = recv.read(&mut tmp) => match read {
+                Ok(Some(n)) => {
+                    acc.extend_from_slice(&tmp[..n]);
+                    process_buffered_frames(&mut acc, token, ctx.stdout_seq, Some(ctx.frame_tx)).await?;
+                }
+                // Host closed the stream cleanly → remote shell exited.
+                Ok(None) => return Ok(ConnOutcome::ShellExited),
+                Err(_) => return Ok(ConnOutcome::Dropped),
+            },
+        }
+    }
+}
+
+/// Parse and act on every complete frame currently buffered in `acc`. DATA
+/// goes to stdout (fatal if stdout is gone); ATTACHED updates the reattach
+/// token; PING is answered via `frame_tx` when given (omitted during the
+/// post-stdin drain, when no producer remains). Unknown types are ignored —
+/// the wire protocol is designed to gain types without breaking old peers.
+async fn process_buffered_frames(
+    acc: &mut Vec<u8>,
+    token: &mut SessionToken,
+    stdout_seq: &std::sync::atomic::AtomicU64,
+    frame_tx: Option<&mpsc::Sender<Vec<u8>>>,
+) -> Result<()> {
+    while let Some(f) = try_parse_frame(acc) {
+        match f.typ {
+            TYPE_DATA => {
+                let mut stdout = tokio::io::stdout();
+                if stdout.write_all(&f.payload).await.is_err() || stdout.flush().await.is_err() {
+                    anyhow::bail!("stdout write failed");
+                }
+                // Bump the force-quit token: any DATA the remote sent resets
+                // the Ctrl-C burst (a responsive remote isn't "wedged").
+                stdout_seq.fetch_add(1, Ordering::Relaxed);
+            }
+            // Host's reply to ATTACH: the token to resend on reconnect. On a
+            // fresh attach this is a new token; on a reattach within the lease
+            // it's the same one; if the lease expired, a new token (fresh PTY).
+            TYPE_ATTACHED => {
+                if let Some(t) = parse_attached(&f.payload) {
+                    *token = t;
+                }
+            }
+            TYPE_PING => {
+                if let Some(reply) = control_reply_frame(f.typ, &f.payload)
+                    && let Some(tx) = frame_tx
+                {
+                    let _ = tx.send(reply).await;
+                }
+            }
+            _ => {}
+        }
+    }
+    Ok(())
 }
 
 /// Restore cooked terminal mode on scope exit (and on unwind/panic, since the
@@ -276,6 +449,39 @@ const fn pack_size(cols: u16, rows: u16) -> u32 {
 }
 const fn unpack_size(packed: u32) -> (u16, u16) {
     ((packed >> 16) as u16, (packed & 0xFFFF) as u16)
+}
+
+/// `~/.config/zuko/client_key` (follows `XDG_CONFIG_HOME`). The client's
+/// persistent identity — distinct from the host's `key` so a machine that is
+/// both host and client keeps the two roles independent.
+fn client_key_path() -> std::path::PathBuf {
+    let mut p = crate::config_dir();
+    p.push("zuko");
+    p.push("client_key");
+    p
+}
+
+/// Derive a stable 16-byte reattach token for this (client, host) pair.
+///
+/// Mixing in the host's public key (`addr.id`) makes the token per-host, so
+/// the same client gets a different — but equally stable — token on every
+/// host it reaches, and the token is useless on any other host's registry.
+/// Hashing (rather than sending raw key bytes) keeps key material off the wire
+/// even though the stream is already end-to-end encrypted.
+///
+/// The result is non-zero for any real secret (SHA-256's first 16 bytes being
+/// all zero is a ~2^-128 impossibility), so it's never mistaken for the wire
+/// "fresh session" sentinel.
+fn derive_session_token(secret: &iroh::SecretKey, addr: &EndpointAddr) -> SessionToken {
+    use sha2::{Digest, Sha256};
+    let mut hasher = Sha256::new();
+    hasher.update(b"zuko-session-token-v1");
+    hasher.update(secret.to_bytes());
+    hasher.update(addr.id.as_bytes());
+    let out = hasher.finalize();
+    let mut tok = [0u8; SESSION_TOKEN_LEN];
+    tok.copy_from_slice(&out[..SESSION_TOKEN_LEN]);
+    tok
 }
 
 fn control_reply_frame(typ: u8, payload: &[u8]) -> Option<Vec<u8>> {
@@ -322,6 +528,7 @@ fn force_quit() -> ! {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::time::Duration;
 
     #[test]
     fn burst_starts_at_one() {
@@ -392,5 +599,114 @@ mod tests {
     fn ignores_non_ping_control_frames() {
         assert!(control_reply_frame(crate::wire::TYPE_PONG, &[]).is_none());
         assert!(control_reply_frame(0xFF, &[]).is_none());
+    }
+
+    // ── auto-resume backoff ──
+
+    #[test]
+    fn backoff_doubles_then_caps_at_max() {
+        // 1s → 2s → 4s → 8s → 15s (cap) → 15s … mirrors the iOS client.
+        let mut d = ReconnectBackoff::BASE;
+        assert_eq!(d, Duration::from_secs(1));
+        d = ReconnectBackoff::next_after(d);
+        assert_eq!(d, Duration::from_secs(2));
+        d = ReconnectBackoff::next_after(d);
+        assert_eq!(d, Duration::from_secs(4));
+        d = ReconnectBackoff::next_after(d);
+        assert_eq!(d, Duration::from_secs(8));
+        d = ReconnectBackoff::next_after(d);
+        assert_eq!(d, ReconnectBackoff::MAX);
+        assert_eq!(d, Duration::from_secs(15));
+        // Once at the cap it stays there — never grows past MAX even over many
+        // retries (a long host outage must not push the delay to minutes).
+        for _ in 0..100 {
+            d = ReconnectBackoff::next_after(d);
+            assert_eq!(d, ReconnectBackoff::MAX);
+        }
+    }
+
+    #[test]
+    fn backoff_starts_at_base_and_resets() {
+        let mut b = ReconnectBackoff::new();
+        assert_eq!(b.next_delay(), ReconnectBackoff::BASE);
+        // Simulate the delay bump sleep performs (without actually sleeping).
+        b.delay = ReconnectBackoff::next_after(b.delay);
+        assert_eq!(b.next_delay(), Duration::from_secs(2));
+        // reset() returns to the base — a healthy connection that later blips
+        // starts the next backoff from 1s, not the elevated delay.
+        b.reset();
+        assert_eq!(b.next_delay(), ReconnectBackoff::BASE);
+    }
+
+    // ── ATTACH token capture (the core reattach mechanic) ──
+
+    #[tokio::test]
+    async fn attached_frame_updates_reattach_token() {
+        // On a fresh connect the client sends a zero token; the host replies
+        // ATTACHED with the real token. The reconnect loop must capture it so
+        // the next dial reattaches the same PTY.
+        let issued = [7u8; SESSION_TOKEN_LEN];
+        let mut acc = crate::wire::attached_frame(issued);
+        let mut token = [0u8; SESSION_TOKEN_LEN];
+        let stdout_seq = AtomicU64::new(0);
+        // ATTACHED-only buffer: no DATA, so nothing is written to stdout.
+        process_buffered_frames(&mut acc, &mut token, &stdout_seq, None)
+            .await
+            .unwrap();
+        assert_eq!(token, issued, "client must adopt the host-issued token");
+        // Buffer fully drained.
+        assert!(acc.is_empty());
+    }
+
+    #[tokio::test]
+    async fn unknown_frame_type_is_ignored_without_overwriting_token() {
+        // Forward-compat: an unknown frame must be silently skipped and must
+        // NOT clobber the reattach token.
+        let mut acc = Vec::new();
+        acc.extend(crate::wire::frame(0xEE, b"junk"));
+        let mut token = [9u8; SESSION_TOKEN_LEN];
+        let stdout_seq = AtomicU64::new(0);
+        process_buffered_frames(&mut acc, &mut token, &stdout_seq, None)
+            .await
+            .unwrap();
+        assert_eq!(token, [9u8; SESSION_TOKEN_LEN]);
+        assert!(acc.is_empty());
+    }
+
+    // ── stable per-(client,host) reattach token ──
+
+    #[test]
+    fn derived_token_is_stable_and_nonzero() {
+        // The whole point: a client always lands on the same host PTY because
+        // it derives the same token for a given (client, host) every time.
+        let client = iroh::SecretKey::generate();
+        let addr = EndpointAddr::new(iroh::SecretKey::generate().public());
+        let t1 = derive_session_token(&client, &addr);
+        let t2 = derive_session_token(&client, &addr);
+        assert_eq!(t1, t2, "same (client,host) must derive the same token");
+        assert!(
+            !crate::wire::empty_session_token(&t1),
+            "must never be the all-zero 'fresh session' sentinel"
+        );
+    }
+
+    #[test]
+    fn derived_token_differs_across_hosts_and_clients() {
+        let client1 = iroh::SecretKey::generate();
+        let client2 = iroh::SecretKey::generate();
+        let addr_a = EndpointAddr::new(iroh::SecretKey::generate().public());
+        let addr_b = EndpointAddr::new(iroh::SecretKey::generate().public());
+        // Same client, different host → different token (so each host keeps
+        // its own PTY for this client).
+        assert_ne!(
+            derive_session_token(&client1, &addr_a),
+            derive_session_token(&client1, &addr_b)
+        );
+        // Different client, same host → different token (so two clients on one
+        // host don't collide on each other's PTY).
+        assert_ne!(
+            derive_session_token(&client1, &addr_a),
+            derive_session_token(&client2, &addr_a)
+        );
     }
 }

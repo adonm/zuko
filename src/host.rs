@@ -28,7 +28,7 @@ use tracing::{info, warn};
 
 use crate::HostArgs;
 use crate::config_dir;
-use crate::secret::write_secret_0600;
+use crate::secret;
 use crate::ticket_file::write_current_ticket;
 use crate::wire::{
     self, ALPN, SESSION_TOKEN_LEN, SessionToken, TYPE_ATTACH, TYPE_DATA, TYPE_PING, TYPE_RESIZE,
@@ -188,7 +188,7 @@ pub async fn run(args: HostArgs) -> Result<()> {
         .init();
 
     let key_path = args.key.unwrap_or_else(default_key_path);
-    let secret = load_or_create_key(&key_path)?;
+    let secret = secret::load_or_create_key(&key_path)?;
 
     let shell = if args.shell == "$SHELL" {
         std::env::var("SHELL").unwrap_or_else(|_| "/bin/bash".to_string())
@@ -492,14 +492,51 @@ async fn get_or_create_session(
         && let Some(existing) = sessions.lock().await.get(&requested_token).cloned()
         && !existing.exited.load(Ordering::Relaxed)
     {
+        // Force the remote app to repaint on reattach. The kernel only emits
+        // SIGWINCH on an *actual* size change, so resizing straight to
+        // (cols, rows) is a no-op when the client reconnects at the same size
+        // — and a full-screen app (vim/htop/tmux) would keep showing a stale
+        // screen. Resize to a deliberately-different width then back to the
+        // real one: two SIGWINCHes, final state correct. The intermediate
+        // frame is superseded before it ships over the relay, so there's no
+        // visible flicker in practice.
+        let _ = existing
+            .pty_tx
+            .send(PtyCmd::Resize(redraw_nudge_cols(cols), rows))
+            .await;
         let _ = existing.pty_tx.send(PtyCmd::Resize(cols, rows)).await;
         return Ok(existing);
     }
 
-    let token = fresh_session_token(sessions).await;
+    // Creating a new session: honor a client-proposed token when given so a
+    // client with a stable identity always lands on the same PTY (across
+    // reconnects and fresh `zuko <host>` invocations). Clients that send an
+    // all-zero token (legacy/first-run, or clients without a persistent key)
+    // get a fresh random one — unchanged behaviour.
+    //
+    // `requested_token` reaching here is guaranteed non-colliding in practice:
+    // it's derived from the client's 32-byte secret, and we only arrive when
+    // no live session holds it (the reuse branch above, or an exited session
+    // already removed from the registry by `serve`).
+    let token = if empty_session_token(&requested_token) {
+        fresh_session_token(sessions).await
+    } else {
+        requested_token
+    };
     let session = spawn_session(token, shell, shell_args, cwd, cols, rows)?;
     sessions.lock().await.insert(token, session.clone());
     Ok(session)
+}
+
+/// A column count guaranteed to differ from `cols` (and stay ≥1), used to
+/// provoke a real `SIGWINCH` on reattach when the terminal size is unchanged.
+/// Pure so the boundary clamping is unit-testable.
+const fn redraw_nudge_cols(cols: u16) -> u16 {
+    if cols > 1 {
+        cols - 1
+    } else {
+        cols.saturating_add(1)
+    }
 }
 
 async fn fresh_session_token(sessions: &SessionRegistry) -> SessionToken {
@@ -699,74 +736,6 @@ fn default_key_path() -> PathBuf {
     p
 }
 
-fn load_or_create_key(path: &PathBuf) -> Result<SecretKey> {
-    // Race-safe create-or-read for the host's persistent identity. Two `zuko
-    // host` processes starting at the same instant on a fresh install (e.g.
-    // the just-installed service plus a manual `zuko host`) would otherwise
-    // both generate a different key and the second write would clobber the
-    // first, silently flipping the node id under any host saved in between.
-    //
-    // We hold an exclusive flock on a sibling `.lock` file across the
-    // check-create-write transaction, mirroring the pattern `store::HostsLock`
-    // uses for the hosts file. The lock is on a separate inode so the atomic
-    // 0600 temp+rename can't orphan it (and so it's safe to leave on disk).
-    let _guard = KeyLock::acquire(path)?;
-
-    if path.exists() {
-        return read_key(path);
-    }
-
-    // We're the sole creator (any concurrent caller is blocked on the flock
-    // above). Generate, write atomically through the shared 0600 writer so a
-    // crash mid-write can never leave a truncated file the next start would
-    // then reject as "not 32 bytes" (silently invalidating every saved
-    // connection).
-    let secret = SecretKey::generate();
-    write_secret_0600(path, &secret.to_bytes())?;
-    Ok(secret)
-}
-
-fn read_key(path: &PathBuf) -> Result<SecretKey> {
-    let bytes = std::fs::read(path).with_context(|| format!("read key {}", path.display()))?;
-    if bytes.len() != 32 {
-        anyhow::bail!("key file {} is not 32 bytes", path.display());
-    }
-    let mut arr = [0u8; 32];
-    arr.copy_from_slice(&bytes);
-    Ok(SecretKey::from_bytes(&arr))
-}
-
-/// Cross-process advisory lock guarding the read-or-create transaction in
-/// [`load_or_create_key`]. Lives at `<key>.lock` (a separate path so the
-/// atomic `key` temp+rename never orphans the lock inode), held until the
-/// guard is dropped. Mirrors `store::HostsLock`.
-struct KeyLock(std::fs::File);
-
-impl KeyLock {
-    fn acquire(key_path: &std::path::Path) -> Result<Self> {
-        let lock_path = key_path.with_extension("lock");
-        if let Some(parent) = lock_path.parent() {
-            std::fs::create_dir_all(parent)
-                .with_context(|| format!("mkdir {}", parent.display()))?;
-        }
-        let f = std::fs::OpenOptions::new()
-            .read(true)
-            .write(true)
-            .create(true)
-            .truncate(false)
-            .open(&lock_path)
-            .with_context(|| format!("open {}", lock_path.display()))?;
-        fs4::fs_std::FileExt::lock_exclusive(&f)?;
-        Ok(Self(f))
-    }
-}
-
-impl Drop for KeyLock {
-    fn drop(&mut self) {
-        let _ = fs4::fs_std::FileExt::unlock(&self.0);
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -810,59 +779,22 @@ mod tests {
         assert!(req.pending_first.is_none());
     }
 
-    // Two concurrent `load_or_create_key` calls on a fresh path must converge
-    // on the *same* key — `create_new` is the gatekeeper, so the loser reads
-    // the winner's bytes back. Without the race-safety this test would fail
-    // intermittently with mismatched `to_bytes()` (and on a real host, a
-    // silent node-id flip under any saved connection).
+    // The reattach redraw nudge must always differ from the real width (so the
+    // kernel actually emits SIGWINCH) and never collapse to 0 (an invalid PTY
+    // size that portable_pty would reject).
     #[test]
-    fn concurrent_creates_converge_on_one_key() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("key");
-
-        // Spawn N threads racing on the same fresh path. Each call returns
-        // either the key it created or the key it read after losing the
-        // race — either way, all callers must observe the same 32 bytes.
-        const N: usize = 8;
-        let path = std::sync::Arc::new(path);
-        let keys: Vec<[u8; 32]> = (0..N)
-            .map(|_| {
-                let p = std::sync::Arc::clone(&path);
-                std::thread::spawn(move || load_or_create_key(&p).unwrap().to_bytes())
-            })
-            .collect::<Vec<_>>()
-            .into_iter()
-            .map(|h| h.join().unwrap())
-            .collect();
-
-        // Every observed key must be identical.
-        let first = keys[0];
-        for (i, k) in keys.iter().enumerate() {
-            assert_eq!(k, &first, "thread {i} observed a different key");
+    fn redraw_nudge_differs_and_stays_positive() {
+        assert_eq!(redraw_nudge_cols(80), 79);
+        assert_eq!(redraw_nudge_cols(2), 1);
+        // Width 1: can't subtract, so bump the other way instead.
+        assert_eq!(redraw_nudge_cols(1), 2);
+        // Never 0, and never equals the input.
+        for c in [1u16, 2, 3, 80, 200] {
+            let n = redraw_nudge_cols(c);
+            assert_ne!(n, c, "nudge must differ at {c}");
+            assert!(n >= 1, "nudge must stay ≥1 at {c}");
         }
-
-        // The on-disk key must match what the callers observed.
-        let on_disk = std::fs::read(&*path).unwrap();
-        assert_eq!(
-            &on_disk[..],
-            &first[..],
-            "on-disk key diverges from in-memory"
-        );
-
-        // Calling again on the existing file must read back the same key
-        // (sanity check the read path).
-        let again = load_or_create_key(&path).unwrap().to_bytes();
-        assert_eq!(again, first);
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn created_key_file_is_0600() {
-        use std::os::unix::fs::PermissionsExt;
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("key");
-        let _ = load_or_create_key(&path).unwrap();
-        let perms = std::fs::metadata(&path).unwrap().permissions().mode();
-        assert_eq!(perms & 0o777, 0o600, "key file must be 0600, got {perms:o}");
+        // The widest terminal must not overflow.
+        assert_eq!(redraw_nudge_cols(u16::MAX), u16::MAX - 1);
     }
 }
