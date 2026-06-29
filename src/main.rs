@@ -5,6 +5,8 @@
 //!   and other clients dial into).
 //! - `zuko install`   install `host` as a systemd/launchd user service.
 //!   `uninstall` undoes it. The service runs `zuko host` under the user's key.
+//! - `zuko upgrade`   pull the latest zuko via mise and bounce the host service
+//!   onto the new build (mise-managed installs only).
 //! - `zuko share`     mint a one-time code that lets a new device pair.
 //! - `zuko connect`   attach a local terminal to a saved host by name.
 //!   Bare `zuko` is a shortcut — and it also accepts a pairing code, so the
@@ -82,6 +84,12 @@ enum Command {
     /// Stop and remove the host service. Leaves the key + saved hosts in
     /// `~/.config/zuko` so a later `zuko install` or `zuko host` resumes.
     Uninstall,
+
+    /// Self-upgrade the zuko binary via mise, then restart the host service if
+    /// installed so it picks up the new build. `--no-restart` defers the
+    /// service bounce; `--version <v>` pins a specific release; `--check`
+    /// prints the plan without changing anything.
+    Upgrade(service::UpgradeArgs),
 
     /// List saved hosts.
     Ls,
@@ -174,6 +182,10 @@ async fn main() -> Result<()> {
         }
         Some(Command::Uninstall) => {
             service::uninstall()?;
+            Ok(())
+        }
+        Some(Command::Upgrade(args)) => {
+            service::upgrade(&args)?;
             Ok(())
         }
         Some(Command::Ls) => {

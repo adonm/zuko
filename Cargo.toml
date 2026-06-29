@@ -46,7 +46,7 @@ default = []
 # Smithay links libxkbcommon, so keep the implementation feature-gated until
 # release builders/CI provide that system library. The CLI still exposes
 # `zuko app` and reports a clear build-feature error without this feature.
-gui-app = ["dep:smithay", "dep:base64", "dep:png", "dep:libc"]
+gui-app = ["dep:smithay", "dep:base64", "dep:png"]
 
 # Host/client-only deps — NOT compiled for iOS (the FFI build only needs
 # `code.rs` + `ffi.rs`, which are synchronous and pull in none of these).
@@ -87,6 +87,9 @@ rand = "0.10"
 sha2 = "0.10"
 # Parse Exec= lines from .desktop files for `zuko app <alias>` resolution.
 shell-words = "1"
+# TIOCGWINSZ ioctl to read terminal pixel size: the client sends pixels to the
+# host so a host-side `zuko app` renders at the client's real resolution.
+libc = "0.2"
 
 # Linux-only single-app terminal GUI (`zuko app`). Kept off macOS/iOS: the
 # compositor path depends on Linux Wayland plumbing and should not bloat or
@@ -97,7 +100,6 @@ shell-words = "1"
 smithay = { version = "0.7", default-features = false, features = ["renderer_pixman", "wayland_frontend", "desktop"], optional = true }
 base64 = { version = "0.22", optional = true }
 png = { version = "0.18", optional = true }
-libc = { version = "0.2", optional = true }
 
 [dev-dependencies]
 tempfile = "3"

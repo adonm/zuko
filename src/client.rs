@@ -198,8 +198,9 @@ pub async fn connect(ticket_str: &str) -> Result<()> {
             };
             while sig.recv().await.is_some() {
                 if let Ok((c, r)) = crossterm::terminal::size() {
+                    let (pw, ph) = terminal_pixels();
                     size_for_signal.store(pack_size(c, r), Ordering::Relaxed);
-                    if resize_tx.send(resize_frame(c, r)).await.is_err() {
+                    if resize_tx.send(resize_frame(c, r, pw, ph)).await.is_err() {
                         break;
                     }
                 }
@@ -245,6 +246,16 @@ pub async fn connect(ticket_str: &str) -> Result<()> {
     if let Err(e) = &result {
         eprintln!("\nzuko: {e:#}");
     }
+
+    // Close the endpoint gracefully so iroh can drain the connection to the
+    // host. Dropping without this logs "Endpoint dropped without calling
+    // `Endpoint::close`. Aborting ungracefully." and makes the host see an
+    // abrupt close instead of a clean one. By this point the recv loop has
+    // already seen the host's stream EOF (ShellExited) or hit a fatal local
+    // error, so the connection is tearing down and this returns quickly.
+    // Mirrors the close in handoff.rs; the force-quit (3× Ctrl-C) path still
+    // skips this on purpose — it exits via process::exit, so drop never runs.
+    endpoint.close().await;
 
     result
 }
@@ -335,7 +346,12 @@ async fn run_one_connection(
     // issued token on reconnect). Sent on `send` before the pump starts so
     // it's guaranteed first on the wire.
     let (c, r) = unpack_size(ctx.size.load(Ordering::Relaxed));
-    if send.write_all(&attach_frame(*token, c, r)).await.is_err() {
+    let (pw, ph) = terminal_pixels();
+    if send
+        .write_all(&attach_frame(*token, c, r, pw, ph))
+        .await
+        .is_err()
+    {
         return Ok(ConnOutcome::Dropped);
     }
     // Handshake bytes are on the wire — this connection is live. Reset the
@@ -449,6 +465,31 @@ const fn pack_size(cols: u16, rows: u16) -> u32 {
 }
 const fn unpack_size(packed: u32) -> (u16, u16) {
     ((packed >> 16) as u16, (packed & 0xFFFF) as u16)
+}
+
+/// Read the local terminal's pixel dimensions via `TIOCGWINSZ`, so they can be
+/// sent to the host (RESIZE/ATTACH) and set on the host PTY winsize — letting
+/// a host-side `zuko app` render at the client terminal's real resolution.
+/// Returns (0, 0) on terminals/PTys that don't report pixels.
+#[cfg(unix)]
+fn terminal_pixels() -> (u16, u16) {
+    let mut winsz = libc::winsize {
+        ws_row: 0,
+        ws_col: 0,
+        ws_xpixel: 0,
+        ws_ypixel: 0,
+    };
+    let rc = unsafe { libc::ioctl(libc::STDOUT_FILENO, libc::TIOCGWINSZ, &mut winsz) };
+    if rc == 0 {
+        (winsz.ws_xpixel, winsz.ws_ypixel)
+    } else {
+        (0, 0)
+    }
+}
+
+#[cfg(not(unix))]
+fn terminal_pixels() -> (u16, u16) {
+    (0, 0)
 }
 
 /// `~/.config/zuko/client_key` (follows `XDG_CONFIG_HOME`). The client's

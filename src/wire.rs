@@ -7,11 +7,12 @@
 //! ```text
 //! [type: u8][len: u16 big-endian][payload: `len` bytes]
 //!   0x00 DATA    payload = raw terminal bytes (keystrokes up, PTY output down)
-//!   0x01 RESIZE  payload = [cols: u16 BE][rows: u16 BE]   (client -> host)
+//!   0x01 RESIZE  payload = [cols: u16 BE][rows: u16 BE][pixel_width: u16 BE][pixel_height: u16 BE]
+//!                 (client -> host, also first frame). Pixels let a host-side
+//!                 `zuko app` render at the client terminal's real resolution.
 //!   0x04 PING    payload = [nonce: u64 BE]   (optional control/compat)
 //!   0x05 PONG    payload = [nonce: u64 BE]   (optional control/compat)
-//!   0x06 ATTACH  payload = [token: 16 bytes][cols: u16 BE][rows: u16 BE]
-//!   0x07 ATTACHED payload = [token: 16 bytes]
+//!   0x06 ATTACH  payload = [token: 16 bytes][cols: u16 BE][rows: u16 BE][pixel_width: u16 BE][pixel_height: u16 BE]
 //! ```
 //!
 //! ## Handshake
@@ -66,9 +67,18 @@ pub fn data_frame(bytes: &[u8]) -> Vec<u8> {
     frame(TYPE_DATA, bytes)
 }
 
-/// A `0x01 RESIZE` frame (`client -> host`).
-pub fn resize_frame(cols: u16, rows: u16) -> Vec<u8> {
-    let payload = [cols.to_be_bytes(), rows.to_be_bytes()].concat();
+/// A `0x01 RESIZE` frame (`client -> host`). Carries cell size AND pixel size;
+/// pixels let a host-side `zuko app` render at the client terminal's real
+/// resolution over the relay (the host sets them on the PTY winsize, which
+/// `TIOCGWINSZ` reads back on the host side).
+pub fn resize_frame(cols: u16, rows: u16, pixel_width: u16, pixel_height: u16) -> Vec<u8> {
+    let payload = [
+        cols.to_be_bytes(),
+        rows.to_be_bytes(),
+        pixel_width.to_be_bytes(),
+        pixel_height.to_be_bytes(),
+    ]
+    .concat();
     frame(TYPE_RESIZE, &payload)
 }
 
@@ -82,12 +92,21 @@ pub fn pong_frame(nonce: u64) -> Vec<u8> {
 }
 
 /// A `0x06 ATTACH` frame. An all-zero token asks the host for a fresh session;
-/// any other token asks to reattach a still-leased detached PTY.
-pub fn attach_frame(token: SessionToken, cols: u16, rows: u16) -> Vec<u8> {
-    let mut payload = Vec::with_capacity(SESSION_TOKEN_LEN + 4);
+/// any other token asks to reattach a still-leased detached PTY. Carries the
+/// client's cell + pixel size like RESIZE.
+pub fn attach_frame(
+    token: SessionToken,
+    cols: u16,
+    rows: u16,
+    pixel_width: u16,
+    pixel_height: u16,
+) -> Vec<u8> {
+    let mut payload = Vec::with_capacity(SESSION_TOKEN_LEN + 8);
     payload.extend_from_slice(&token);
     payload.extend_from_slice(&cols.to_be_bytes());
     payload.extend_from_slice(&rows.to_be_bytes());
+    payload.extend_from_slice(&pixel_width.to_be_bytes());
+    payload.extend_from_slice(&pixel_height.to_be_bytes());
     frame(TYPE_ATTACH, &payload)
 }
 
@@ -97,8 +116,8 @@ pub fn attached_frame(token: SessionToken) -> Vec<u8> {
     frame(TYPE_ATTACHED, &token)
 }
 
-pub fn parse_attach(payload: &[u8]) -> Option<(SessionToken, u16, u16)> {
-    if payload.len() != SESSION_TOKEN_LEN + 4 {
+pub fn parse_attach(payload: &[u8]) -> Option<(SessionToken, u16, u16, u16, u16)> {
+    if payload.len() != SESSION_TOKEN_LEN + 8 {
         return None;
     }
     let mut token = [0u8; SESSION_TOKEN_LEN];
@@ -108,7 +127,15 @@ pub fn parse_attach(payload: &[u8]) -> Option<(SessionToken, u16, u16)> {
         payload[SESSION_TOKEN_LEN + 2],
         payload[SESSION_TOKEN_LEN + 3],
     ]);
-    Some((token, cols, rows))
+    let pixel_width = u16::from_be_bytes([
+        payload[SESSION_TOKEN_LEN + 4],
+        payload[SESSION_TOKEN_LEN + 5],
+    ]);
+    let pixel_height = u16::from_be_bytes([
+        payload[SESSION_TOKEN_LEN + 6],
+        payload[SESSION_TOKEN_LEN + 7],
+    ]);
+    Some((token, cols, rows, pixel_width, pixel_height))
 }
 
 pub fn parse_attached(payload: &[u8]) -> Option<SessionToken> {
@@ -174,7 +201,7 @@ mod tests {
     fn round_trips_data_resize_and_partial() {
         let mut buf = Vec::new();
         buf.extend(data_frame(b"hi"));
-        buf.extend(resize_frame(120, 40));
+        buf.extend(resize_frame(120, 40, 1024, 768));
         // A deliberately truncated third frame (header claims 5 bytes, only 2 present).
         buf.extend_from_slice(&[0x00, 0x00, 0x05, b'x', b'y']);
 
@@ -184,10 +211,13 @@ mod tests {
 
         let f2 = try_parse_frame(&mut buf).unwrap();
         assert_eq!(f2.typ, TYPE_RESIZE);
-        assert_eq!(f2.payload.len(), 4);
+        assert_eq!(f2.payload.len(), 8);
         let cols = u16::from_be_bytes([f2.payload[0], f2.payload[1]]);
         let rows = u16::from_be_bytes([f2.payload[2], f2.payload[3]]);
+        let pw = u16::from_be_bytes([f2.payload[4], f2.payload[5]]);
+        let ph = u16::from_be_bytes([f2.payload[6], f2.payload[7]]);
         assert_eq!((cols, rows), (120, 40));
+        assert_eq!((pw, ph), (1024, 768));
 
         // Partial frame: parser must wait for more bytes, leaving the remainder intact.
         assert!(try_parse_frame(&mut buf).is_none());
@@ -221,10 +251,10 @@ mod tests {
     #[test]
     fn attach_round_trip() {
         let token = [7u8; SESSION_TOKEN_LEN];
-        let mut buf = attach_frame(token, 100, 40);
+        let mut buf = attach_frame(token, 100, 40, 1024, 768);
         let f = try_parse_frame(&mut buf).unwrap();
         assert_eq!(f.typ, TYPE_ATTACH);
-        assert_eq!(parse_attach(&f.payload), Some((token, 100, 40)));
+        assert_eq!(parse_attach(&f.payload), Some((token, 100, 40, 1024, 768)));
 
         let mut buf = attached_frame(token);
         let f = try_parse_frame(&mut buf).unwrap();

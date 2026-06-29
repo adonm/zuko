@@ -1,10 +1,13 @@
-//! `zuko install` / `zuko uninstall` — manage the host daemon as a user
-//! service (systemd user unit on Linux, launchd agent on macOS).
+//! `zuko install` / `zuko uninstall` / `zuko upgrade` — manage the host daemon
+//! as a user service (systemd user unit on Linux, launchd agent on macOS), and
+//! keep the zuko binary itself current (mise-managed installs).
 //!
 //! Once `zuko` itself is on `PATH` (e.g. via `mise use --global
 //! github:adonm/zuko`), the operator runs `zuko install` on the machine they
 //! want to reach, and the binary takes care of writing the service unit,
-//! enabling it, and starting it.
+//! enabling it, and starting it. `zuko upgrade` later pulls a newer release
+//! through mise and restarts the unit onto it — without re-running `install`,
+//! because the unit's wrapper routes through mise's `latest` symlink.
 //!
 //! ## What `install` does
 //!
@@ -43,6 +46,7 @@
 //!   can still be run in the foreground with `zuko host`.
 
 use anyhow::{Context, Result, bail};
+use clap::Args;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -183,6 +187,164 @@ pub fn uninstall() -> Result<()> {
     eprintln!();
     eprintln!("zuko host service removed.");
     eprintln!("  (key + saved hosts kept at ~/.config/zuko — delete by hand to forget this host)");
+    Ok(())
+}
+
+// ─────────────────────────────────── upgrade ────────────────────────────────
+
+/// mise tool id for the zuko distribution (the `github:owner/repo` backend
+/// downloads release binaries ubi-style).
+const MISE_TOOL: &str = "github:adonm/zuko";
+
+/// Subdir under mise's installs root that uniquely identifies a mise-managed
+/// zuko. mise normalises `github:adonm/zuko` to the dir name
+/// `github-adonm-zuko` on disk.
+const MISE_INSTALL_DIR: &str = "github-adonm-zuko";
+
+/// `zuko upgrade` configuration. clap-derived (like `ShareArgs`/`HostArgs`) so
+/// the binary uses it directly as a subcommand payload without a wrapper.
+#[derive(Args, Clone, Debug)]
+pub struct UpgradeArgs {
+    /// Pin a specific version (e.g. "0.7.0") instead of tracking latest.
+    #[arg(long, value_name = "VERSION")]
+    pub version: Option<String>,
+
+    /// Upgrade the binary but don't restart the host service. Restart manually
+    /// later (e.g. `systemctl --user restart zuko-host`) when a brief drop is
+    /// convenient.
+    #[arg(long)]
+    pub no_restart: bool,
+
+    /// Show the plan (mise command + service action + versions) without
+    /// changing anything.
+    #[arg(long)]
+    pub check: bool,
+}
+
+/// Run `zuko upgrade`: pull the latest zuko binary via mise, then (if the host
+/// service is installed) restart it so the daemon execs the new build.
+///
+/// ## How the service picks up the new binary
+///
+/// `zuko install` writes a wrapper that routes through mise's `latest` symlink
+/// (see [`prefer_stable_symlink`]). mise repoints `latest` at the new version
+/// dir during the upgrade, so the wrapper path stays valid without a re-`install`;
+/// only the already-running process lags. A restart execs the wrapper again and
+/// lands on the new inode.
+///
+/// ## Interruption
+///
+/// Restarting the host kills its in-memory PTYs — there is no live handoff yet.
+/// Clients auto-reconnect (the iOS app redials; the CLI is restarted by the
+/// user), but land in **fresh** shells, not the ones they had. For work that
+/// must survive a host upgrade, run `tmux`/`zellij`/`screen` inside the zuko
+/// session. A zero-downtime upgrade (live PTY handoff to a new host process) is
+/// a post-1.0 goal, contingent on the wire protocol stabilising — at which
+/// point this same command gets you there without the drop.
+pub fn upgrade(args: &UpgradeArgs) -> Result<()> {
+    // `zuko upgrade` is a mise-specific convenience. We refuse to run it against
+    // a non-mise install (cargo, hand-built, distro package) so we never
+    // silently fork a second, mise-managed copy or clobber the user's chosen
+    // install method.
+    if !is_mise_managed() {
+        bail!(
+            "this zuko binary isn't managed by mise (its path has no \
+             .../mise/installs/{MISE_INSTALL_DIR}/ segment).\n\
+             `zuko upgrade` drives `mise upgrade {MISE_TOOL}`; install with\n\
+             `mise use --global {MISE_TOOL}` to enable it, or upgrade your\n\
+             install directly (e.g. `cargo install --path .` for a source build)."
+        );
+    }
+    if !mise_on_path() {
+        bail!(
+            "mise is not on PATH but this binary lives in a mise install dir.\n\
+             Run `zuko upgrade` from a shell with mise activated, or upgrade\n\
+             manually with `mise upgrade {MISE_TOOL}`."
+        );
+    }
+
+    let before = env!("CARGO_PKG_VERSION");
+    let svc = installed_service();
+    let mise_args = mise_upgrade_args(args.version.as_deref());
+
+    if args.check {
+        eprintln!("==> --check: no changes made");
+        eprintln!("    current version:  {before}");
+        eprintln!("    would run:        mise {}", mise_args.join(" "));
+        match &svc {
+            Some(s) if args.no_restart => {
+                eprintln!("    host service:     {s} unit installed (--no-restart: won't restart)");
+            }
+            Some(s) => {
+                eprintln!("    host service:     {s} unit installed -> would restart");
+                eprintln!(
+                    "                      (restart drops active sessions; clients auto-reconnect)"
+                );
+            }
+            None => eprintln!("    host service:     not installed (binary-only upgrade)"),
+        }
+        return Ok(());
+    }
+
+    // 1. Pull the new binary. `mise upgrade` respects the existing pin range;
+    //    since zuko is pinned to `latest` by `mise use --global`, this moves to
+    //    the newest release. `--version` re-pins via `mise use --global …@<v>`.
+    eprintln!("==> upgrading {MISE_TOOL} (running {before})");
+    eprintln!("    $ mise {}", mise_args.join(" "));
+    let status = Command::new("mise")
+        .args(&mise_args)
+        .status()
+        .context("run mise")?;
+    if !status.success() {
+        bail!(
+            "mise {} failed (exit {:?})",
+            mise_args.join(" "),
+            status.code()
+        );
+    }
+
+    // 2. Read back the installed version. The running binary is still the old
+    //    one (we don't re-exec ourselves), so spawn the freshly-installed exe
+    //    at the `latest` path to report what we landed on. Best-effort: a parse
+    //    failure doesn't undo a successful upgrade.
+    let after = installed_version();
+    match &after {
+        Some(v) if v != before => eprintln!("==> {before} -> {v}"),
+        Some(v) => eprintln!("==> already at {v} (mise had nothing newer)"),
+        None => eprintln!("==> upgrade ran; couldn't read back the new version"),
+    }
+
+    // 3. Restart the host service so it execs the new binary, unless asked not
+    //    to. See the function-level doc for the interruption story.
+    match &svc {
+        Some(s) if args.no_restart => {
+            eprintln!("==> host service: {s} unit installed (--no-restart: not restarting)");
+            eprintln!(
+                "    pick up the new binary with: systemctl --user restart {SYSTEMD_UNIT_NAME}"
+            );
+        }
+        Some(Service::Systemd) => {
+            eprintln!("==> restarting systemd user service `{SYSTEMD_UNIT_NAME}`");
+            eprintln!("    (active sessions drop; clients auto-reconnect to fresh shells)");
+            run("systemctl", &["--user", "restart", SYSTEMD_UNIT_NAME])?;
+        }
+        Some(Service::Launchd) => {
+            let plist = launchd_plist_path();
+            eprintln!("==> restarting launchd agent `{LAUNCHD_LABEL}`");
+            eprintln!("    (active sessions drop; clients auto-reconnect to fresh shells)");
+            let _ = Command::new("launchctl")
+                .args(["unload", &plist.to_string_lossy()])
+                .status();
+            run("launchctl", &["load", &plist.to_string_lossy()])?;
+        }
+        None => eprintln!("==> host service: not installed (nothing to restart)"),
+    }
+
+    eprintln!();
+    eprintln!("zuko upgrade complete.");
+    if let Some(v) = after {
+        eprintln!("  now at {v}");
+    }
     Ok(())
 }
 
@@ -537,6 +699,80 @@ fn run(program: &str, args: &[&str]) -> Result<()> {
     Ok(())
 }
 
+// ──────────────────────────────── upgrade helpers ───────────────────────────
+
+/// True if the running zuko was launched from a mise-managed install dir
+/// (`…/mise/installs/github-adonm-zuko/<version>/zuko`). The path check is the
+/// source of truth: a mise shim resolves here via `current_exe()`, and a
+/// cargo/distro install never has this layout.
+fn is_mise_managed() -> bool {
+    std::env::current_exe()
+        .map(|exe| path_looks_mise_managed(&exe))
+        .unwrap_or(false)
+}
+
+/// Pure predicate form of [`is_mise_managed`] so the rule is unit-testable
+/// without rearranging `current_exe`.
+fn path_looks_mise_managed(exe: &Path) -> bool {
+    let s = exe.to_string_lossy();
+    s.contains("mise/installs/") && s.contains(&format!("/{MISE_INSTALL_DIR}/"))
+}
+
+/// True if `mise` can be invoked from this shell. Separate from
+/// [`is_mise_managed`] so the error can tell the user precisely which
+/// precondition failed (wrong install method vs. mise just not activated).
+fn mise_on_path() -> bool {
+    Command::new("mise")
+        .arg("--version")
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .is_ok()
+}
+
+/// Build the `mise` argv for the upgrade step. With no version, `mise upgrade`
+/// moves to the newest release within the existing pin (zuko is pinned to
+/// `latest`, so that's the true latest). With `--version`, `mise use --global
+/// …@<v>` re-pins the global config to that exact version.
+fn mise_upgrade_args(version: Option<&str>) -> Vec<String> {
+    match version {
+        Some(v) => vec![
+            "use".into(),
+            "--global".into(),
+            format!("github:adonm/zuko@{v}"),
+        ],
+        None => vec!["upgrade".into(), MISE_TOOL.into()],
+    }
+}
+
+/// The host service kind, but only if its unit/plist is actually installed on
+/// disk. Used by `upgrade` to decide whether a restart applies — a user who
+/// only runs `zuko` as a client (no `zuko install`) has nothing to restart.
+fn installed_service() -> Option<Service> {
+    let svc = detect_service().ok()?;
+    let present = match svc {
+        Service::Systemd => systemd_unit_path().exists(),
+        Service::Launchd => launchd_plist_path().exists(),
+    };
+    present.then_some(svc)
+}
+
+/// Best-effort read of the version reported by the *installed* binary (the one
+/// `latest/` points at after an upgrade), by spawning `<exe> --version`. The
+/// running process is still the old binary, so this is how we confirm what mise
+/// landed on. `None` on any spawn/parse failure — a successful upgrade stays
+/// successful even if we can't read back the version string.
+fn installed_version() -> Option<String> {
+    let exe = resolve_self_exe().ok()?;
+    let out = Command::new(&exe).arg("--version").output().ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    let line = String::from_utf8(out.stdout).ok()?;
+    // `zuko --version` prints `zuko 0.6.13`; take the second whitespace token.
+    line.split_whitespace().nth(1).map(str::to_string)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -714,5 +950,58 @@ mod tests {
         symlink(&outside, install_root.join("latest")).unwrap();
 
         assert_eq!(prefer_stable_symlink(bin.clone()), bin);
+    }
+
+    // ── upgrade helpers ──
+
+    #[test]
+    fn mise_path_detector_recognises_mise_install_layout() {
+        // The canonical mise layout (`mise use --global github:adonm/zuko`):
+        // ~/.local/share/mise/installs/github-adonm-zuko/<version>/zuko
+        let mise =
+            PathBuf::from("/home/me/.local/share/mise/installs/github-adonm-zuko/0.6.13/zuko");
+        assert!(path_looks_mise_managed(&mise));
+    }
+
+    #[test]
+    fn mise_path_detector_rejects_non_mise_layouts() {
+        // cargo install, distro package, a hand-built binary in the repo — none
+        // of these live under mise's installs root, so `zuko upgrade` must
+        // refuse rather than fork a mise-managed copy.
+        assert!(!path_looks_mise_managed(&PathBuf::from(
+            "/home/me/.cargo/bin/zuko"
+        )));
+        assert!(!path_looks_mise_managed(&PathBuf::from("/usr/bin/zuko")));
+        assert!(!path_looks_mise_managed(&PathBuf::from(
+            "/home/me/dev/zuko/target/release/zuko"
+        )));
+        // A different mise-managed tool must NOT match — only our tool dir.
+        assert!(!path_looks_mise_managed(&PathBuf::from(
+            "/home/me/.local/share/mise/installs/github-someone-else/1.0.0/bin"
+        )));
+    }
+
+    #[test]
+    fn mise_upgrade_args_defaults_to_upgrade_latest() {
+        // No --version: `mise upgrade github:adonm/zuko` honours the existing
+        // `latest` pin and moves to the newest release.
+        assert_eq!(
+            mise_upgrade_args(None),
+            vec!["upgrade".to_string(), "github:adonm/zuko".to_string()]
+        );
+    }
+
+    #[test]
+    fn mise_upgrade_args_with_version_re_pins_global() {
+        // --version: `mise use --global …@<v>` changes the global pin so future
+        // `mise upgrade`s stay on that exact version until re-pinned.
+        assert_eq!(
+            mise_upgrade_args(Some("0.7.0")),
+            vec![
+                "use".to_string(),
+                "--global".to_string(),
+                "github:adonm/zuko@0.7.0".to_string(),
+            ]
+        );
     }
 }

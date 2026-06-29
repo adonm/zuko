@@ -144,7 +144,7 @@ pub struct AppArgs {
 
     /// Maximum terminal frame ship rate. Rendering/damage can run faster; this
     /// caps the expensive readback + Kitty output path.
-    #[arg(long, default_value_t = 8)]
+    #[arg(long, default_value_t = 16)]
     pub fps: u16,
 
     /// Scale the hosted app's logical output before rendering to the terminal.
