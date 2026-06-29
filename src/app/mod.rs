@@ -84,6 +84,11 @@ use crate::AppArgs;
 const DEFAULT_WIDTH_PX: i32 = 1280;
 const DEFAULT_HEIGHT_PX: i32 = 720;
 const FULL_REFRESH_INTERVAL: Duration = Duration::from_secs(5);
+/// How long to wait for the XTWINOPS `CSI 16 t` cell-size reply at startup.
+/// Covers a typical Iroh relay RTT; override with `ZUKO_PIXEL_PROBE_MS` for
+/// slow links. Bounded because terminals that don't implement XTWINOPS never
+/// answer, and we must not block app startup forever.
+const DEFAULT_PIXEL_PROBE: Duration = Duration::from_millis(250);
 
 /// Run a single child GUI app against a private Wayland socket.
 pub fn run(args: AppArgs) -> Result<()> {
@@ -99,7 +104,8 @@ pub fn run(args: AppArgs) -> Result<()> {
 
     if args.test_pattern {
         let _terminal = TerminalModeGuard::enter().context("enter terminal app mode")?;
-        let size = terminal_pixel_size().unwrap_or(Size::from((640, 360)));
+        let cell_px = probe_terminal_cell_pixels(DEFAULT_PIXEL_PROBE);
+        let size = terminal_pixel_size(cell_px).unwrap_or(Size::from((640, 360)));
         kitty_clear_screen().ok();
         let png = encode_test_pattern(size.w.max(1) as usize, size.h.max(1) as usize)?;
         kitty_emit_png(size.w.max(1) as u32, size.h.max(1) as u32, &png, true)?;
@@ -132,7 +138,22 @@ pub fn run(args: AppArgs) -> Result<()> {
 
     let _terminal = TerminalModeGuard::enter().context("enter terminal app mode")?;
 
-    let size = terminal_pixel_size().unwrap_or(Size::from((DEFAULT_WIDTH_PX, DEFAULT_HEIGHT_PX)));
+    // Probe the cell pixel size ONCE. The reply round-trips through the Iroh
+    // relay to the client's terminal and back, so this is the one spot we pay a
+    // network RTT for pixel info. `cell_px` feeds the initial size and is reused
+    // on every resize below (cell size only changes on font change, not resize).
+    let cell_px = probe_terminal_cell_pixels(DEFAULT_PIXEL_PROBE);
+    if cell_px.is_none() {
+        eprintln!(
+            "zuko app: terminal didn't answer the pixel-size probe within {:?}; \
+             falling back to ws_xpixel / cell estimate (may blur on HiDPI). \
+             Set ZUKO_PIXEL_PROBE_MS=<ms> to extend the timeout.",
+            DEFAULT_PIXEL_PROBE
+        );
+    }
+
+    let size =
+        terminal_pixel_size(cell_px).unwrap_or(Size::from((DEFAULT_WIDTH_PX, DEFAULT_HEIGHT_PX)));
 
     let mut display: Display<App> = Display::new().context("create Wayland display")?;
     let dh = display.handle();
@@ -234,7 +255,7 @@ pub fn run(args: AppArgs) -> Result<()> {
         // the Kitty image at the new size instead of updating the old one.
         if state.pending_resize {
             state.pending_resize = false;
-            if let Some(new_size) = terminal_pixel_size() {
+            if let Some(new_size) = terminal_pixel_size(cell_px) {
                 renderer =
                     RenderState::new(new_size).context("recreate render target on resize")?;
                 state.output_size = new_size;
@@ -1163,9 +1184,24 @@ fn normalize_alias(s: &str) -> String {
         .collect()
 }
 
-fn terminal_pixel_size() -> Option<Size<i32, Logical>> {
-    // TIOCGWINSZ returns both cells and pixels. Pixel fields are zero in some
-    // terminals/PTY stacks, so fall back to a conservative cells×font estimate.
+/// Resolve the terminal's pixel size for sizing the Pixman render target.
+///
+/// Resolution order (first wins):
+/// 1. **`cols × cell_px`** — physical pixels from the XTWINOPS `CSI 16 t` cell
+///    probe ([`probe_terminal_cell_pixels`]). The reported cell size is always
+///    in **physical** device pixels, so this stays sharp on HiDPI even when the
+///    terminal leaves `ws_xpixel` at 0 (very common) or fills it with *logical*
+///    pixels (which would make us render at half resolution and blur). This is
+///    the HiDPI-correct primary path; the cache is computed once at startup and
+///    reused on resize, so resizes stay cheap (no per-resize round-trip).
+/// 2. **`ws_xpixel`/`ws_ypixel`** from `TIOCGWINSZ` — the terminal's direct
+///    window-pixel report. Free and authoritative when the terminal populates
+///    it with physical pixels; used when no cell probe was obtained.
+/// 3. **`cols × 8, rows × 16`** — last-resort cell estimate. Wrong on HiDPI
+///    (cells are physically larger), but better than nothing for terminals that
+///    report neither pixels nor a cell size.
+fn terminal_pixel_size(cell_px: Option<(u16, u16)>) -> Option<Size<i32, Logical>> {
+    // TIOCGWINSZ returns both cells and pixels; cell count is always present.
     let mut winsz = libc::winsize {
         ws_row: 0,
         ws_col: 0,
@@ -1173,16 +1209,126 @@ fn terminal_pixel_size() -> Option<Size<i32, Logical>> {
         ws_ypixel: 0,
     };
     let rc = unsafe { libc::ioctl(libc::STDOUT_FILENO, libc::TIOCGWINSZ, &mut winsz) };
-    if rc == 0 && winsz.ws_xpixel > 0 && winsz.ws_ypixel > 0 {
+    if rc != 0 {
+        return None;
+    }
+    let cols = winsz.ws_col as i32;
+    let rows = winsz.ws_row as i32;
+
+    // HiDPI-robust primary: physical pixels = cells × cell-pixel-size. The cell
+    // size from CSI 16 t is device pixels, so this matches the framebuffer the
+    // terminal actually draws — no 2× upscale, no blur.
+    if let Some((cw, ch)) = cell_px
+        && cw > 0
+        && ch > 0
+        && cols > 0
+        && rows > 0
+    {
+        return Some(Size::from((cols * cw as i32, rows * ch as i32)));
+    }
+
+    if winsz.ws_xpixel > 0 && winsz.ws_ypixel > 0 {
         return Some(Size::from((winsz.ws_xpixel as i32, winsz.ws_ypixel as i32)));
     }
-    if rc == 0 && winsz.ws_col > 0 && winsz.ws_row > 0 {
-        return Some(Size::from((
-            (winsz.ws_col as i32) * 8,
-            (winsz.ws_row as i32) * 16,
-        )));
+    if cols > 0 && rows > 0 {
+        return Some(Size::from(((cols) * 8, (rows) * 16)));
     }
     None
+}
+
+/// Probe the terminal's per-cell pixel size via the XTWINOPS `CSI 16 t` query.
+///
+/// Writes the query to stdout (which round-trips through the Iroh relay to the
+/// *client's* terminal when `zuko app` runs over a remote session) and reads
+/// the `CSI 6 ; <height> ; <width> t` reply from stdin with a bounded timeout.
+/// The cell size is stable across window resizes (it only changes on font
+/// change), so one probe at startup feeds every later size computation.
+///
+/// Returns `None` if the terminal doesn't answer within the timeout (e.g. it
+/// doesn't implement XTWINOPS); callers fall back to `ws_xpixel` / cell
+/// estimate. Must run in raw mode (the caller enters it via `TerminalModeGuard`
+/// first) so the reply arrives as raw bytes, not cooked input.
+fn probe_terminal_cell_pixels(timeout: Duration) -> Option<(u16, u16)> {
+    // Tunable for slow relay links: ZUKO_PIXEL_PROBE_MS overrides the default.
+    let timeout = std::env::var("ZUKO_PIXEL_PROBE_MS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .map(Duration::from_millis)
+        .unwrap_or(timeout);
+    let mut out = std::io::stdout();
+    let _ = out.write_all(b"\x1b[16t");
+    let _ = out.flush();
+
+    #[cfg(unix)]
+    {
+        set_stdin_nonblocking(true);
+        let deadline = Instant::now() + timeout;
+        let mut buf: Vec<u8> = Vec::with_capacity(64);
+        let mut chunk = [0u8; 64];
+        let mut found = None;
+        while found.is_none() && Instant::now() < deadline {
+            // Raw, non-blocking read on STDIN_FILENO. Returns the byte count
+            // (>0), 0 on EOF, or -1/EAGAIN when nothing's queued yet.
+            let n = unsafe {
+                libc::read(
+                    libc::STDIN_FILENO,
+                    chunk.as_mut_ptr() as *mut _,
+                    chunk.len(),
+                )
+            };
+            if n > 0 {
+                buf.extend_from_slice(&chunk[..n as usize]);
+                found = parse_cell_size_reply(&buf);
+            } else {
+                // Nothing yet — yield the CPU and retry until the deadline.
+                std::thread::sleep(Duration::from_millis(3));
+            }
+        }
+        set_stdin_nonblocking(false);
+        found
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = timeout;
+        None
+    }
+}
+
+/// Parse the XTWINOPS cell-size reply `CSI 6 ; <height> ; <width> t` out of an
+/// arbitrary byte buffer. Returns `(width, height)` in pixels, or `None` if the
+/// reply hasn't arrived (or is malformed). Scans the whole buffer so partial
+/// reads + leading noise (other escape sequences) don't throw it off.
+fn parse_cell_size_reply(buf: &[u8]) -> Option<(u16, u16)> {
+    let s = std::str::from_utf8(buf).ok()?;
+    let marker = "\x1b[6;";
+    let after = s.split(marker).nth(1)?;
+    let end = after.find('t')?;
+    let mut nums = after[..end].split(';');
+    // The reply puts height before width: CSI 6 ; <height> ; <width> t
+    let h: u16 = nums.next()?.trim().parse().ok()?;
+    let w: u16 = nums.next()?.trim().parse().ok()?;
+    Some((w, h))
+}
+
+/// Toggle `O_NONBLOCK` on stdin. Used by [`probe_terminal_cell_pixels`] to read
+/// the XTWINOPS reply with a deadline instead of blocking forever on terminals
+/// that never answer. Restored to blocking before the crossterm event loop
+/// takes over, so its reads behave normally.
+#[cfg(unix)]
+fn set_stdin_nonblocking(on: bool) {
+    unsafe {
+        let fd = libc::STDIN_FILENO;
+        let flags = libc::fcntl(fd, libc::F_GETFL);
+        if flags < 0 {
+            return;
+        }
+        let new = if on {
+            flags | libc::O_NONBLOCK
+        } else {
+            flags & !libc::O_NONBLOCK
+        };
+        let _ = libc::fcntl(fd, libc::F_SETFL, new);
+    }
 }
 
 struct App {
@@ -1351,5 +1497,35 @@ mod tests {
         assert!(validate_args(&args).is_err());
         args.scale = 1.0;
         assert!(validate_args(&args).is_ok());
+    }
+
+    #[test]
+    fn parses_xtwinops_cell_size_reply() {
+        // XTWINOPS CSI 16 t reply is `CSI 6 ; <height> ; <width> t` — note the
+        // height-before-width order. Returns (width, height).
+        assert_eq!(parse_cell_size_reply(b"\x1b[6;32;16t"), Some((16, 32)));
+    }
+
+    #[test]
+    fn parses_cell_size_reply_amid_leading_noise() {
+        // The probe reads raw stdin; other escape sequences (or a fragment of
+        // one) can land before the reply. The parser must scan past them.
+        let buf = b"\x1b[?1003h\x1b[6;40;20t";
+        assert_eq!(parse_cell_size_reply(buf), Some((20, 40)));
+    }
+
+    #[test]
+    fn cell_size_reply_none_until_complete() {
+        // A partial reply (no trailing `t`) must not parse — the probe loop
+        // keeps reading until the full reply arrives or the deadline hits.
+        assert_eq!(parse_cell_size_reply(b"\x1b[6;40;20"), None);
+        assert_eq!(parse_cell_size_reply(b""), None);
+    }
+
+    #[test]
+    fn cell_size_reply_rejects_garbage() {
+        // Malformed numbers / wrong shape → None, not a panic.
+        assert_eq!(parse_cell_size_reply(b"\x1b[6;abc;def t"), None);
+        assert_eq!(parse_cell_size_reply(b"not a reply at all"), None);
     }
 }
