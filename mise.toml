@@ -49,12 +49,12 @@ run = [
 
 [tasks.setup-gui-app-flatpak]
 description = "Install the Freedesktop Flatpak SDK + Rust extension used to build `zuko app` on uBlue/Atomic hosts without layering dev libs."
-run = "flatpak install --user -y flathub org.freedesktop.Platform//24.08 org.freedesktop.Sdk//24.08 org.freedesktop.Sdk.Extension.rust-stable//24.08"
+run = "flatpak install --user -y flathub org.freedesktop.Platform//25.08 org.freedesktop.Sdk//25.08 org.freedesktop.Sdk.Extension.rust-stable//25.08"
 
 [tasks.check-gui-app-flatpak]
 description = "Build-check `zuko app` inside the Freedesktop Flatpak SDK container, using host mise Rust with SDK Wayland/EGL/xkbcommon libs."
 run = """
-if ! flatpak info org.freedesktop.Sdk//24.08 >/dev/null 2>&1; then
+if ! flatpak info org.freedesktop.Sdk//25.08 >/dev/null 2>&1; then
     echo "Freedesktop SDK missing; run: mise run setup-gui-app-flatpak" >&2
     exit 1
 fi
@@ -94,14 +94,14 @@ flatpak run \
     --env=CARGO_HOME="$PWD/.tmp/flatpak-cargo-home" \
     --env=CARGO_TARGET_DIR="$PWD/.tmp/flatpak-target" \
     --command=bash \
-    org.freedesktop.Sdk//24.08 \
+    org.freedesktop.Sdk//25.08 \
     -lc 'export PATH="$HOST_RUST/bin:$PATH" && cd "$HOST_PWD" && cargo check --features gui-app'
 """
 
 [tasks.build-gui-app-flatpak]
 description = "Build a release `zuko` binary with `zuko app` inside the Freedesktop Flatpak SDK container. Output: .tmp/flatpak-target/release/zuko"
 run = """
-if ! flatpak info org.freedesktop.Sdk//24.08 >/dev/null 2>&1; then
+if ! flatpak info org.freedesktop.Sdk//25.08 >/dev/null 2>&1; then
     echo "Freedesktop SDK missing; run: mise run setup-gui-app-flatpak" >&2
     exit 1
 fi
@@ -141,7 +141,7 @@ flatpak run \
     --env=CARGO_HOME="$PWD/.tmp/flatpak-cargo-home" \
     --env=CARGO_TARGET_DIR="$PWD/.tmp/flatpak-target" \
     --command=bash \
-    org.freedesktop.Sdk//24.08 \
+    org.freedesktop.Sdk//25.08 \
     -lc 'export PATH="$HOST_RUST/bin:$PATH" && cd "$HOST_PWD" && cargo build --release --features gui-app'
 echo "built: .tmp/flatpak-target/release/zuko"
 """
