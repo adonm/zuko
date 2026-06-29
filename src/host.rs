@@ -55,10 +55,22 @@ const DETACHED_SESSION_TTL: Duration = Duration::from_secs(300);
 
 type SessionRegistry = Arc<tokio::sync::Mutex<HashMap<SessionToken, Arc<Session>>>>;
 
+/// The client terminal's size, relayed through ATTACH/RESIZE. Carried end to
+/// end so a host-side `zuko app` can render at the client's real pixel size.
+#[derive(Clone, Copy, Debug)]
+struct TermSize {
+    cols: u16,
+    rows: u16,
+    pixel_width: u16,
+    pixel_height: u16,
+}
+
 #[derive(Debug)]
 enum PtyCmd {
     Data(Vec<u8>),
-    Resize(u16, u16),
+    /// Full terminal size (cells + pixels). Pixels are 0 from clients/terminals
+    /// that don't report them; a host-side `zuko app` then falls back.
+    Resize(TermSize),
 }
 
 /// What the PTY→network pump should write to the iroh send stream. PTY bytes
@@ -310,8 +322,12 @@ async fn serve(
         shell,
         shell_args,
         cwd,
-        request.cols,
-        request.rows,
+        TermSize {
+            cols: request.cols,
+            rows: request.rows,
+            pixel_width: request.pixel_width,
+            pixel_height: request.pixel_height,
+        },
     )
     .await?;
 
@@ -415,12 +431,19 @@ async fn handle_client_frame(
             }
             true
         }
-        TYPE_RESIZE if frame.payload.len() == 4 => {
+        TYPE_RESIZE if frame.payload.len() == 8 => {
             let cols = u16::from_be_bytes([frame.payload[0], frame.payload[1]]);
             let rows = u16::from_be_bytes([frame.payload[2], frame.payload[3]]);
+            let pixel_width = u16::from_be_bytes([frame.payload[4], frame.payload[5]]);
+            let pixel_height = u16::from_be_bytes([frame.payload[6], frame.payload[7]]);
             let _ = session
                 .pty_tx
-                .send(PtyCmd::Resize(cols.max(1), rows.max(1)))
+                .send(PtyCmd::Resize(TermSize {
+                    cols: cols.max(1),
+                    rows: rows.max(1),
+                    pixel_width,
+                    pixel_height,
+                }))
                 .await;
             true
         }
@@ -439,30 +462,38 @@ struct InitialRequest {
     requested_token: SessionToken,
     cols: u16,
     rows: u16,
+    pixel_width: u16,
+    pixel_height: u16,
     pending_first: Option<wire::ParsedFrame>,
 }
 
 fn initial_request(first: wire::ParsedFrame) -> InitialRequest {
     match first.typ {
         TYPE_ATTACH => {
-            if let Some((token, cols, rows)) = parse_attach(&first.payload) {
+            if let Some((token, cols, rows, pw, ph)) = parse_attach(&first.payload) {
                 InitialRequest {
                     requested_token: token,
                     cols: cols.max(1),
                     rows: rows.max(1),
+                    pixel_width: pw,
+                    pixel_height: ph,
                     pending_first: None,
                 }
             } else {
                 default_initial_request(Some(first))
             }
         }
-        TYPE_RESIZE if first.payload.len() == 4 => {
+        TYPE_RESIZE if first.payload.len() == 8 => {
             let cols = u16::from_be_bytes([first.payload[0], first.payload[1]]);
             let rows = u16::from_be_bytes([first.payload[2], first.payload[3]]);
+            let pixel_width = u16::from_be_bytes([first.payload[4], first.payload[5]]);
+            let pixel_height = u16::from_be_bytes([first.payload[6], first.payload[7]]);
             InitialRequest {
                 requested_token: [0u8; SESSION_TOKEN_LEN],
                 cols: cols.max(1),
                 rows: rows.max(1),
+                pixel_width,
+                pixel_height,
                 pending_first: None,
             }
         }
@@ -475,6 +506,8 @@ fn default_initial_request(pending_first: Option<wire::ParsedFrame>) -> InitialR
         requested_token: [0u8; SESSION_TOKEN_LEN],
         cols: DEFAULT_COLS,
         rows: DEFAULT_ROWS,
+        pixel_width: 0,
+        pixel_height: 0,
         pending_first,
     }
 }
@@ -485,8 +518,7 @@ async fn get_or_create_session(
     shell: String,
     shell_args: Vec<String>,
     cwd: Option<PathBuf>,
-    cols: u16,
-    rows: u16,
+    size: TermSize,
 ) -> Result<Arc<Session>> {
     if !empty_session_token(&requested_token)
         && let Some(existing) = sessions.lock().await.get(&requested_token).cloned()
@@ -496,15 +528,14 @@ async fn get_or_create_session(
         // SIGWINCH on an *actual* size change, so resizing straight to
         // (cols, rows) is a no-op when the client reconnects at the same size
         // — and a full-screen app (vim/htop/tmux) would keep showing a stale
-        // screen. Resize to a deliberately-different width then back to the
-        // real one: two SIGWINCHes, final state correct. The intermediate
+        // screen. Resize to a deliberately-different width then back to
+        // the real one: two SIGWINCHes, final state correct. The intermediate
         // frame is superseded before it ships over the relay, so there's no
         // visible flicker in practice.
-        let _ = existing
-            .pty_tx
-            .send(PtyCmd::Resize(redraw_nudge_cols(cols), rows))
-            .await;
-        let _ = existing.pty_tx.send(PtyCmd::Resize(cols, rows)).await;
+        let mut nudge = size;
+        nudge.cols = redraw_nudge_cols(size.cols);
+        let _ = existing.pty_tx.send(PtyCmd::Resize(nudge)).await;
+        let _ = existing.pty_tx.send(PtyCmd::Resize(size)).await;
         return Ok(existing);
     }
 
@@ -523,7 +554,7 @@ async fn get_or_create_session(
     } else {
         requested_token
     };
-    let session = spawn_session(token, shell, shell_args, cwd, cols, rows)?;
+    let session = spawn_session(token, shell, shell_args, cwd, size)?;
     sessions.lock().await.insert(token, session.clone());
     Ok(session)
 }
@@ -558,8 +589,7 @@ fn spawn_session(
     shell: String,
     shell_args: Vec<String>,
     cwd: Option<PathBuf>,
-    cols: u16,
-    rows: u16,
+    size: TermSize,
 ) -> Result<Arc<Session>> {
     let Pty {
         tx: pty_tx,
@@ -567,7 +597,7 @@ fn spawn_session(
         reader: pty_reader,
         master,
         child,
-    } = spawn_pty(shell, shell_args, cwd, cols, rows)?;
+    } = spawn_pty(shell, shell_args, cwd, size)?;
 
     let session = Arc::new(Session {
         token,
@@ -628,12 +658,12 @@ fn spawn_pty_writer(
                         break;
                     }
                 }
-                PtyCmd::Resize(cols, rows) => {
+                PtyCmd::Resize(size) => {
                     let _ = master.resize(PtySize {
-                        cols,
-                        rows,
-                        pixel_width: 0,
-                        pixel_height: 0,
+                        cols: size.cols,
+                        rows: size.rows,
+                        pixel_width: size.pixel_width,
+                        pixel_height: size.pixel_height,
                     });
                 }
             }
@@ -690,16 +720,15 @@ fn spawn_pty(
     shell: String,
     shell_args: Vec<String>,
     cwd: Option<PathBuf>,
-    cols: u16,
-    rows: u16,
+    size: TermSize,
 ) -> Result<Pty> {
     let pty_system = native_pty_system();
     let pair = pty_system
         .openpty(PtySize {
-            rows,
-            cols,
-            pixel_width: 0,
-            pixel_height: 0,
+            rows: size.rows,
+            cols: size.cols,
+            pixel_width: size.pixel_width,
+            pixel_height: size.pixel_height,
         })
         .context("openpty")?;
 
@@ -742,12 +771,14 @@ mod tests {
 
     #[test]
     fn initial_resize_is_clamped_and_consumed() {
+        // 8-byte RESIZE: [cols=0][rows=0][pw=0][ph=0] — both clamp to 1.
         let frame = wire::ParsedFrame {
             typ: TYPE_RESIZE,
-            payload: vec![0, 0, 0, 0],
+            payload: vec![0, 0, 0, 0, 0, 0, 0, 0],
         };
         let req = initial_request(frame);
         assert_eq!((req.cols, req.rows), (1, 1));
+        assert_eq!((req.pixel_width, req.pixel_height), (0, 0));
         assert!(empty_session_token(&req.requested_token));
         assert!(req.pending_first.is_none());
     }
@@ -771,11 +802,12 @@ mod tests {
     #[test]
     fn attach_first_frame_uses_token_and_size() {
         let token = [9u8; SESSION_TOKEN_LEN];
-        let mut buf = wire::attach_frame(token, 120, 33);
+        let mut buf = wire::attach_frame(token, 120, 33, 1024, 600);
         let frame = wire::try_parse_frame(&mut buf).unwrap();
         let req = initial_request(frame);
         assert_eq!(req.requested_token, token);
         assert_eq!((req.cols, req.rows), (120, 33));
+        assert_eq!((req.pixel_width, req.pixel_height), (1024, 600));
         assert!(req.pending_first.is_none());
     }
 

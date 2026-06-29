@@ -174,14 +174,21 @@ pub fn run(args: AppArgs) -> Result<()> {
         seat,
         output_size: size,
         dirty: true,
+        pending_resize: false,
         serial: 1,
     };
 
     // Advertise basic seat capabilities. Input routing is implemented in the
     // next phase, but Firefox expects the globals/capabilities to exist.
+    // Repeat rate/delay are both 0: the hosted app must NOT auto-repeat on its
+    // own. Without the kitty keyboard protocol the terminal reports a key
+    // Press but no Release, so any non-zero repeat rate would make every
+    // character run away (`a` -> `aaaaaa…`). The terminal already sends its
+    // own repeats while a key is physically held, so compositor repeat is
+    // redundant; keeping it disabled is correct.
     let keyboard = state
         .seat
-        .add_keyboard(Default::default(), 200, 25)
+        .add_keyboard(Default::default(), 0, 0)
         .context("create Wayland keyboard")?;
     let pointer = state.seat.add_pointer();
 
@@ -192,7 +199,7 @@ pub fn run(args: AppArgs) -> Result<()> {
         launch.label, socket_name, size.w, size.h
     );
 
-    let mut child = spawn_child(&args, &launch).context("spawn app")?;
+    let mut child = ChildGuard(spawn_child(&args, &launch).context("spawn app")?);
     let mut clients = Vec::new();
     let mut renderer = RenderState::new(size).context("create EGL renderer")?;
     let frame_interval = Duration::from_millis((1000 / u64::from(args.fps)).max(1));
@@ -201,10 +208,6 @@ pub fn run(args: AppArgs) -> Result<()> {
         .checked_sub(FULL_REFRESH_INTERVAL)
         .unwrap_or_else(Instant::now);
     let started_at = Instant::now();
-    // [DEBUG-KITTY] diagnostics for the blank-render investigation. Remove once
-    // the toplevel/render path is understood.
-    let mut last_hb = Instant::now();
-    let mut rendered: u64 = 0;
 
     kitty_clear_screen().ok();
 
@@ -215,10 +218,6 @@ pub fn run(args: AppArgs) -> Result<()> {
                 .insert_client(stream, Arc::new(ClientState::default()))
                 .context("insert Wayland client")?;
             clients.push(client);
-            eprintln!(
-                "[zuko-app] wayland client connected (total={})",
-                clients.len()
-            );
         }
 
         display
@@ -227,6 +226,39 @@ pub fn run(args: AppArgs) -> Result<()> {
         display.flush_clients().context("flush Wayland clients")?;
 
         pump_terminal_input(&mut state, &keyboard, &pointer, started_at)?;
+
+        // Terminal resized: rebuild the Pixman render target at the new pixel
+        // size, update the Wayland output mode + logical size, and reconfigure
+        // existing toplevels so the app redraws at the new dimensions. A fresh
+        // RenderState starts with `placed = false`, so the next emit re-places
+        // the Kitty image at the new size instead of updating the old one.
+        if state.pending_resize {
+            state.pending_resize = false;
+            if let Some(new_size) = terminal_pixel_size() {
+                renderer =
+                    RenderState::new(new_size).context("recreate render target on resize")?;
+                state.output_size = new_size;
+                let mode = Mode {
+                    size: Size::from((new_size.w, new_size.h)),
+                    refresh: i32::from(args.fps.max(1)) * 1000,
+                };
+                output.change_current_state(
+                    Some(mode),
+                    Some(smithay::utils::Transform::Normal),
+                    Some(Scale::Integer(1)),
+                    Some((0, 0).into()),
+                );
+                output.set_preferred(mode);
+                for surface in state.xdg_shell_state.toplevel_surfaces() {
+                    surface.with_pending_state(|s| {
+                        s.size = Some(new_size);
+                        s.bounds = Some(new_size);
+                    });
+                    surface.send_configure();
+                }
+                state.dirty = true;
+            }
+        }
 
         if let Some(status) = child.try_wait().context("poll child process")? {
             eprintln!("zuko app: child exited with {status}");
@@ -243,7 +275,6 @@ pub fn run(args: AppArgs) -> Result<()> {
                 .context("render app frame")?;
             state.dirty = false;
             last_full = now;
-            rendered += 1;
             for surface in state.xdg_shell_state.toplevel_surfaces() {
                 send_frames_surface_tree(
                     surface.wl_surface(),
@@ -257,20 +288,6 @@ pub fn run(args: AppArgs) -> Result<()> {
             // surface appeared, `now >= next_frame` was never true and no frame
             // was ever rendered (blank terminal).
             next_frame = now + frame_interval;
-        }
-
-        // [DEBUG-KITTY] 1 Hz heartbeat: distinguishes "no toplevel ever
-        // created" (rendered stays 0, surfaces=0) from "renders happen but
-        // produce a near-black frame" (rendered climbs, surfaces>=1).
-        if now.duration_since(last_hb) >= Duration::from_secs(1) {
-            eprintln!(
-                "[zuko-app] hb clients={} surfaces={} dirty={} rendered_total={}",
-                clients.len(),
-                state.xdg_shell_state.toplevel_surfaces().len(),
-                state.dirty,
-                rendered,
-            );
-            last_hb = now;
         }
 
         std::thread::sleep(Duration::from_millis(8));
@@ -303,9 +320,10 @@ fn pump_terminal_input(
             }
             Event::Mouse(mouse) => handle_mouse(state, pointer, mouse, started_at),
             Event::Resize(_, _) => {
-                // Full resize/reconfigure is a follow-up phase. Mark dirty so
-                // the next refresh at least redraws into the current target.
-                state.dirty = true;
+                // The new terminal size isn't known here (crossterm gives cells,
+                // not pixels); `run()` re-queries the pixel size and rebuilds the
+                // render target + Wayland output there, where they live.
+                state.pending_resize = true;
             }
             _ => {}
         }
@@ -385,6 +403,7 @@ fn handle_mouse(
     );
     match mouse.kind {
         MouseEventKind::Down(button) | MouseEventKind::Up(button) => {
+            let button = effective_button(button, mouse.modifiers);
             let Some(button) = linux_button_code(button) else {
                 pointer.frame(state);
                 return;
@@ -431,20 +450,16 @@ fn terminal_mouse_to_logical(
     column: u16,
     row: u16,
 ) -> Point<f64, Logical> {
-    let (cols, rows) = crossterm::terminal::size().unwrap_or((80, 24));
-    let x = if column <= cols {
-        f64::from(column) * (f64::from(size.w) / f64::from(cols.max(1)))
-    } else {
-        f64::from(column)
-    };
-    let y = if row <= rows {
-        f64::from(row) * (f64::from(size.h) / f64::from(rows.max(1)))
-    } else {
-        f64::from(row)
-    };
+    // SGR-pixel mode (1016) is on, so `column`/`row` are pixel coordinates in
+    // the terminal's pixel space — the same space we render into (the Kitty
+    // image is `size` px and the output logical size is `size` at scale 1.0).
+    // Map 1:1 and clamp. The previous cell-vs-pixel heuristic (`column <= cols`
+    // means cell) was wrong: pixel coords in the top-left are numerically <=
+    // the cell count, so it scaled them ~10× and jumped the pointer to the
+    // bottom-right quarter.
     Point::from((
-        x.clamp(0.0, f64::from(size.w)),
-        y.clamp(0.0, f64::from(size.h)),
+        f64::from(column).clamp(0.0, f64::from(size.w)),
+        f64::from(row).clamp(0.0, f64::from(size.h)),
     ))
 }
 
@@ -453,6 +468,22 @@ fn linux_button_code(button: MouseButton) -> Option<u32> {
         MouseButton::Left => Some(0x110),
         MouseButton::Right => Some(0x111),
         MouseButton::Middle => Some(0x112),
+    }
+}
+
+/// Map a physical click to the button we send to the compositor.
+///
+/// Most terminals intercept plain right-click (their own context menu) and
+/// Shift+click (which bypasses application mouse reporting for text
+/// selection), so the hosted app never receives a right-button press here. To
+/// keep right-click usable, hold **Alt** while left-clicking: terminals
+/// forward Alt+click with the modifier flag intact, and we turn it into a
+/// right-button event. A plain right-click still works on terminals that
+/// forward it. (Change `ALT` below to `CONTROL` etc. if your WM grabs Alt.)
+fn effective_button(button: MouseButton, mods: KeyModifiers) -> MouseButton {
+    match (button, mods.contains(KeyModifiers::ALT)) {
+        (MouseButton::Left, true) => MouseButton::Right,
+        (_, _) => button,
     }
 }
 
@@ -798,6 +829,9 @@ impl TerminalModeGuard {
 impl Drop for TerminalModeGuard {
     fn drop(&mut self) {
         let mut out = std::io::stdout();
+        // Delete any Kitty graphics placements so a frozen frame doesn't linger
+        // over the restored shell after exit (`a=d` with no id deletes all).
+        let _ = out.write_all(b"\x1b_Ga=d,q=2\x1b\\");
         let _ = out.write_all(b"\x1b[?1016l\x1b[?1006l\x1b[?1003l");
         let _ = execute!(out, DisableMouseCapture, Show, LeaveAlternateScreen);
         let _ = crossterm::terminal::disable_raw_mode();
@@ -917,6 +951,29 @@ fn spawn_child(args: &AppArgs, launch: &Launch) -> Result<std::process::Child> {
     }
     cmd.spawn()
         .with_context(|| format!("spawn child command {:?}", launch.program))
+}
+
+/// Wraps the spawned app so it's killed when `zuko app` exits for any reason
+/// (Ctrl-Alt-q, error, or its own exit), preventing an orphaned GUI app from
+/// running against a dead compositor. Killing an already-exited child is a
+/// no-op, so the normal "child exited" path is unaffected.
+struct ChildGuard(std::process::Child);
+
+impl ChildGuard {
+    fn try_wait(&mut self) -> std::io::Result<Option<std::process::ExitStatus>> {
+        self.0.try_wait()
+    }
+}
+
+impl Drop for ChildGuard {
+    fn drop(&mut self) {
+        // Kill only — do NOT wait(). This guard is declared after
+        // `TerminalModeGuard`, so it drops *first*; a blocking wait() here
+        // would hold the terminal in raw mode until the child reaped, which
+        // looked like an exit hang. SIGKILL is enough to end the child; any
+        // transient zombie is reaped by the parent/init when zuko exits.
+        let _ = self.0.kill();
+    }
 }
 
 fn print_launch(launch: &Launch, socket_name: &str) {
@@ -1137,6 +1194,7 @@ struct App {
     seat: Seat<Self>,
     output_size: Size<i32, Logical>,
     dirty: bool,
+    pending_resize: bool,
     serial: u32,
 }
 
@@ -1180,13 +1238,15 @@ impl XdgShellHandler for App {
     }
 
     fn new_toplevel(&mut self, surface: ToplevelSurface) {
-        eprintln!("[zuko-app] new_toplevel surface created");
         let size = self.output_size;
         surface.with_pending_state(|state| {
             state.size = Some(size);
             state.bounds = Some(size);
             state.states.set(xdg_toplevel::State::Activated);
-            state.states.set(xdg_toplevel::State::Fullscreen);
+            // NOT Fullscreen: browsers (Vivaldi/Firefox) and GNOME Text Editor
+            // hide their tab bar / title bar in fullscreen, so the hosted app
+            // would lose its chrome. A plain Activated window sized to the
+            // output fills the terminal while keeping client-side decorations.
         });
         surface.send_configure();
         self.dirty = true;
