@@ -247,6 +247,16 @@ pub async fn connect(ticket_str: &str) -> Result<()> {
         eprintln!("\nzuko: {e:#}");
     }
 
+    // Close the endpoint gracefully so iroh can drain the connection to the
+    // host. Dropping without this logs "Endpoint dropped without calling
+    // `Endpoint::close`. Aborting ungracefully." and makes the host see an
+    // abrupt close instead of a clean one. By this point the recv loop has
+    // already seen the host's stream EOF (ShellExited) or hit a fatal local
+    // error, so the connection is tearing down and this returns quickly.
+    // Mirrors the close in handoff.rs; the force-quit (3× Ctrl-C) path still
+    // skips this on purpose — it exits via process::exit, so drop never runs.
+    endpoint.close().await;
+
     result
 }
 
