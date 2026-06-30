@@ -111,9 +111,9 @@ pub struct HostArgs {
     pub cwd: Option<PathBuf>,
 }
 
-/// `zuko app` configuration: run one Wayland GUI app inside a terminal-backed
-/// kiosk compositor. Linux-only because the implementation uses Smithay/EGL and
-/// a Wayland server socket.
+/// `zuko app` configuration: run one Wayland GUI app inside a terminal by
+/// spawning cage (headless, software-rendered) and streaming its output as
+/// Kitty graphics. Linux-only — cage + wlr-screencopy are Linux/Wayland.
 #[cfg(target_os = "linux")]
 #[derive(clap::Args, Clone, Debug)]
 pub struct AppArgs {
@@ -127,7 +127,7 @@ pub struct AppArgs {
     pub dry_run: bool,
 
     /// Draw a generated Kitty graphics test pattern and exit. This does not
-    /// start Wayland, EGL, or the child app; use it first to prove terminal
+    /// start cage/Wayland or the child app; use it first to prove terminal
     /// graphics survive the local terminal / zuko PTY path.
     #[arg(long)]
     pub test_pattern: bool,
@@ -142,6 +142,12 @@ pub struct AppArgs {
     #[arg(long)]
     pub no_sandbox: bool,
 
+    /// Hide the pointer crosshair overlay. By default `zuko app` draws a small
+    /// inverted crosshair at the pointer position (the captured frames have no
+    /// compositor cursor of their own), so touch/imprecise clicks can be aimed.
+    #[arg(long)]
+    pub no_cursor: bool,
+
     /// Maximum terminal frame ship rate. Rendering/damage can run faster; this
     /// caps the expensive readback + Kitty output path.
     #[arg(long, default_value_t = 16)]
@@ -151,7 +157,9 @@ pub struct AppArgs {
     #[arg(long, default_value_t = 1.0)]
     pub scale: f32,
 
-    /// Force software rendering for apps that fail on EGL/GPU paths.
+    /// Force software rendering inside the child app (e.g. `MOZ_WEBRENDER=software`,
+    /// `LIBGL_ALWAYS_SOFTWARE=1`). Cage already renders headless with pixman; this
+    /// coaxes the child onto a software path too.
     #[arg(long)]
     pub software: bool,
 

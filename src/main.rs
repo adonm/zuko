@@ -208,7 +208,7 @@ async fn main() -> Result<()> {
         Some(Command::App(args)) => zuko::app::run(args),
         #[cfg(all(target_os = "linux", not(feature = "gui-app")))]
         Some(Command::App(_args)) => anyhow::bail!(
-            "this zuko binary was built without `zuko app`; rebuild with `--features gui-app` (requires libxkbcommon/EGL runtime libraries)"
+            "this zuko binary was built without `zuko app` (built with --no-default-features). The standard build includes it; at runtime it needs cage + libxkbcommon/libdrm/etc."
         ),
         None => match cli.name {
             // Bare `zuko <input>`: the power-user shortcut. Distinguish a

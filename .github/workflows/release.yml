@@ -34,6 +34,11 @@ jobs:
           # selling Intel Macs in 2020; building Intel binaries on Apple
           # Silicon is well-supported. Tracking macos-latest keeps us off
           # stale runner images without affecting the cross-compile target.
+          #
+          # `zuko app` (gui-app) is a default feature now, so every build
+          # includes it; it compiles to a no-op off Linux (the app subcommand
+          # just isn't wired in on macOS). The Linux x86_64 tarball additionally
+          # bundles cage + wlroots libs (see the "Bundle cage" step below).
           - { runner: ubuntu-latest, target: x86_64-unknown-linux-gnu,  cross: false }
           - { runner: ubuntu-latest, target: aarch64-unknown-linux-gnu, cross: true  }
           - { runner: macos-latest,  target: x86_64-apple-darwin,       cross: false }
@@ -66,14 +71,47 @@ jobs:
           echo "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc" >> "$GITHUB_ENV"
 
       - name: Build release (target = ${{ matrix.target }})
+        # gui-app is a default feature; on macOS it's a no-op (the app code is
+        # cfg(target_os = "linux")), so the same command builds both platforms.
         run: cargo build --release --target "${ZUKO_TARGET}"
+
+      - name: Bundle cage + libs (x86_64-linux only)
+        # `zuko app` spawns cage headless (WLR_BACKENDS=headless WLR_RENDERER=pixman);
+        # we ship cage next to the zuko binary so `mise use` delivers a working
+        # app mode with no extra setup. Done in a Fedora container so the binary
+        # matches what we tested (cage 0.3.0 + wlroots 0.20.1) regardless of the
+        # Ubuntu runner. aarch64 cage bundling is a follow-up (needs QEMU); until
+        # then aarch64 `zuko app` finds cage on PATH.
+        if: ${{ matrix.target == 'x86_64-unknown-linux-gnu' }}
+        run: |
+          set -e
+          mkdir -p dist/cage
+          # GitHub ubuntu runners ship docker. :z lets the container chown the mount.
+          docker run --rm -v "$PWD/dist/cage:/out:z" fedora:latest bash -c '
+            set -e
+            dnf install -y -q --setopt=install_weak_deps=False cage >/dev/null
+            cp /usr/bin/cage /out/cage
+            # The wlroots .so's a host is least likely to have pre-installed.
+            # The rest of cage's closure (libwayland, libxkbcommon, libdrm, …)
+            # is present on any box that runs GUI apps.
+            for lib in libwlroots-0.20.so libliftoff.so.0 libseat.so.1 libxcb-errors.so.0; do
+              cp -L "/usr/lib64/$lib" /out/ 2>/dev/null || true
+            done
+          '
+          chmod +x dist/cage/cage
+          echo "--- bundled cage ---"
+          ls -la dist/cage
 
       - name: Package
         run: |
           mkdir -p dist
           cp "target/${ZUKO_TARGET}/release/zuko" dist/zuko
           chmod +x dist/zuko
-          tar -C dist -czf "$ARTIFACT" zuko
+          # Include the cage/ bundle if the previous step populated it (Linux
+          # only); macOS tarball is just the binary.
+          tar_args=(zuko)
+          [ -d dist/cage ] && tar_args+=(cage)
+          tar -C dist -czf "$ARTIFACT" "${tar_args[@]}"
           # `sha256sum` is Linux-only; macOS ships `shasum -a 256` (Perl). The
           # two produce byte-identical output (<hash>  <filename>), so consumers
           # don't care which one wrote the .sha256 sidecar.
