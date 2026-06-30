@@ -18,10 +18,10 @@
 
 use anyhow::{Context, Result, bail};
 use crossterm::{
-    cursor::{Hide, Show},
+    cursor::Hide,
     event::{DisableMouseCapture, EnableMouseCapture},
     execute,
-    terminal::{EnterAlternateScreen, LeaveAlternateScreen},
+    terminal::EnterAlternateScreen,
 };
 use std::{collections::BTreeMap, env, io::Write, path::PathBuf};
 
@@ -74,7 +74,12 @@ fn encode_rgba_png(bytes: &[u8], width: usize, height: usize) -> Result<Vec<u8>>
     encoder.set_color(png::ColorType::Rgba);
     encoder.set_depth(png::BitDepth::Eight);
     encoder.set_compression(png::Compression::Fast);
-    encoder.set_filter(png::Filter::NoFilter);
+    // Paeth row filtering: each row is delta-encoded against the row above, so
+    // unchanged regions (most of a mostly-static UI) collapse to near-zero
+    // before zlib — a full frame ships nearly as small as a true diff. The
+    // dirty-frame check in `capture_and_emit` additionally skips encode/emit
+    // entirely when the frame is byte-identical to the previous one.
+    encoder.set_filter(png::Filter::Paeth);
     {
         let mut writer = encoder.write_header()?;
         writer.write_image_data(bytes)?;
@@ -194,13 +199,24 @@ impl TerminalModeGuard {
 
 impl Drop for TerminalModeGuard {
     fn drop(&mut self) {
-        let mut out = std::io::stdout();
-        let _ = out.write_all(b"\x1b_Ga=d,q=2\x1b\\");
+        // Restore in one buffered write + single flush so the terminal applies
+        // the whole sequence in one render pass (no intermediate blank-alt-screen
+        // flicker on exit). Order: leave the alt screen first (back to the
+        // shell), THEN clear the Kitty image — Kitty placements persist across
+        // the screen-buffer switch, so clearing after leaves the shell clean.
+        let mut buf = Vec::with_capacity(64);
+        use std::io::Write as _;
+        let _ = buf.write_all(b"\x1b[?1049l"); // LeaveAlternateScreen
+        let _ = buf.write_all(b"\x1b_Ga=d,q=2\x1b\\"); // delete Kitty placements
         if self.pixel_mouse {
-            let _ = out.write_all(b"\x1b[?1016l");
+            let _ = buf.write_all(b"\x1b[?1016l");
         }
-        let _ = out.write_all(b"\x1b[?1006l\x1b[?1003l");
-        let _ = execute!(out, DisableMouseCapture, Show, LeaveAlternateScreen);
+        let _ = buf.write_all(b"\x1b[?1006l\x1b[?1003l"); // disable SGR mouse modes
+        let _ = buf.write_all(b"\x1b[?25h"); // Show cursor
+        let mut out = std::io::stdout();
+        let _ = out.write_all(&buf);
+        let _ = out.flush();
+        let _ = execute!(out, DisableMouseCapture);
         let _ = crossterm::terminal::disable_raw_mode();
         let _ = out.flush();
     }

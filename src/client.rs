@@ -105,10 +105,15 @@ pub async fn connect(ticket_str: &str) -> Result<()> {
     let size: Arc<AtomicU32> = Arc::new(AtomicU32::new(pack_size(cols, rows)));
 
     // Connect *before* entering raw mode so connect errors print to a normal,
-    // cooked terminal instead of a half-set-up raw one. Bind with the
-    // persistent client key so the node id is stable too.
+    // cooked terminal instead of a half-set-up raw one. Bind with an EPHEMERAL
+    // secret: a unique NodeId per process. The persistent identity used to be
+    // bound here too, but that gave every simultaneous `zuko connect` the SAME
+    // Iroh NodeId — Iroh couldn't tell the streams apart and reply routing
+    // cross-talked (duplicate/garbled output when running several clients at
+    // once). Reattach doesn't need a stable NodeId: the host keys sessions by
+    // the deterministic token derived above, not by NodeId.
     let endpoint = Endpoint::builder(presets::N0)
-        .secret_key(client_key)
+        .secret_key(iroh::SecretKey::generate())
         .bind()
         .await
         .context("bind local endpoint")?;

@@ -120,17 +120,18 @@ pub fn run(args: AppArgs) -> Result<()> {
         );
     }
 
-    // Fresh per-session XDG_RUNTIME_DIR so cage's `wayland-0` is unambiguous
-    // and we don't touch the user's real session.
+    // cage runs in the real XDG_RUNTIME_DIR (so Flatpak children reach the
+    // session); it auto-names its socket, so snapshot first and discover the
+    // new name after spawn rather than assuming wayland-0.
     let xdg_runtime = make_xdg_runtime_dir()?;
-    let socket_path = xdg_runtime.join("wayland-0");
+    let sockets_before = snapshot_wayland_sockets(&xdg_runtime);
 
     let mut cage = spawn_cage(&args, &launch, &xdg_runtime)?;
-    wait_for_ready(&mut cage, &socket_path)?;
+    let socket = wait_for_socket(&mut cage, &xdg_runtime, &sockets_before)?;
 
     eprintln!(
-        "zuko app: cage running {} at {}x{} (pixman/headless); connecting…",
-        launch.label, DEFAULT_OUTPUT.0, DEFAULT_OUTPUT.1
+        "zuko app: cage running {} at {}x{} (pixman/headless) on {}; connecting…",
+        launch.label, DEFAULT_OUTPUT.0, DEFAULT_OUTPUT.1, socket
     );
 
     // Point our own Wayland client env at cage's socket, then connect.
@@ -139,7 +140,7 @@ pub fn run(args: AppArgs) -> Result<()> {
     // concurrently. Edition 2024 marks set_var unsafe for the data-race risk.
     unsafe {
         env::set_var("XDG_RUNTIME_DIR", &xdg_runtime);
-        env::set_var("WAYLAND_DISPLAY", "wayland-0");
+        env::set_var("WAYLAND_DISPLAY", &socket);
     }
     let conn = Connection::connect_to_env().context("connect to cage Wayland socket")?;
     let (globals, mut queue) = registry_queue_init::<State>(&conn)?;
@@ -179,11 +180,39 @@ pub fn run(args: AppArgs) -> Result<()> {
         started_at,
     );
 
-    // Best-effort cleanup: kill cage (it reaps the app child). The TerminalModeGuard
-    // drop restores the terminal + clears Kitty placements.
-    let _ = cage.kill();
-    let _ = cage.wait();
+    // Best-effort cleanup. SIGTERM cage first (don't SIGKILL) so it runs its
+    // wlroots teardown and reaps the app child; SIGKILL only as a fallback.
+    // cage doesn't reliably unlink its Wayland socket on SIGTERM, so we remove
+    // the socket + `.lock` ourselves after it exits (otherwise they accumulate
+    // in the shared XDG_RUNTIME_DIR — the "wayland lock" leftover). The
+    // TerminalModeGuard drop then restores the terminal + clears Kitty.
+    shutdown_cage(&mut cage, &xdg_runtime, &socket);
     result
+}
+
+/// SIGTERM cage and give it ~1s to exit (reap its app child); SIGKILL only as a
+/// fallback. Then unlink the Wayland socket + `.lock` it left in the runtime dir.
+fn shutdown_cage(cage: &mut Child, xdg_runtime: &Path, socket: &str) {
+    let pid = cage.id() as i32;
+    if pid > 0 {
+        // SAFETY: sending a signal to a PID we own. libc::kill is signal-safe.
+        unsafe {
+            libc::kill(pid, libc::SIGTERM);
+        }
+    }
+    for _ in 0..50 {
+        if cage.try_wait().ok().flatten().is_some() {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    if cage.try_wait().ok().flatten().is_none() {
+        let _ = cage.kill();
+        let _ = cage.wait();
+    }
+    // cage's SIGTERM teardown doesn't unlink its socket; do it for it.
+    let _ = fs::remove_file(xdg_runtime.join(socket));
+    let _ = fs::remove_file(format!("{}.lock", xdg_runtime.join(socket).display()));
 }
 
 fn run_loop(
@@ -277,14 +306,23 @@ fn capture_and_emit(
         .captured
         .take()
         .context("capture Ready without frame bytes")?;
-    let png = encode_rgba_png(&rgba, w, h)?;
-    kitty_emit_png(
-        w as u32,
-        h as u32,
-        &png,
-        !std::mem::replace(placed, true),
-        cells.map(|(c, r)| (c as u32, r as u32)),
-    )?;
+    // Dirty-frame "diff": if the new RGBA is byte-identical to the last emitted
+    // frame AND the placement is already live, skip encode/emit — the terminal
+    // is already showing exactly this. Always (re)emit when (re)placing.
+    let needs_place = !*placed;
+    *placed = true;
+    let changed = state.prev_frame.as_deref() != Some(rgba.as_slice());
+    if needs_place || changed {
+        let png = encode_rgba_png(&rgba, w, h)?;
+        kitty_emit_png(
+            w as u32,
+            h as u32,
+            &png,
+            needs_place,
+            cells.map(|(c, r)| (c as u32, r as u32)),
+        )?;
+        state.prev_frame = Some(rgba);
+    }
     Ok(())
 }
 
@@ -751,17 +789,77 @@ fn bundled_cage_prefix() -> Option<PathBuf> {
 }
 
 fn make_xdg_runtime_dir() -> Result<PathBuf> {
-    // Prefer /run/user/$UID (tmpfs, correct perms); fall back to a tmp dir.
-    let base = env::var("XDG_RUNTIME_DIR")
-        .map(PathBuf::from)
-        .unwrap_or_else(|_| std::env::temp_dir());
-    let dir = base.join(format!("zuko-app-{}", std::process::id()));
+    // Use the REAL XDG_RUNTIME_DIR when there is one, so cage's children —
+    // especially Flatpaks — can reach the user's session: D-Bus, the portal,
+    // and the per-instance `.flatpak/<id>/bwrapinfo.json` all live there. (A
+    // private dir breaks Flatpaks: `flatpak run` writes its instance info into
+    // the inherited dir, but the sandboxed app looks it up in the real session
+    // dir → "Failed to open bwrapinfo.json" + cascading portal errors.)
+    // cage auto-names its Wayland socket, so sharing the dir is fine — we
+    // discover the name rather than assuming `wayland-0`. A private fallback
+    // only when there's no session dir at all (truly headless; no session to
+    // reach anyway).
+    if let Some(dir) = env::var_os("XDG_RUNTIME_DIR")
+        && PathBuf::from(&dir).is_dir()
+    {
+        return Ok(PathBuf::from(dir));
+    }
+    let dir = std::env::temp_dir().join(format!("zuko-app-{}", std::process::id()));
     fs::create_dir_all(&dir)
         .with_context(|| format!("create XDG_RUNTIME_DIR {}", dir.display()))?;
+    eprintln!(
+        "zuko app: no XDG_RUNTIME_DIR session dir; using private {} \
+         (Flatpaks won't reach a session here)",
+        dir.display()
+    );
     Ok(dir)
 }
 
+/// List `wayland-*` socket names in a dir (excluding `*.lock`). Used to spot
+/// the new socket cage creates via `wl_display_add_socket_auto` (it picks the
+/// first free `wayland-N` and sets `WAYLAND_DISPLAY` for its children — we
+/// can't predict N, so we diff the directory).
+fn snapshot_wayland_sockets(dir: &Path) -> Vec<String> {
+    fs::read_dir(dir)
+        .map(|rd| {
+            rd.filter_map(|e| e.ok())
+                .filter_map(|e| e.file_name().into_string().ok())
+                .filter(|n| n.starts_with("wayland-") && !n.contains('.'))
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// Wait for cage to create a NEW `wayland-*` socket (one not in `before`),
+/// returning its name; or fail fast if cage dies first (missing lib, etc.).
+fn wait_for_socket(cage: &mut Child, dir: &Path, before: &[String]) -> Result<String> {
+    let deadline = Instant::now() + SOCKET_WAIT;
+    while Instant::now() < deadline {
+        if let Some(name) = snapshot_wayland_sockets(dir)
+            .into_iter()
+            .find(|n| !before.contains(n))
+        {
+            return Ok(name);
+        }
+        if let Ok(Some(status)) = cage.try_wait() {
+            bail!(
+                "cage exited before binding its Wayland socket (status: {status}).\n\
+                 Usually that means a missing runtime library — cage's error message above names\n\
+                 which one. `zuko app` needs cage's deps (libwayland, libxkbcommon, libdrm,\n\
+                 libxcb, libinput, libudev, …), present on GUI-capable hosts. The rest of zuko\n\
+                 (host/connect) is unaffected — only `zuko app` needs them."
+            );
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    bail!(
+        "cage did not create a Wayland socket in {} within {SOCKET_WAIT:?}",
+        dir.display()
+    );
+}
+
 fn spawn_cage(args: &AppArgs, launch: &Launch, xdg_runtime: &Path) -> Result<Child> {
+    use std::os::unix::process::CommandExt;
     let mut cmd = Command::new(cage_bin());
     cmd.env("WLR_BACKENDS", "headless")
         .env("WLR_RENDERER", "pixman")
@@ -778,6 +876,20 @@ fn spawn_cage(args: &AppArgs, launch: &Launch, xdg_runtime: &Path) -> Result<Chi
     for (k, v) in &launch.env {
         cmd.env(k, v);
     }
+    // Ask the kernel to SIGTERM cage if zuko (its parent) dies — including a
+    // hard SIGKILL of zuko (which can't run cleanup). Without this, closing the
+    // terminal wedges zuko and leaves cage + the app running as orphans, which
+    // hold the Wayland socket + `.lock` and show up as a "wayland lock" issue /
+    // leftover socket on the next run. cage handles SIGTERM (wlroots teardown),
+    // which also reaps its app child.
+    // SAFETY: pre_exec runs in the forked child before exec; prctl is a
+    // signal-safe syscall. PR_SET_PDEATHSIG is Linux-only (this code is too).
+    unsafe {
+        cmd.pre_exec(|| {
+            let _ = libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGTERM);
+            Ok(())
+        });
+    }
     // cage <flags> -- <application> [args...]
     cmd.arg("--").arg(&launch.program).args(&launch.args);
     if args.debug_child {
@@ -787,38 +899,6 @@ fn spawn_cage(args: &AppArgs, launch: &Launch, xdg_runtime: &Path) -> Result<Chi
     }
     cmd.spawn()
         .with_context(|| format!("spawn cage ({})", cage_bin()))
-}
-
-/// Wait for cage to bind its Wayland socket, OR fail fast if cage dies first.
-///
-/// The fast-fail path is the graceful-degradation case: when the host is missing
-/// one of cage's runtime libraries (libwayland/libxkbcommon/libdrm/libxcb/…),
-/// the dynamic loader kills cage immediately and prints the offending lib to
-/// stderr (which we inherit, so it's already visible above). Without this check
-/// we'd silently loop for `SOCKET_WAIT` and then report a misleading "socket
-/// never appeared". The rest of zuko (host/connect/…) never links those libs, so
-/// only `zuko app` is affected — the binary itself runs fine on minimal hosts.
-fn wait_for_ready(cage: &mut Child, path: &Path) -> Result<()> {
-    let deadline = Instant::now() + SOCKET_WAIT;
-    while Instant::now() < deadline {
-        if path.exists() {
-            return Ok(());
-        }
-        if let Ok(Some(status)) = cage.try_wait() {
-            bail!(
-                "cage exited before binding its Wayland socket (status: {status}).\n\
-                 Usually that means a missing runtime library — cage's error message above names\n\
-                 which one. `zuko app` needs cage's deps (libwayland, libxkbcommon, libdrm,\n\
-                 libxcb, libinput, libudev, …), present on GUI-capable hosts. The rest of zuko\n\
-                 (host/connect) is unaffected — only `zuko app` needs them."
-            );
-        }
-        std::thread::sleep(Duration::from_millis(20));
-    }
-    bail!(
-        "cage did not bind Wayland socket {} within {SOCKET_WAIT:?}",
-        path.display()
-    );
 }
 
 // ──────────────────────────── Wayland client state ──────────────────────────
@@ -854,6 +934,10 @@ struct State {
     // Probed terminal per-cell pixel size (CSI 16 t), used to compute terminal
     // pixel dims for SGR-pixel mouse (sub-cell click/cursor accuracy).
     cell_px: Option<(u16, u16)>,
+    // Last emitted frame (RGBA). When the next capture is byte-identical we
+    // skip encode/emit — the cheap "diff" that avoids resending static screens
+    // (idle menus, text) at 16 fps.
+    prev_frame: Option<Vec<u8>>,
 }
 
 impl Dispatch<wl_registry::WlRegistry, GlobalListContents> for State {
