@@ -44,10 +44,10 @@ use anyhow::{Context, Result};
 use iroh::{Endpoint, EndpointAddr, endpoint::presets};
 use iroh_tickets::endpoint::EndpointTicket;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::time::Instant;
 use tokio::io::AsyncWriteExt as _;
-use tokio::sync::mpsc;
+use tokio::sync::mpsc::{self, error::TrySendError};
 
 use crate::wire::{
     ALPN_V1, ALPN_V2, SESSION_TOKEN_LEN, SessionToken, TYPE_ATTACHED, TYPE_DATA, TYPE_PING,
@@ -134,6 +134,7 @@ pub async fn connect(ticket_str: &str) -> Result<()> {
     // hatch. Any remote output bumps this, which is exactly the "remote is
     // alive" signal we want to reset the burst.
     let stdout_seq: Arc<AtomicU64> = Arc::new(AtomicU64::new(0));
+    let connected: Arc<AtomicBool> = Arc::new(AtomicBool::new(false));
 
     // stdin -> DATA frames. A dedicated OS thread does blocking reads (the
     // original design — tokio's async stdin also parks on a blocking thread,
@@ -148,6 +149,7 @@ pub async fn connect(ticket_str: &str) -> Result<()> {
     // stream and leaves no way out of a wedged session.
     let stdin_tx = frame_tx.clone();
     let stdout_seq_for_stdin = stdout_seq.clone();
+    let connected_for_stdin = connected.clone();
     std::thread::spawn(move || {
         let mut stdin = std::io::stdin();
         let mut buf = vec![0u8; 4096];
@@ -162,15 +164,11 @@ pub async fn connect(ticket_str: &str) -> Result<()> {
             match std::io::Read::read(&mut stdin, &mut buf) {
                 Ok(0) | Err(_) => break,
                 Ok(n) => {
-                    if stdin_tx
-                        .blocking_send(crate::wire::data_frame(&buf[..n]))
-                        .is_err()
-                    {
-                        break;
-                    }
                     // Force-quit accounting. We count 0x03 bytes; a paste of
                     // several is an intentional gesture and resolves the same
-                    // way as mashing the key.
+                    // way as mashing the key. This happens BEFORE enqueueing so
+                    // a full/stalled network queue cannot block the escape
+                    // hatch.
                     let now = Instant::now();
                     let cur_seq = stdout_seq_for_stdin.load(Ordering::Relaxed);
                     for &b in &buf[..n] {
@@ -187,6 +185,21 @@ pub async fn connect(ticket_str: &str) -> Result<()> {
                             force_quit();
                         }
                     }
+                    if !connected_for_stdin.load(Ordering::Acquire) {
+                        // No stream is attached during dial/backoff. Do not
+                        // buffer stale keystrokes and replay them into a later
+                        // shell; the next ATTACH carries the latest size.
+                        continue;
+                    }
+                    match stdin_tx.try_send(crate::wire::data_frame(&buf[..n])) {
+                        Ok(()) => {}
+                        Err(TrySendError::Full(_)) => {
+                            // Prefer dropping impatient input under brownout to
+                            // blocking this thread and losing the force-quit
+                            // escape hatch.
+                        }
+                        Err(TrySendError::Closed(_)) => break,
+                    }
                 }
             }
         }
@@ -197,6 +210,7 @@ pub async fn connect(ticket_str: &str) -> Result<()> {
     {
         let resize_tx = frame_tx.clone();
         let size_for_signal = size.clone();
+        let connected_for_signal = connected.clone();
         tokio::spawn(async move {
             use tokio::signal::unix::{SignalKind, signal};
             let Ok(mut sig) = signal(SignalKind::window_change()) else {
@@ -206,6 +220,9 @@ pub async fn connect(ticket_str: &str) -> Result<()> {
                 if let Ok((c, r)) = crossterm::terminal::size() {
                     let (pw, ph) = terminal_pixels();
                     size_for_signal.store(pack_size(c, r), Ordering::Relaxed);
+                    if !connected_for_signal.load(Ordering::Acquire) {
+                        continue;
+                    }
                     if resize_tx.send(resize_frame(c, r, pw, ph)).await.is_err() {
                         break;
                     }
@@ -230,8 +247,10 @@ pub async fn connect(ticket_str: &str) -> Result<()> {
         size: &size,
         frame_tx: &frame_tx,
         stdout_seq: &stdout_seq,
+        connected: &connected,
     };
     let result: Result<()> = loop {
+        connected.store(false, Ordering::Release);
         match run_one_connection(&ctx, &mut token, &mut frame_rx, &mut backoff).await {
             Ok(ConnOutcome::ShellExited) => break Ok(()),
             Ok(ConnOutcome::Dropped) => {
@@ -321,6 +340,7 @@ struct ConnCtx<'a> {
     size: &'a std::sync::atomic::AtomicU32,
     frame_tx: &'a mpsc::Sender<Vec<u8>>,
     stdout_seq: &'a std::sync::atomic::AtomicU64,
+    connected: &'a std::sync::atomic::AtomicBool,
 }
 
 /// Open one connection, complete the ATTACH handshake, and pump both
@@ -371,6 +391,7 @@ async fn run_one_connection(
     // Handshake bytes are on the wire — this connection is live. Reset the
     // backoff so the next drop after a healthy stretch starts fresh.
     backoff.reset();
+    let _active = ActiveConnection::new(ctx.connected);
     status_line("connected — Ctrl-C 3× to force-quit if it hangs");
 
     // Pump both directions concurrently. stdin/SIGWINCH frames drain into
@@ -514,6 +535,19 @@ struct RawModeGuard;
 impl Drop for RawModeGuard {
     fn drop(&mut self) {
         let _ = crossterm::terminal::disable_raw_mode();
+    }
+}
+
+struct ActiveConnection<'a>(&'a AtomicBool);
+impl<'a> ActiveConnection<'a> {
+    fn new(flag: &'a AtomicBool) -> Self {
+        flag.store(true, Ordering::Release);
+        Self(flag)
+    }
+}
+impl Drop for ActiveConnection<'_> {
+    fn drop(&mut self) {
+        self.0.store(false, Ordering::Release);
     }
 }
 

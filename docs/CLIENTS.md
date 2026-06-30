@@ -40,7 +40,10 @@ Read [`PROTOCOL.md`](PROTOCOL.md) first — it's short. In brief:
 2. Parse the host's `endpointa…` ticket.
 3. Connect over Iroh on ALPN `zuko/2`, falling back to `zuko/1` for older
    hosts. Open the data bidi stream and send `ATTACH` as the **first frame**
-   (`[last_token_or_zero][cols][rows][pixel_width][pixel_height]`). Iroh only
+   (`[last_token_or_zero][cols][rows][pixel_width][pixel_height]`). For fresh
+   process stability, persist a client secret and derive a host-scoped non-zero
+   first token; otherwise send zero and use the host's `ATTACHED` reply for
+   reconnects. Iroh only
    surfaces a stream to the peer once the initiator sends data, so `ATTACH`
    doubles as the stream-opening write and the entire handshake. Legacy clients
    may send first-frame `RESIZE`, but that always starts a fresh PTY.
@@ -60,7 +63,7 @@ The reference implementations are deliberately small and worth cribbing from:
 
 - **Rust:** [`src/wire.rs`](../src/wire.rs) +
   [`client.rs`](../src/client.rs).
-- **Swift:** [`Wire.swift`](../ios/Zuko/Zuko/Net/Wire.swift) +
+- **Swift:** [`ZukoWire/Wire.swift`](../ios/ZukoWire/Sources/ZukoWire/Wire.swift) +
   [`IrohSession.swift`](../ios/Zuko/Zuko/Net/IrohSession.swift).
 
 The host sets `TERM=xterm-256color`, so pick an emulator that speaks it. Gotchas

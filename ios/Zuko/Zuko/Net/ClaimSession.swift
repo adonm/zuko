@@ -46,7 +46,7 @@ enum ClaimError: LocalizedError {
 @MainActor
 @Observable
 final class ClaimSession {
-    /// ALPN for the throwaway handoff endpoint (distinct from the terminal `zuko/1`).
+    /// ALPN for the throwaway handoff endpoint (distinct from the terminal protocol).
     @ObservationIgnored static let alpn = Data("zuko/handoff/1".utf8)
     /// Cap a handoff payload so a misbehaving peer can't make us allocate forever.
     @ObservationIgnored static let maxPayload = 8 * 1024

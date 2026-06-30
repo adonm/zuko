@@ -39,7 +39,7 @@ pub use imp::run;
 #[cfg(not(target_os = "linux"))]
 pub fn run(_args: AppArgs) -> Result<()> {
     bail!(
-        "`zuko app` is Linux-only (it spawns cage + wlr-screencopy). Build/run on Linux with the `gui-app` feature."
+        "`zuko app` is Linux-only (it spawns cage + wlr-screencopy). Run it on Linux; at runtime it needs cage/wlroots plus Wayland runtime libraries."
     )
 }
 
@@ -332,63 +332,151 @@ struct Launch {
     args: Vec<String>,
     env: Vec<(String, String)>,
     flatpak: bool,
+    profile: DisplayProfile,
+    fallback: Option<Box<Launch>>,
+}
+
+/// The two cage display backends `zuko app` knows how to drive. Selection is
+/// not per-app guesswork: we start on the cheapest (`Wayland`) and only switch
+/// to `Xwayland` if the app never rendered (the classic Electron/Chromium
+/// "black screen under headless pixman"). Everything else — software GL, video
+/// decode, backend hints — is driven by env, not app-specific CLI flags (those
+/// caused their own crashes, e.g. Discord with `--use-gl=disabled`).
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum DisplayProfile {
+    Wayland,
+    Xwayland,
+}
+
+impl DisplayProfile {
+    fn label(self) -> &'static str {
+        match self {
+            Self::Wayland => "Wayland/software",
+            Self::Xwayland => "Xwayland/software",
+        }
+    }
+}
+
+const DISPLAY_FALLBACKS: &[DisplayProfile] = &[DisplayProfile::Wayland, DisplayProfile::Xwayland];
+
+fn fallback_chain(mut mk: impl FnMut(DisplayProfile) -> Launch) -> Launch {
+    let mut next = None;
+    for &profile in DISPLAY_FALLBACKS.iter().rev() {
+        let mut launch = mk(profile);
+        launch.fallback = next;
+        next = Some(Box::new(launch));
+    }
+    *next.expect("DISPLAY_FALLBACKS is non-empty")
 }
 
 fn resolve_launch(args: &AppArgs, software: bool, no_sandbox: bool) -> Result<Launch> {
     let (query, child_args) = args.command.split_first().context("missing app command")?;
-    let env = app_env(software, no_sandbox);
     if let Some(entry) = find_desktop_app(query)? {
         if let Some(app_id) = entry.flatpak_app_id.as_deref() {
-            let flatpak_args = flatpak_run_args(app_id, child_args, &env);
-            return Ok(Launch {
-                label: format!("{} ({app_id})", entry.name),
-                program: "flatpak".to_string(),
-                args: flatpak_args,
-                env,
-                flatpak: true,
-            });
+            return Ok(flatpak_launch_chain(
+                &entry.name,
+                app_id,
+                child_args,
+                software,
+                no_sandbox,
+            ));
         }
         if let Some(exec) = entry.exec.as_deref() {
             let mut words = desktop_exec_words(exec)?;
             if !words.is_empty() {
                 let program = words.remove(0);
-                words.extend(child_args.iter().cloned());
-                return Ok(Launch {
-                    label: entry.name,
-                    program,
-                    args: words,
-                    env,
-                    flatpak: false,
-                });
+                return Ok(command_launch_chain(
+                    entry.name, program, words, child_args, software, no_sandbox,
+                ));
             }
         }
     }
 
-    let mut argv = child_args.to_vec();
-    Ok(Launch {
-        label: query.clone(),
-        program: query.clone(),
-        args: std::mem::take(&mut argv),
-        env,
-        flatpak: false,
+    Ok(command_launch_chain(
+        query.clone(),
+        query.clone(),
+        Vec::new(),
+        child_args,
+        software,
+        no_sandbox,
+    ))
+}
+
+fn flatpak_launch_chain(
+    name: &str,
+    app_id: &str,
+    child_args: &[String],
+    software: bool,
+    no_sandbox: bool,
+) -> Launch {
+    fallback_chain(|profile| {
+        let env = app_env(software, no_sandbox, profile);
+        let args = flatpak_run_args(app_id, child_args, &env, profile);
+        Launch {
+            label: format!("{name} ({app_id}, {})", profile.label()),
+            program: "flatpak".to_string(),
+            args,
+            env,
+            flatpak: true,
+            profile,
+            fallback: None,
+        }
     })
 }
 
-fn flatpak_run_args(app_id: &str, child_args: &[String], env: &[(String, String)]) -> Vec<String> {
+fn command_launch_chain(
+    label: String,
+    program: String,
+    base_args: Vec<String>,
+    child_args: &[String],
+    software: bool,
+    no_sandbox: bool,
+) -> Launch {
+    fallback_chain(|profile| {
+        let mut args = base_args.clone();
+        args.extend(child_args.iter().cloned());
+        Launch {
+            label: format!("{label} ({})", profile.label()),
+            program: program.clone(),
+            args,
+            env: app_env(software, no_sandbox, profile),
+            flatpak: false,
+            profile,
+            fallback: None,
+        }
+    })
+}
+
+fn flatpak_run_args(
+    app_id: &str,
+    child_args: &[String],
+    env: &[(String, String)],
+    profile: DisplayProfile,
+) -> Vec<String> {
     let mut flatpak_args = vec![
         "run".to_string(),
         // Keep the sandbox attached to cage's lifecycle and Wayland socket.
         "--die-with-parent".to_string(),
-        "--socket=wayland".to_string(),
         "--share=ipc".to_string(),
-        // zuko app is a Wayland/cage path. X11 fallback can silently choose the
-        // wrong display path or fail later in less obvious ways, so make it an
-        // explicit Wayland-only launch.
-        "--nosocket=x11".to_string(),
-        "--nosocket=fallback-x11".to_string(),
         // No host AT-SPI/a11y bus exists inside headless cage.
         "--no-a11y-bus".to_string(),
     ];
+    match profile {
+        DisplayProfile::Xwayland => {
+            // DISPLAY is supplied by cage's Xwayland bridge, so app_env
+            // intentionally does not pass --env=DISPLAY= in this mode.
+            flatpak_args.push("--socket=x11".to_string());
+            flatpak_args.push("--nosocket=wayland".to_string());
+            flatpak_args.push("--nosocket=fallback-x11".to_string());
+        }
+        DisplayProfile::Wayland => {
+            flatpak_args.push("--socket=wayland".to_string());
+            // Wayland-only: X11 fallback can silently choose the wrong display
+            // path or fail later in less obvious ways, so make it explicit.
+            flatpak_args.push("--nosocket=x11".to_string());
+            flatpak_args.push("--nosocket=fallback-x11".to_string());
+        }
+    }
     for (k, v) in env {
         flatpak_args.push(format!("--env={k}={v}"));
     }
@@ -397,14 +485,29 @@ fn flatpak_run_args(app_id: &str, child_args: &[String], env: &[(String, String)
     flatpak_args
 }
 
-/// Environment that makes the *child* app prefer Wayland + render under cage.
-/// (cage sets `WAYLAND_DISPLAY` for its child itself; we only add the tunables.)
-fn app_env(software: bool, no_sandbox: bool) -> Vec<(String, String)> {
+/// Environment that points the child app at the right backend under cage and
+/// forces software rendering/decoding (cage is headless pixman — there is no
+/// GPU). cage sets `WAYLAND_DISPLAY`/`DISPLAY` for its child; we only add the
+/// tunables.
+fn app_env(software: bool, no_sandbox: bool, profile: DisplayProfile) -> Vec<(String, String)> {
+    let wayland = profile == DisplayProfile::Wayland;
     let mut env = vec![
-        ("MOZ_ENABLE_WAYLAND".to_string(), "1".to_string()),
-        ("DISPLAY".to_string(), String::new()),
-        ("GDK_BACKEND".to_string(), "wayland".to_string()),
-        ("QT_QPA_PLATFORM".to_string(), "wayland".to_string()),
+        (
+            "MOZ_ENABLE_WAYLAND".to_string(),
+            if wayland { "1" } else { "0" }.to_string(),
+        ),
+        (
+            "GDK_BACKEND".to_string(),
+            if wayland { "wayland" } else { "x11" }.to_string(),
+        ),
+        (
+            "QT_QPA_PLATFORM".to_string(),
+            if wayland { "wayland" } else { "xcb" }.to_string(),
+        ),
+        (
+            "ELECTRON_OZONE_PLATFORM_HINT".to_string(),
+            if wayland { "wayland" } else { "x11" }.to_string(),
+        ),
         // cage's headless output has NO GPU (pixman, software-only), so force
         // every toolkit onto its software renderer up front. Without this, GTK4
         // probes Vulkan/EGL and spews `VK_ERROR_SURFACE_LOST_KHR`, `libEGL …`,
@@ -412,7 +515,32 @@ fn app_env(software: bool, no_sandbox: bool) -> Vec<(String, String)> {
         // since there's no GPU to use.
         ("GSK_RENDERER".to_string(), "cairo".to_string()), // GTK4 scene kit
         ("LIBGL_ALWAYS_SOFTWARE".to_string(), "1".to_string()), // Mesa → llvmpipe
+        ("QT_OPENGL".to_string(), "software".to_string()),
         ("QT_QUICK_BACKEND".to_string(), "software".to_string()), // QtQuick
+        ("QSG_RHI_BACKEND".to_string(), "software".to_string()),  // Qt 6 scenegraph
+        // QtWebEngine/Chromium-based Flatpaks (notably Jellyfin Media Player /
+        // Jellyfin Desktop) can show black video under cage's pixman/headless
+        // renderer when they create accelerated EGL/shared-image/dmabuf video
+        // surfaces. Disable those paths so video is composited into the normal
+        // Wayland surface that wlr-screencopy can capture. Throughput is CPU
+        // bound, but correctness beats a black rectangle.
+        (
+            "QTWEBENGINE_CHROMIUM_FLAGS".to_string(),
+            [
+                "--disable-gpu",
+                "--disable-gpu-compositing",
+                "--disable-accelerated-video-decode",
+                "--disable-accelerated-video-encode",
+                "--disable-features=VaapiVideoDecoder,VaapiVideoEncoder,Vulkan,UseSkiaRenderer",
+                "--use-gl=disabled",
+            ]
+            .join(" "),
+        ),
+        // Make VAAPI/VDPAU probing fail closed in sandboxed media players. Some
+        // libmpv/CEF paths ignore Chromium flags and still try hardware decode;
+        // empty driver names keep them from binding a host GPU behind cage.
+        ("LIBVA_DRIVER_NAME".to_string(), String::new()),
+        ("VDPAU_DRIVER".to_string(), String::new()),
         // Keep file/save dialogs IN cage (so they're captured + shown in the
         // TUI) instead of delegated to the host's xdg-desktop-portal, which
         // would pop them up on the host's own desktop. GTK_USE_PORTAL=0 makes
@@ -436,6 +564,11 @@ fn app_env(software: bool, no_sandbox: bool) -> Vec<(String, String)> {
         ("GSETTINGS_BACKEND".to_string(), "memory".to_string()),
         ("NO_AT_BRIDGE".to_string(), "1".to_string()),
     ];
+    if wayland {
+        // Blank DISPLAY so a Wayland-mode app can't silently fall onto X11; in
+        // Xwayland mode cage provides DISPLAY and we leave it intact.
+        env.push(("DISPLAY".to_string(), String::new()));
+    }
     // Firefox WebRender is a separate perf choice (software WR is slower), so it
     // stays opt-in behind --software unlike the toolkit renderers above.
     if software {
@@ -647,7 +780,12 @@ mod tests {
             ("DISPLAY".to_string(), String::new()),
         ];
         let child_args = vec!["--new-window".to_string()];
-        let args = flatpak_run_args("org.example.App", &child_args, &env);
+        let args = flatpak_run_args(
+            "org.example.App",
+            &child_args,
+            &env,
+            DisplayProfile::Wayland,
+        );
 
         assert!(args.contains(&"run".to_string()));
         assert!(args.contains(&"--die-with-parent".to_string()));
@@ -661,5 +799,58 @@ mod tests {
         assert!(args.contains(&"--env=DISPLAY=".to_string()));
         assert_eq!(args[args.len() - 2], "org.example.App");
         assert_eq!(args[args.len() - 1], "--new-window");
+    }
+
+    #[test]
+    fn app_env_forces_software_rendering_and_video_decode() {
+        let env = app_env(false, false, DisplayProfile::Wayland);
+        let value = |key: &str| {
+            env.iter()
+                .find_map(|(k, v)| (k == key).then_some(v.as_str()))
+                .unwrap_or("")
+        };
+
+        assert_eq!(value("QT_OPENGL"), "software");
+        assert_eq!(value("QSG_RHI_BACKEND"), "software");
+        assert_eq!(value("LIBGL_ALWAYS_SOFTWARE"), "1");
+        assert!(value("QTWEBENGINE_CHROMIUM_FLAGS").contains("--disable-gpu"));
+        assert!(value("QTWEBENGINE_CHROMIUM_FLAGS").contains("VaapiVideoDecoder"));
+        assert_eq!(value("LIBVA_DRIVER_NAME"), "");
+        assert_eq!(value("VDPAU_DRIVER"), "");
+        assert_eq!(value("DISPLAY"), "");
+        assert_eq!(value("ELECTRON_OZONE_PLATFORM_HINT"), "wayland");
+    }
+
+    #[test]
+    fn xwayland_profile_uses_x11_socket_and_x11_hints() {
+        let env = app_env(false, false, DisplayProfile::Xwayland);
+        let value = |key: &str| {
+            env.iter()
+                .find_map(|(k, v)| (k == key).then_some(v.as_str()))
+                .unwrap_or("")
+        };
+        assert_eq!(value("GDK_BACKEND"), "x11");
+        assert_eq!(value("QT_QPA_PLATFORM"), "xcb");
+        assert_eq!(value("ELECTRON_OZONE_PLATFORM_HINT"), "x11");
+        // No blanked DISPLAY in Xwayland mode — cage supplies it.
+        assert!(!env.iter().any(|(k, v)| k == "DISPLAY" && v.is_empty()));
+
+        let args = flatpak_run_args("com.example.App", &[], &env, DisplayProfile::Xwayland);
+        assert!(args.contains(&"--socket=x11".to_string()));
+        assert!(args.contains(&"--nosocket=wayland".to_string()));
+        assert!(!args.contains(&"--socket=wayland".to_string()));
+        // No app-specific Chromium CLI flags are injected (they caused their own
+        // crashes); backend + env drive everything.
+        assert!(!args.iter().any(|a| a.starts_with("--use-gl")));
+        assert_eq!(args[args.len() - 1], "com.example.App");
+    }
+
+    #[test]
+    fn launch_has_two_step_wayland_then_xwayland_fallback() {
+        let launch = flatpak_launch_chain("Example", "org.example.App", &[], false, false);
+        assert_eq!(launch.profile, DisplayProfile::Wayland);
+        let fallback = launch.fallback.as_ref().expect("xwayland fallback");
+        assert_eq!(fallback.profile, DisplayProfile::Xwayland);
+        assert!(fallback.fallback.is_none());
     }
 }

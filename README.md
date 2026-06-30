@@ -148,7 +148,7 @@ Iroh streams with ALPN `zuko/2` and `zuko/1` fallback. The full spec (frame
 types, capability flags, the ticket-handoff ALPN) is in
 [`docs/PROTOCOL.md`](docs/PROTOCOL.md); reference impls in
 [`src/wire.rs`](src/wire.rs) (Rust) and
-[`ios/Zuko/Zuko/Net/Wire.swift`](ios/Zuko/Zuko/Net/Wire.swift) (Swift).
+[`ios/ZukoWire/Sources/ZukoWire/Wire.swift`](ios/ZukoWire/Sources/ZukoWire/Wire.swift) (Swift, unit-tested).
 
 ## What's in here
 

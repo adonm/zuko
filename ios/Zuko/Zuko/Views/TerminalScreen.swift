@@ -30,6 +30,7 @@ struct TerminalScreen: View {
     @Environment(ConnectionStore.self) private var store
     @Environment(ThemeStore.self) private var themeStore
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.scenePhase) private var scenePhase
 
     @State private var showingThemeBrowser = false
     @State private var showingLogs = false
@@ -145,6 +146,14 @@ struct TerminalScreen: View {
         .onChange(of: themeStore.fontSize) {
             // Live font size change from the toolbar stepper.
             applyFontSize(themeStore.fontSize)
+        }
+        .onChange(of: scenePhase) { _, phase in
+            // Returning from the background: the QUIC link is usually dead
+            // after iOS suspends us, so recover immediately instead of waiting
+            // out the reconnect backoff. See IrohSession.foregrounded().
+            if phase == .active {
+                session.foregrounded()
+            }
         }
         .onDisappear {
             session.disconnect()

@@ -1,6 +1,6 @@
 [package]
 name = "zuko"
-version = "0.7.1"
+version = "0.7.2"
 edition = "2024"
 license = "Apache-2.0"
 description = "Remote terminals over Iroh: the host daemon and reference CLI client."
@@ -40,29 +40,6 @@ thiserror = "1"
 # `cli` feature provides `uniffi_bindgen_main()`, used by the `uniffi-bindgen`
 # binary wrapper (see [[bin]] above) to generate Swift bindings at build time.
 uniffi = { version = "0.31", features = ["cli"] }
-
-[features]
-# `zuko app` is part of the standard build. Its deps are pure Rust (no system
-# libs to link), so it compiles everywhere; the actual app code is
-# cfg(target_os = "linux"), so on macOS/iOS the feature is a no-op (the
-# `app` subcommand simply isn't compiled in). Build with
-# `--no-default-features` to strip it.
-default = ["gui-app"]
-# `zuko app` hosts one Wayland GUI app by spawning cage (headless + pixman, no
-# GPU) and acting as a wlr-screencopy + virtual-keyboard/pointer client over
-# its private socket. Feature-gated because it pulls the wayland-client stack
-# and needs cage + libxkbcommon at runtime (cage is bundled into the Linux
-# release tarball; see .github/workflows/release.yml). The CLI still exposes
-# `zuko app` and reports a clear build-feature error without this feature.
-gui-app = [
-    "dep:wayland-client",
-    "dep:wayland-protocols-wlr",
-    "dep:wayland-protocols-misc",
-    "dep:rustix",
-    "dep:memmap2",
-    "dep:base64",
-    "dep:png",
-]
 
 # Host/client-only deps — NOT compiled for iOS (the FFI build only needs
 # `code.rs` + `ffi.rs`, which are synchronous and pull in none of these).
@@ -116,13 +93,13 @@ libc = "0.2"
 # size" failure mode: zuko sizes cage from terminal pixels and updates the
 # output through wlr-output-management when the terminal is resized.
 [target.'cfg(target_os = "linux")'.dependencies]
-wayland-client = { version = "0.31", optional = true }
-wayland-protocols-wlr = { version = "0.3", features = ["client"], optional = true }
-wayland-protocols-misc = { version = "0.3", features = ["client"], optional = true }
-rustix = { version = "0.38", features = ["fs"], optional = true }
-memmap2 = { version = "0.9", optional = true }
-base64 = { version = "0.22", optional = true }
-png = { version = "0.18", optional = true }
+wayland-client = "0.31"
+wayland-protocols-wlr = { version = "0.3", features = ["client"] }
+wayland-protocols-misc = { version = "0.3", features = ["client"] }
+rustix = { version = "0.38", features = ["fs"] }
+memmap2 = "0.9"
+base64 = "0.22"
+png = "0.18"
 
 [dev-dependencies]
 tempfile = "3"

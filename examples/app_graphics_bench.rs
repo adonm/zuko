@@ -1,14 +1,7 @@
-#[cfg(not(feature = "gui-app"))]
-fn main() {
-    eprintln!("run with --features gui-app");
-}
-
-#[cfg(feature = "gui-app")]
 fn main() -> anyhow::Result<()> {
     bench::run()
 }
 
-#[cfg(feature = "gui-app")]
 mod bench {
     use std::time::Instant;
 

@@ -14,9 +14,8 @@ bespoke trimming, on purpose.
 
 ### `zuko app` (Linux only)
 
-`gui-app` (the `zuko app` backend) is a **default feature**, so every build
-includes it (it compiles to a no-op off Linux — the `app` subcommand simply
-isn't wired in on macOS). The **x86_64-linux** tarball additionally bundles
+`zuko app` is part of the normal Linux build (no feature split). It is not wired
+into non-Linux binaries. The **x86_64-linux** tarball additionally bundles
 **cage** + a few wlroots `.so`s in a `cage/` dir next to the `zuko` binary.
 `mise use` extracts both, so `zuko app` works with no extra setup — it spawns
 the bundled cage (`WLR_BACKENDS=headless WLR_RENDERER=pixman`, no GPU) and

@@ -30,7 +30,7 @@ open xtool/Zuko.xcworkspace
 
 Dependencies are resolved as Swift Packages:
 
-- [libghostty-spm](https://github.com/Lakr233/libghostty-spm) `~> 1.0` (products `GhosttyTerminal` + `GhosttyTheme`) — the terminal emulator + a 485-theme catalog. Wraps the libghostty static library; the app uses its host-managed I/O backend (`InMemoryTerminalSession`) so it stays sandbox-safe (no PTY spawn — all bytes flow through `IrohSession`).
+- [libghostty-spm](https://github.com/Lakr233/libghostty-spm) `~> 1.0` (products `GhosttyTerminal`, `GhosttyKit`, `GhosttyTheme`) — the terminal emulator, low-level mouse bridge, and a 485-theme catalog. Wraps the libghostty static library; the app uses its host-managed I/O backend (`InMemoryTerminalSession`) so it stays sandbox-safe (no PTY spawn — all bytes flow through `IrohSession`).
 - [iroh-ffi](https://github.com/n0-computer/iroh-ffi) `~> 1.0` (product `IrohLib`) — networking.
 
 iOS/iPadOS deployment target is **26.5** (matches iroh-ffi's binary floor).
@@ -49,9 +49,10 @@ Zuko/
     ThemeStore.swift        persisted terminal prefs: color theme, font size
                             (UserDefaults-backed)
   Net/
-    Wire.swift              length-prefixed framing (shared with host)
+    ClientIdentity.swift    Keychain-backed stable reattach token derivation
     IrohSession.swift       Iroh connect + framed read loop + serial write pump;
                             owns the InMemoryTerminalSession fed to GhosttyTerminal
+    IrohSessionPumps.swift  write/control-read pumps + connection-phase timeout
     TerminalInputFix.swift  software-keyboard byte delivery swizzle
   Views/
     RootView.swift
@@ -62,6 +63,11 @@ Zuko/
     TouchMouseInput.swift        tap/cursor-mode mouse click + scroll bridge
     ThemeBrowserView.swift       searchable list of all 485 catalog themes
   ```
+
+The length-prefixed wire framing lives in a separate dependency-free package,
+`ios/ZukoWire` (`Wire.swift` + `WireTests.swift`), so it can be unit-tested on
+Linux/CI (`cd ios/ZukoWire && swift test`) exactly like the Rust `src/wire.rs`.
+The app target depends on its `ZukoWire` product.
 
 ## Terminal controls
 
@@ -76,11 +82,14 @@ Zuko/
   btop.
 - The refresh icon sends a same-size resize to the host PTY, asking shells/TUIs
   to repaint without clearing zellij/tmux panes.
-- Transient Iroh/link failures auto-redial with bounded exponential backoff
-  while the terminal screen remains open. The app reuses the host's session
-  token, so short drops reattach the same PTY within the host's 5-minute lease.
-  Output while detached is discarded; use tmux/zellij/screen inside the session
-  for persistent processes across long disconnects or host restarts.
+- Transient Iroh/link failures auto-redial with bounded exponential backoff.
+  The app keeps a Keychain-backed per-install identity and derives a stable
+  host-scoped session token, so fresh launches and short drops reattach the same
+  live PTY while the host's 5-minute lease is alive. Output while detached is
+  discarded; use tmux/zellij/screen inside the session for persistent processes
+  across long disconnects or host restarts.
+- The app tries protocol `zuko/2` first and uses its optional control stream for
+  resize/ping traffic, falling back to `zuko/1` for older hosts.
 
 ## CI
 

@@ -59,6 +59,10 @@ let package = Package(
         // `scripts/build-ffi.sh` (cargo build --lib --release for each iOS
         // slice) and consumed via its binary target `ZukoRust.xcframework`.
         .package(path: "ZukoFFI"),
+        // The wire protocol (framing shared with `zuko host`), isolated into a
+        // dependency-free package so it can be unit-tested on Linux/CI exactly
+        // like the Rust `src/wire.rs`. See ZukoWire/Package.swift.
+        .package(path: "ZukoWire"),
     ],
     targets: [
         .target(
@@ -77,6 +81,7 @@ let package = Package(
                 .product(name: "GhosttyTheme", package: "libghostty-spm"),
                 .product(name: "IrohLib", package: "iroh-ffi"),
                 .product(name: "ZukoFFI", package: "ZukoFFI"),
+                .product(name: "ZukoWire", package: "ZukoWire"),
             ],
             // Legacy path — keeps the diff to one new file rather than
             // moving all of Zuko/Zuko/*.swift to Sources/Zuko/.

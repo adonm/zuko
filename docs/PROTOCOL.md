@@ -73,8 +73,10 @@ across QUIC packets; receivers must accumulate bytes and parse greedily (see
 1. **Client dials** the host's ticket (see [Ticket](#ticket)) on ALPN `zuko/2`,
    falling back to `zuko/1` if the host is older.
 2. **Client opens** the bidi stream and sends `ATTACH` with its last token and
-   current terminal size. First connection uses an all-zero token. Legacy
-   clients may send `RESIZE` instead, which always creates a fresh PTY. The
+   current terminal size. Clients with a stable local identity may derive a
+   non-zero first token from `(client secret, host id)`; otherwise first
+   connection uses an all-zero token. Legacy clients may send `RESIZE` instead,
+   which always creates a fresh PTY. The
    opener must write first for the host's `accept_bi` to resolve. A host should
    bound this handshake with a short timeout, clamp zero dimensions to at least
    `1×1`, and if a non-handshake frame arrives first, spawn at `80×24` but still
@@ -159,14 +161,17 @@ A minimal client, in any language with Iroh bindings (Rust `iroh`, Swift
    - window-size changes → `RESIZE` frames.
 6. Store the token from `ATTACHED`. End when `recv` closes or the connection
    drops; restore the terminal. If you auto-redial transient drops, reuse the
-   token so short disconnects reattach the same PTY.
+   token so short disconnects reattach the same PTY. For fresh-process PTY
+   stability, persist a client secret and derive a host-scoped non-zero initial
+   token before the first attach.
 
 Reference code:
 
 - **Rust:** [`src/wire.rs`](../src/wire.rs) (framing),
   [`src/client.rs`](../src/client.rs) (the connect loop),
   [`src/handoff.rs`](../src/handoff.rs) (the claim side of pairing).
-- **Swift:** [`ios/Zuko/Zuko/Net/Wire.swift`](../ios/Zuko/Zuko/Net/Wire.swift),
+- **Swift:** [`ios/ZukoWire/Sources/ZukoWire/Wire.swift`](../ios/ZukoWire/Sources/ZukoWire/Wire.swift)
+  (unit-tested in [`ios/ZukoWire/Tests`](../ios/ZukoWire/Tests/ZukoWireTests/WireTests.swift)),
   [`ios/Zuko/Zuko/Net/IrohSession.swift`](../ios/Zuko/Zuko/Net/IrohSession.swift).
 
 If your client needs a terminal emulator, [GhosttyTerminal](https://github.com/Lakr233/libghostty-spm)

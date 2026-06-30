@@ -133,14 +133,21 @@ xtool --version
 """
 
 [tasks.lint]
-description = "Run SwiftLint on the iOS Swift sources. Works on Linux (swiftlint-static, no SourceKit needed) and macOS (swiftlint from brew/mise). `mise install` brings the tool."
+description = "Run SwiftLint on the iOS Swift sources (app + ZukoWire). Works on Linux (swiftlint-static, no SourceKit needed) and macOS (swiftlint from brew/mise). `mise install` brings the tool."
+# Lint the whole `ios` tree so the ZukoWire package is covered too; the
+# generated ZukoFFI bindings and SwiftPM `.build` dirs are excluded in
+# .swiftlint.yml.
 run = """
 if command -v swiftlint-static >/dev/null 2>&1; then
-    swiftlint-static --config .swiftlint.yml ios/Zuko
+    swiftlint-static --config .swiftlint.yml ios
 else
-    swiftlint --config .swiftlint.yml ios/Zuko
+    swiftlint --config .swiftlint.yml ios
 fi
 """
+
+[tasks.test-ios-wire]
+description = "Run the ZukoWire wire-protocol Swift unit tests. Foundation-only, so it runs on Linux/CI just like the Rust `src/wire.rs` tests. Needs Swift (mise run setup-ios installs it on Linux)."
+run = "swift test --package-path ios/ZukoWire"
 
 [tasks.setup-ios-signing]
 description = "One-time Apple signing setup for the iOS TestFlight pipeline. Generates cert+profile material, walks you through the developer-portal dance, and pushes the 7 GH Actions secrets via `gh`. No Mac needed. See ios/DISTRIBUTION.md."

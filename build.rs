@@ -1,13 +1,13 @@
 // On atomic Linux hosts (uBlue/Bluefin, Fedora Silverblue, …) the -devel
 // symlinks `libpixman-1.so` / `libxkbcommon.so` are not installed next to the
-// runtime `*.so.0`, so the final link of `--features gui-app` fails with
+// runtime `*.so.0`, so the final link can fail with
 // `unable to find library -lpixman-1` / `-lxkbcommon`.
 //
 // The runtime objects are sufficient to link against (the dynamic loader
 // resolves the recorded SONAME at run time from the default search path), so
 // when a dev symlink is missing we create one in OUT_DIR pointing at the
 // runtime lib and add OUT_DIR to the native link search path. This lets
-// `cargo build/run --features gui-app` work on the host without setting
+// `cargo build/run` work on the host without setting
 // LIBRARY_PATH (or building inside the Flatpak SDK). Hosts that already ship
 // the dev packages are unaffected: the symlink is only created when the dev
 // file is absent, and an extra search path entry is harmless.
