@@ -1,8 +1,9 @@
 //! Wire protocol shared by the host and client (and the iOS app).
 //!
-//! One bidirectional Iroh stream, ALPN [`ALPN`] = `zuko/1`. Every message is
-//! length-prefixed so the frame types share an ordering and nothing leaks into
-//! the terminal as in-band escape sequences:
+//! ALPN [`ALPN_V1`] uses one bidirectional Iroh stream. ALPN [`ALPN_V2`] keeps
+//! the same frames but permits a second control stream for resize/ping traffic.
+//! Every message is length-prefixed so nothing leaks into the terminal as
+//! in-band escape sequences:
 //!
 //! ```text
 //! [type: u8][len: u16 big-endian][payload: `len` bytes]
@@ -28,8 +29,17 @@
 
 use anyhow::{Result, anyhow};
 
-/// ALPN used for every zuko stream.
-pub const ALPN: &[u8] = b"zuko/1";
+/// Original single-stream protocol ALPN.
+pub const ALPN_V1: &[u8] = b"zuko/1";
+/// Protocol v2 ALPN. v2 keeps v1 frame encoding but allows a second bidi
+/// control stream so resize/ping traffic does not queue behind terminal DATA.
+pub const ALPN_V2: &[u8] = b"zuko/2";
+/// Back-compat alias used by older call sites/tests.
+pub const ALPN: &[u8] = ALPN_V1;
+
+pub fn supported_alpns() -> Vec<Vec<u8>> {
+    vec![ALPN_V2.to_vec(), ALPN_V1.to_vec()]
+}
 
 pub const TYPE_DATA: u8 = 0x00;
 pub const TYPE_RESIZE: u8 = 0x01;

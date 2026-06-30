@@ -6,11 +6,10 @@ Linux/macOS box you want to reach, then attach a **client** from anywhere —
 `vim`, `htop`, tab completion, resize, Ctrl-C all work, because the host runs a
 real PTY.
 
-zuko is a small **wire protocol** and a **host daemon**. The clients are
-pluggable: the iOS app and the CLI are the first two, and Android / a Linux GUI
-(relm4) / others can speak the same protocol. The spec is in
-[`docs/PROTOCOL.md`](docs/PROTOCOL.md); the client list lives in
-[`docs/CLIENTS.md`](docs/CLIENTS.md).
+zuko is a small **wire protocol** and a **host daemon**. The reference clients
+are the CLI and iOS/iPadOS app; Android and desktop GUI clients can speak the
+same protocol later. See [`docs/PROTOCOL.md`](docs/PROTOCOL.md),
+[`docs/CLIENTS.md`](docs/CLIENTS.md), and [`docs/DESIGN.md`](docs/DESIGN.md).
 
 ```mermaid
 flowchart TB
@@ -44,8 +43,8 @@ flowchart TB
 
 ## Clients
 
-Anyone can write a client — zuko is one bidirectional Iroh stream and a tiny
-frame format. See [`docs/CLIENTS.md`](docs/CLIENTS.md) for the full list and
+Anyone can write a client — zuko is Iroh streams and a tiny frame format. See
+[`docs/CLIENTS.md`](docs/CLIENTS.md) for the full list and
 [`docs/PROTOCOL.md`](docs/PROTOCOL.md) for the spec. Reference implementations:
 
 | Client | Status | Stack | Source |
@@ -101,6 +100,29 @@ zuko ls                            # list saved hosts
 zuko home                          # = zuko connect home (shorthand)
 ```
 
+### GUI app streaming
+
+On Linux, `zuko app <command-or-alias>` runs one Wayland GUI app under cage and
+streams it through Kitty graphics over the existing terminal session:
+
+```sh
+zuko app --list
+zuko app text-editor
+zuko app --graphics-codec auto --max-mbps 80 firefox
+```
+
+Defaults favor terminal interop: cage is sized to the terminal's pixel geometry,
+resizes are followed when cage exposes output-management, unchanged frames are
+skipped, and `--graphics-codec auto` uses PNG for UI/static frames or raw Kitty
+RGB for high-entropy video-like frames. Use `--scale <n>` to render below/above
+terminal resolution.
+
+Flatpak aliases are launched as Wayland-only cage children (`--socket=wayland`,
+no X11 fallback, `--die-with-parent`). Portals still belong to the host desktop
+session; for full desktop or portal-heavy workflows, run an RDP client inside
+`zuko app` (for example `zuko app remmina` or `zuko app krdc`) and connect it to
+GNOME/KDE's built-in RDP server.
+
 **iOS / iPadOS** — see [`ios/Zuko/README.md`](ios/Zuko/README.md) for building
 the universal app from source (Simulator or device).
 
@@ -122,8 +144,8 @@ ticket files are rejected so pairing fails closed if the host service is gone.
 
 ## Wire protocol
 
-One bidirectional Iroh stream, ALPN `zuko/1`. The full spec (frame types,
-capability flags, the ticket-handoff ALPN) is in
+Iroh streams with ALPN `zuko/2` and `zuko/1` fallback. The full spec (frame
+types, capability flags, the ticket-handoff ALPN) is in
 [`docs/PROTOCOL.md`](docs/PROTOCOL.md); reference impls in
 [`src/wire.rs`](src/wire.rs) (Rust) and
 [`ios/Zuko/Zuko/Net/Wire.swift`](ios/Zuko/Zuko/Net/Wire.swift) (Swift).
@@ -132,11 +154,11 @@ capability flags, the ticket-handoff ALPN) is in
 
 | Path | What |
 |------|------|
-| `src/`, `Cargo.toml` | The `zuko` crate — library + binary + uniffi staticlib. Binary covers host (`zuko host`), CLI client (`zuko connect`/`share`/`claim`), and service installer. `src/ffi.rs` exposes the Argon2id code-derivation for mobile clients. |
+| `src/`, `Cargo.toml` | The `zuko` crate — library + binary + uniffi staticlib. Binary covers host (`zuko host`), CLI client (`zuko connect`/`share`/`claim`), GUI app streaming (`zuko app`), and service installer. `src/ffi.rs` exposes the Argon2id code-derivation for mobile clients. |
 | `tests/e2e.rs` | End-to-end PTY harness — spawns host + client, exercises `share`→`claim` over the live Iroh network. |
 | `scripts/` | `zuko-host.sh` (foreground dev wrapper), `release.sh` (tag + push). |
 | `ios/Zuko/` | The iOS client (xtool + Swift + GhosttyTerminal, networking via IrohLib). |
-| `docs/` | [`HOST.md`](docs/HOST.md) (user guide), [`PROTOCOL.md`](docs/PROTOCOL.md) (wire spec), [`CLIENTS.md`](docs/CLIENTS.md) (client registry), [`RELEASING.md`](docs/RELEASING.md) (cutting releases). |
+| `docs/` | [`HOST.md`](docs/HOST.md) (user guide), [`PROTOCOL.md`](docs/PROTOCOL.md) (wire spec), [`DESIGN.md`](docs/DESIGN.md) (architecture/product rationale), [`CLIENTS.md`](docs/CLIENTS.md) (client registry), [`RELEASING.md`](docs/RELEASING.md) (cutting releases). |
 | `.github/workflows/` | CI: build+test `zuko` + iOS app; publish release binaries. |
 
 ## Requirements

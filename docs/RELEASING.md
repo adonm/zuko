@@ -12,6 +12,34 @@ The release binary is ~9.5 MB — built with boring dependencies and standard
 size-conscious cargo flags (`opt-level="z"`, fat LTO, stripped symbols); no
 bespoke trimming, on purpose.
 
+### `zuko app` (Linux only)
+
+`gui-app` (the `zuko app` backend) is a **default feature**, so every build
+includes it (it compiles to a no-op off Linux — the `app` subcommand simply
+isn't wired in on macOS). The **x86_64-linux** tarball additionally bundles
+**cage** + a few wlroots `.so`s in a `cage/` dir next to the `zuko` binary.
+`mise use` extracts both, so `zuko app` works with no extra setup — it spawns
+the bundled cage (`WLR_BACKENDS=headless WLR_RENDERER=pixman`, no GPU) and
+acts as a wlr-screencopy + virtual-keyboard/pointer client.
+
+How the bundle is produced (in `release.yml`): a `docker run fedora:latest`
+step installs `cage` (which pulls wlroots 0.20) and copies the binary + the
+uncommon libs (`libwlroots-0.20.so`, `libliftoff.so.0`, `libseat.so.1`,
+`libxcb-errors.so.0`) into `dist/cage/`. zuko finds it exe-relative
+(`<exe_dir>/cage/`), falling back to `~/.local/share/zuko/cage` or a `cage`
+on `PATH` / `$ZUKO_CAGE`.
+
+Runtime deps not bundled (present on any host that runs GUI apps, but worth
+knowing): `libwayland`, `libxkbcommon`, `libdrm`, `libxcb`, `libinput`,
+`libudev`, mesa's `libEGL`/`libGLESv2`. On a truly minimal/headless server you
+may need to install these. glibc portability tracks Fedora (recent) — if you
+need to support older distros, the follow-up is to build a stripped wlroots
+(`-Dbackends=headless -Drenderers=pixman -Dxwayland=disabled`) + cage from
+source against an older glibc, which shrinks the closure to ~5 libs.
+
+**Not yet bundled for aarch64-linux** (needs QEMU in CI); on aarch64,
+`zuko app` requires a `cage` on `PATH` until that's added.
+
 **Cutting a release** is one command — it commits any pending work, pushes
 the branch, creates an annotated `v*` tag, and pushes the tag (which fires
 [`release.yml`](../.github/workflows/release.yml)):

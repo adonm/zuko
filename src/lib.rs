@@ -111,9 +111,9 @@ pub struct HostArgs {
     pub cwd: Option<PathBuf>,
 }
 
-/// `zuko app` configuration: run one Wayland GUI app inside a terminal-backed
-/// kiosk compositor. Linux-only because the implementation uses Smithay/EGL and
-/// a Wayland server socket.
+/// `zuko app` configuration: run one Wayland GUI app inside a terminal by
+/// spawning cage (headless, software-rendered) and streaming its output as
+/// Kitty graphics. Linux-only — cage + wlr-screencopy are Linux/Wayland.
 #[cfg(target_os = "linux")]
 #[derive(clap::Args, Clone, Debug)]
 pub struct AppArgs {
@@ -127,10 +127,15 @@ pub struct AppArgs {
     pub dry_run: bool,
 
     /// Draw a generated Kitty graphics test pattern and exit. This does not
-    /// start Wayland, EGL, or the child app; use it first to prove terminal
+    /// start cage/Wayland or the child app; use it first to prove terminal
     /// graphics survive the local terminal / zuko PTY path.
     #[arg(long)]
     pub test_pattern: bool,
+
+    /// Check zuko app runtime capabilities (cage, Wayland protocols, terminal
+    /// geometry) and exit without entering TUI mode.
+    #[arg(long)]
+    pub doctor: bool,
 
     /// Let the child app write stdout/stderr to this terminal. Normal mode
     /// suppresses child logs so they do not corrupt the Kitty graphics stream.
@@ -142,26 +147,54 @@ pub struct AppArgs {
     #[arg(long)]
     pub no_sandbox: bool,
 
-    /// Maximum terminal frame ship rate. Rendering/damage can run faster; this
-    /// caps the expensive readback + Kitty output path.
-    #[arg(long, default_value_t = 16)]
+    /// Hide the pointer crosshair overlay. By default `zuko app` draws a small
+    /// inverted crosshair at the pointer position (the captured frames have no
+    /// compositor cursor of their own), so touch/imprecise clicks can be aimed.
+    #[arg(long)]
+    pub no_cursor: bool,
+
+    /// Maximum terminal frame ship rate. zuko adapts down when frames are
+    /// unchanged or encode/output is slower than this cap.
+    #[arg(long, default_value_t = 30)]
     pub fps: u16,
 
-    /// Scale the hosted app's logical output before rendering to the terminal.
+    /// Approximate max Kitty graphics bandwidth in Mbit/s. zuko adapts FPS down
+    /// when full-motion frames exceed this budget. 0 disables the bandwidth cap.
+    #[arg(long, default_value_t = 80.0)]
+    pub max_mbps: f64,
+
+    /// Kitty graphics payload codec. `auto` uses PNG for UI/static frames and
+    /// raw RGB for high-entropy video-like frames to avoid PNG CPU cost.
+    #[arg(long, value_enum, default_value_t = KittyGraphicsCodec::Auto)]
+    pub graphics_codec: KittyGraphicsCodec,
+
+    /// Scale multiplier for the hosted app output relative to terminal pixels.
+    /// Default 1.0 makes cage match the terminal pixel size.
     #[arg(long, default_value_t = 1.0)]
     pub scale: f32,
 
-    /// Force software rendering for apps that fail on EGL/GPU paths.
+    /// Force software rendering inside the child app (e.g. `MOZ_WEBRENDER=software`,
+    /// `LIBGL_ALWAYS_SOFTWARE=1`). Cage already renders headless with pixman; this
+    /// coaxes the child onto a software path too.
     #[arg(long)]
     pub software: bool,
 
     /// Child command and arguments. Put zuko app flags before the command; use
     /// `--` before child flags, e.g. `zuko app --fps 5 -- firefox --new-window`.
     #[arg(
-        required_unless_present_any = ["list", "test_pattern"],
+        required_unless_present_any = ["list", "test_pattern", "doctor"],
         trailing_var_arg = true,
         allow_hyphen_values = true,
         value_name = "COMMAND"
     )]
     pub command: Vec<String>,
+}
+
+#[cfg(target_os = "linux")]
+#[derive(clap::ValueEnum, Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum KittyGraphicsCodec {
+    #[default]
+    Auto,
+    Png,
+    Rgb,
 }

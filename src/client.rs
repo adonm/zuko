@@ -50,8 +50,9 @@ use tokio::io::AsyncWriteExt as _;
 use tokio::sync::mpsc;
 
 use crate::wire::{
-    ALPN, SESSION_TOKEN_LEN, SessionToken, TYPE_ATTACHED, TYPE_DATA, TYPE_PING, attach_frame,
-    decode_nonce, parse_attached, pong_frame, resize_frame, try_parse_frame,
+    ALPN_V1, ALPN_V2, SESSION_TOKEN_LEN, SessionToken, TYPE_ATTACHED, TYPE_DATA, TYPE_PING,
+    TYPE_PONG, TYPE_RESIZE, attach_frame, decode_nonce, parse_attached, pong_frame, resize_frame,
+    try_parse_frame,
 };
 
 /// Force-quit escape hatch: in raw mode Ctrl-C (0x03) is forwarded to the
@@ -105,10 +106,15 @@ pub async fn connect(ticket_str: &str) -> Result<()> {
     let size: Arc<AtomicU32> = Arc::new(AtomicU32::new(pack_size(cols, rows)));
 
     // Connect *before* entering raw mode so connect errors print to a normal,
-    // cooked terminal instead of a half-set-up raw one. Bind with the
-    // persistent client key so the node id is stable too.
+    // cooked terminal instead of a half-set-up raw one. Bind with an EPHEMERAL
+    // secret: a unique NodeId per process. The persistent identity used to be
+    // bound here too, but that gave every simultaneous `zuko connect` the SAME
+    // Iroh NodeId — Iroh couldn't tell the streams apart and reply routing
+    // cross-talked (duplicate/garbled output when running several clients at
+    // once). Reattach doesn't need a stable NodeId: the host keys sessions by
+    // the deterministic token derived above, not by NodeId.
     let endpoint = Endpoint::builder(presets::N0)
-        .secret_key(client_key)
+        .secret_key(iroh::SecretKey::generate())
         .bind()
         .await
         .context("bind local endpoint")?;
@@ -333,13 +339,21 @@ async fn run_one_connection(
     // may be down, roaming between relays, or the network briefly flaked.
     // `connect` consumes the EndpointAddr, so clone the borrowed handle —
     // dialing is cheap and we redo it on every reconnect.
-    let conn = match ctx.endpoint.connect(ctx.addr.clone(), ALPN).await {
-        Ok(c) => c,
-        Err(_) => return Ok(ConnOutcome::Dropped),
+    let (conn, protocol) = match connect_preferred(ctx.endpoint, ctx.addr).await {
+        Some(p) => p,
+        None => return Ok(ConnOutcome::Dropped),
     };
     let (mut send, mut recv) = match conn.open_bi().await {
         Ok(p) => p,
         Err(_) => return Ok(ConnOutcome::Dropped),
+    };
+    let mut control = if protocol == ALPN_V2 {
+        match conn.open_bi().await {
+            Ok((send, recv)) => Some((send, recv, Vec::with_capacity(1024), vec![0u8; 4096])),
+            Err(_) => None,
+        }
+    } else {
+        None
     };
 
     // Initial ATTACH — the current token (zero on first attach, the host's
@@ -370,7 +384,15 @@ async fn run_one_connection(
             // outbound: stdin + SIGWINCH frames -> send stream
             frame = frame_rx.recv() => match frame {
                 Some(bytes) => {
-                    if send.write_all(&bytes).await.is_err() {
+                    if protocol == ALPN_V2 && control_frame_type(&bytes).is_some() {
+                        if let Some((control_send, _, _, _)) = control.as_mut() {
+                            if control_send.write_all(&bytes).await.is_err() {
+                                return Ok(ConnOutcome::Dropped);
+                            }
+                        } else if send.write_all(&bytes).await.is_err() {
+                            return Ok(ConnOutcome::Dropped);
+                        }
+                    } else if send.write_all(&bytes).await.is_err() {
                         return Ok(ConnOutcome::Dropped);
                     }
                 }
@@ -404,8 +426,43 @@ async fn run_one_connection(
                 Ok(None) => return Ok(ConnOutcome::ShellExited),
                 Err(_) => return Ok(ConnOutcome::Dropped),
             },
+            read = async {
+                if let Some((_, control_recv, _, control_tmp)) = control.as_mut() {
+                    control_recv.read(control_tmp).await
+                } else {
+                    std::future::pending().await
+                }
+            }, if control.is_some() => match read {
+                Ok(Some(n)) => {
+                    if let Some((_, _, control_acc, control_tmp)) = control.as_mut() {
+                        control_acc.extend_from_slice(&control_tmp[..n]);
+                        process_buffered_frames(control_acc, token, ctx.stdout_seq, Some(ctx.frame_tx)).await?;
+                    }
+                }
+                Ok(None) => control = None,
+                Err(_) => return Ok(ConnOutcome::Dropped),
+            },
         }
     }
+}
+
+async fn connect_preferred(
+    endpoint: &Endpoint,
+    addr: &EndpointAddr,
+) -> Option<(iroh::endpoint::Connection, &'static [u8])> {
+    if let Ok(conn) = endpoint.connect(addr.clone(), ALPN_V2).await {
+        return Some((conn, ALPN_V2));
+    }
+    endpoint
+        .connect(addr.clone(), ALPN_V1)
+        .await
+        .ok()
+        .map(|conn| (conn, ALPN_V1))
+}
+
+fn control_frame_type(frame: &[u8]) -> Option<u8> {
+    let typ = *frame.first()?;
+    matches!(typ, TYPE_RESIZE | TYPE_PING | TYPE_PONG).then_some(typ)
 }
 
 /// Parse and act on every complete frame currently buffered in `acc`. DATA
@@ -640,6 +697,24 @@ mod tests {
     fn ignores_non_ping_control_frames() {
         assert!(control_reply_frame(crate::wire::TYPE_PONG, &[]).is_none());
         assert!(control_reply_frame(0xFF, &[]).is_none());
+    }
+
+    #[test]
+    fn v2_routes_resize_and_ping_to_control_stream() {
+        assert_eq!(
+            control_frame_type(&crate::wire::resize_frame(80, 24, 0, 0)),
+            Some(TYPE_RESIZE)
+        );
+        assert_eq!(
+            control_frame_type(&crate::wire::ping_frame(1)),
+            Some(TYPE_PING)
+        );
+        assert_eq!(
+            control_frame_type(&crate::wire::pong_frame(1)),
+            Some(TYPE_PONG)
+        );
+        assert_eq!(control_frame_type(&crate::wire::data_frame(b"x")), None);
+        assert_eq!(control_frame_type(&[]), None);
     }
 
     // ── auto-resume backoff ──

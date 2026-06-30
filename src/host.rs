@@ -31,8 +31,8 @@ use crate::config_dir;
 use crate::secret;
 use crate::ticket_file::write_current_ticket;
 use crate::wire::{
-    self, ALPN, SESSION_TOKEN_LEN, SessionToken, TYPE_ATTACH, TYPE_DATA, TYPE_PING, TYPE_RESIZE,
-    decode_nonce, empty_session_token, parse_attach, try_parse_frame,
+    self, ALPN, ALPN_V2, SESSION_TOKEN_LEN, SessionToken, TYPE_ATTACH, TYPE_DATA, TYPE_PING,
+    TYPE_RESIZE, decode_nonce, empty_session_token, parse_attach, supported_alpns, try_parse_frame,
 };
 
 /// Per-direction capacity of the bounded channels that connect the network
@@ -127,16 +127,44 @@ impl Session {
     }
 
     fn send_output(&self, bytes: Vec<u8>) {
-        let tx = self
-            .attachment
-            .lock()
-            .expect("attachment mutex poisoned")
-            .as_ref()
-            .map(|a| a.tx.clone());
-        if let Some(tx) = tx {
-            // No replay buffer: if the client is gone or badly stalled, drop
-            // output and let the app/user request a redraw after reattach.
-            let _ = tx.try_send(OutItem::Pty(bytes));
+        // Called from the blocking PTY reader thread, not from the Tokio
+        // runtime. While a client is attached, do NOT drop output just because
+        // the network writer channel is full: that corrupts terminal state.
+        // Instead, block this reader thread so the kernel PTY buffer applies
+        // natural backpressure to the shell. When detached, output is still
+        // discarded by design (no replay buffer).
+        let mut bytes = bytes;
+        loop {
+            let attachment = self
+                .attachment
+                .lock()
+                .expect("attachment mutex poisoned")
+                .as_ref()
+                .map(|a| (a.id, a.tx.clone()));
+            let Some((id, tx)) = attachment else {
+                return;
+            };
+            match tx.blocking_send(OutItem::Pty(bytes)) {
+                Ok(()) => return,
+                Err(err) => {
+                    let OutItem::Pty(returned) = err.0 else {
+                        return;
+                    };
+                    bytes = returned;
+                    let still_current = self
+                        .attachment
+                        .lock()
+                        .expect("attachment mutex poisoned")
+                        .as_ref()
+                        .is_some_and(|a| a.id == id);
+                    if still_current {
+                        return;
+                    }
+                    // Attachment changed while we were blocked; retry the same
+                    // chunk against the new attachment so takeover/reconnect
+                    // does not unnecessarily lose PTY bytes.
+                }
+            }
         }
     }
 
@@ -214,7 +242,7 @@ pub async fn run(args: HostArgs) -> Result<()> {
         // ALPN negotiation succeeds). Without this, `Endpoint::accept` filters
         // out every connection and clients fail with "peer doesn't support any
         // known protocol".
-        .alpns(vec![ALPN.to_vec()])
+        .alpns(supported_alpns())
         .bind()
         .await
         .context("bind endpoint")?;
@@ -298,6 +326,7 @@ async fn serve(
         .await
         .context("timed out completing connection")?
         .context("complete connection")?;
+    let is_v2 = conn.alpn() == ALPN_V2;
     let (mut send, mut recv) = tokio::time::timeout(HANDSHAKE_TIMEOUT, conn.accept_bi())
         .await
         .context("timed out waiting for bidi stream")?
@@ -340,6 +369,22 @@ async fn serve(
     let pong_tx = out_tx.clone();
     let attach_id = session.attach(out_tx);
     let token = session.token;
+
+    let mut control_task = if is_v2 {
+        let conn = conn.clone();
+        let session_for_control = session.clone();
+        Some(tokio::spawn(async move {
+            while let Ok((mut send, mut recv)) = conn.accept_bi().await {
+                if !handle_control_stream(&mut send, &mut recv, &session_for_control, attach_id)
+                    .await
+                {
+                    break;
+                }
+            }
+        }))
+    } else {
+        None
+    };
 
     // PTY output (via the out channel) + control frames -> network.
     // Ends when all senders are dropped (reader thread done) or the send
@@ -397,6 +442,9 @@ async fn serve(
         _ = &mut net_to_pty => pty_to_net.abort(),
         _ = &mut pty_to_net => net_to_pty.abort(),
     }
+    if let Some(task) = &mut control_task {
+        task.abort();
+    }
 
     if session.exited.load(Ordering::Relaxed) {
         sessions.lock().await.remove(&session.token);
@@ -405,6 +453,51 @@ async fn serve(
         schedule_reap(sessions, session, generation);
     }
     Ok(())
+}
+
+async fn handle_control_stream(
+    send: &mut iroh::endpoint::SendStream,
+    recv: &mut iroh::endpoint::RecvStream,
+    session: &Session,
+    attach_id: u64,
+) -> bool {
+    let mut acc = Vec::with_capacity(1024);
+    let mut tmp = vec![0u8; 4096];
+    loop {
+        while let Some(frame) = try_parse_frame(&mut acc) {
+            if !session.active(attach_id) {
+                return false;
+            }
+            match frame.typ {
+                TYPE_RESIZE if frame.payload.len() == 8 => {
+                    let cols = u16::from_be_bytes([frame.payload[0], frame.payload[1]]);
+                    let rows = u16::from_be_bytes([frame.payload[2], frame.payload[3]]);
+                    let pixel_width = u16::from_be_bytes([frame.payload[4], frame.payload[5]]);
+                    let pixel_height = u16::from_be_bytes([frame.payload[6], frame.payload[7]]);
+                    let _ = session
+                        .pty_tx
+                        .send(PtyCmd::Resize(TermSize {
+                            cols: cols.max(1),
+                            rows: rows.max(1),
+                            pixel_width,
+                            pixel_height,
+                        }))
+                        .await;
+                }
+                TYPE_PING => {
+                    let nonce = decode_nonce(&frame.payload);
+                    if send.write_all(&wire::pong_frame(nonce)).await.is_err() {
+                        return false;
+                    }
+                }
+                _ => {}
+            }
+        }
+        match recv.read(&mut tmp).await {
+            Ok(Some(n)) => acc.extend_from_slice(&tmp[..n]),
+            Ok(None) | Err(_) => return true,
+        }
+    }
 }
 
 /// Handle one frame from the client. Returns `false` if the session's PTY
