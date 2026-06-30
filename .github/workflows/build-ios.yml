@@ -74,6 +74,12 @@ jobs:
       - name: Install local iOS tooling (Swift + xtool)
         run: mise run setup-ios
 
+      - name: ZukoWire unit tests
+        # Foundation-only wire-protocol package — runs on Linux like the Rust
+        # wire tests, guarding the framing contract against drift. Cheap; fails
+        # fast before the expensive FFI + xtool build.
+        run: mise run test-ios-wire
+
       - name: Cache xtool Darwin SDK
         uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
         with:

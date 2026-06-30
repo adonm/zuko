@@ -1,6 +1,7 @@
 import Foundation
 import GhosttyTerminal
 import IrohLib
+import ZukoWire
 
 enum SessionStatus: Equatable {
     case idle
@@ -10,17 +11,6 @@ enum SessionStatus: Equatable {
     case disconnected(String)
     case failed(String)
 }
-
-private struct ConnectionPhaseTimeout: LocalizedError, Sendable {
-    let phase: String
-    let seconds: Int
-
-    var errorDescription: String? {
-        "\(phase) timed out after \(seconds)s"
-    }
-}
-
-private let connectionPhaseTimeoutNanoseconds: UInt64 = 20_000_000_000
 
 /// Owns a single Iroh connection to a host and bridges it to GhosttyTerminal's
 /// host-managed I/O backend.
@@ -40,21 +30,27 @@ private let connectionPhaseTimeoutNanoseconds: UInt64 = 20_000_000_000
 /// ## Reconnect policy
 ///
 /// The iOS client keeps redialing transient Iroh/link failures while the
-/// terminal screen is open, with bounded exponential backoff. It sends the
-/// host-issued session token on each reconnect, so short drops reattach the
-/// same PTY while the host lease is alive. Clean EOF (remote shell exited) is
-/// not retried. Users running long-lived work should still do so inside
-/// `tmux`/`zellij`/`screen` on the host for long disconnects/host restarts.
+/// terminal screen is open, with bounded exponential backoff. A stable
+/// host-scoped token lets fresh launches land on the same live PTY; once the
+/// host replies with ATTACHED, that host-issued token is reused for short drops
+/// while the detached lease is alive. Clean EOF (remote shell exited) is not
+/// retried. Users running long-lived work should still do so inside `tmux`/
+/// `zellij`/`screen` on the host for long disconnects/host restarts.
 @MainActor
 final class IrohSession: ObservableObject {
-    static let alpn = Data("zuko/1".utf8)
+    private enum ProtocolVersion: String {
+        case v1 = "zuko/1"
+        case v2 = "zuko/2"
+
+        var alpn: Data { Data(rawValue.utf8) }
+    }
 
     /// Bound on the outbound keystroke/resize queue. With a healthy network
     /// this never fills — frames are tiny and `send.writeAll` drains them
     /// immediately — it's an OOM safety net. `.bufferingOldest` preserves the
     /// head of any in-flight input and drops new keystrokes under pressure
     /// rather than blocking the main actor.
-    private static let outboundFrameCap = 256
+    static let outboundFrameCap = 256
     private static let reconnectBaseDelay: UInt64 = 1_000_000_000
     private static let reconnectMaxDelay: UInt64 = 15_000_000_000
 
@@ -103,22 +99,29 @@ final class IrohSession: ObservableObject {
     private var connection: IrohLib.Connection?
 
     private var runTask: Task<Void, Never>?
-    private var writeContinuation: AsyncStream<Data>.Continuation?
+    var controlReadTask: Task<Void, Never>?
+    var writeContinuation: AsyncStream<Data>.Continuation?
 
     /// Tracks whether `disconnect()` was called, so the task's cancellation
     /// handler can tell an intentional disconnect (we set this, then cancel)
     /// apart from an external cancellation.
     private var disconnectRequested = false
 
+    /// The ticket from the most recent `connect(ticket:)`, kept so
+    /// `foregrounded()` can redial after the app was suspended without the
+    /// view having to re-supply it.
+    private var lastTicket: String?
+
     /// Bumped when GhosttyTerminal reports a new grid size; read by the
     /// connect path so the initial RESIZE carries the current size. Packed as
     /// cols<<16 | rows.
     private var packedSize: UInt32 = (80 << 16) | 24
 
-    /// Host-issued 16-byte session token. Zero means "start a fresh PTY";
-    /// non-zero asks the host to reattach the still-leased PTY after a short
-    /// mobile link drop. The host may reply with a different token if the lease
-    /// expired, which we accept.
+    /// 16-byte session token. Starts as a stable token derived from this app
+    /// install + host id (or zero if Keychain is unavailable), then is updated
+    /// from ATTACHED. Zero means "start a fresh PTY"; non-zero asks the host to
+    /// create-or-reattach that token's PTY. The host may reply with a different
+    /// token if the lease expired, which we accept.
     private var sessionToken = Data(repeating: 0, count: Wire.sessionTokenLength)
 
     /// Connect to a host and keep reconnecting transient link failures until
@@ -130,6 +133,7 @@ final class IrohSession: ObservableObject {
         status = .connecting
         runTask?.cancel()
         let cleaned = ticket.trimmingCharacters(in: .whitespacesAndNewlines)
+        lastTicket = cleaned
         runTask = Task { [weak self] in
             guard let self else { return }
             await self.runConnectionLoop(ticket: cleaned)
@@ -143,6 +147,8 @@ final class IrohSession: ObservableObject {
         disconnectRequested = true
         LogCapture.shared.log(.info, category: "net", "disconnect requested")
         runTask?.cancel()
+        controlReadTask?.cancel()
+        controlReadTask = nil
         writeContinuation?.finish()
         writeContinuation = nil
         let ep = endpoint
@@ -178,10 +184,36 @@ final class IrohSession: ObservableObject {
         enqueueResize(cols: cols, rows: rows)
     }
 
+    /// Recover when the app returns to the foreground. iOS freezes our tasks
+    /// while suspended and the OS usually tears down the QUIC link, so a
+    /// session that still *looks* connected is often talking to a dead path.
+    ///
+    /// - `.connected`: nudge a repaint. The RESIZE rides the write pump; if the
+    ///   link is dead the pump's `writeAll` fails and the (now-resumed) read
+    ///   loop errors, so the run loop redials. If the link is fine, the host
+    ///   just re-emits the current screen — cheap and idempotent.
+    /// - `.idle`/`.disconnected`/`.failed`: redial now via `connect` (a no-op
+    ///   guard while already `.connecting`/`.reconnecting`, where the existing
+    ///   backoff loop is already retrying).
+    ///
+    /// Only calls already-safe, guarded entry points so there's no new
+    /// concurrency to reason about on the lifecycle path.
+    func foregrounded() {
+        LogCapture.shared.log(.info, category: "net", "app foregrounded")
+        if case .connected = status {
+            requestRedraw()
+            return
+        }
+        if let ticket = lastTicket {
+            connect(ticket: ticket)
+        }
+    }
+
     // MARK: - Connection
 
     /// Parse the ticket once, bind one local Iroh endpoint for this terminal
-    /// screen, then redial transient failures with bounded exponential backoff.
+    /// screen, derive this install's stable host-scoped reattach token, then
+    /// redial transient failures with bounded exponential backoff.
     /// Reusing the endpoint keeps relay/NAT state warm across attempts and
     /// avoids churning local identities; each successful stream still creates a
     /// fresh host PTY.
@@ -190,6 +222,20 @@ final class IrohSession: ObservableObject {
         let ep: Endpoint
         do {
             endpointTicket = try EndpointTicket.fromString(str: ticket)
+            do {
+                sessionToken = try ClientIdentity.sessionToken(for: endpointTicket)
+            } catch {
+                // Keychain can be unavailable immediately after reboot/lock.
+                // Keep the terminal usable by falling back to the all-zero
+                // "fresh PTY" token; short in-screen reconnects still reuse
+                // the host-issued token once ATTACHED arrives.
+                sessionToken = Data(repeating: 0, count: Wire.sessionTokenLength)
+                LogCapture.shared.log(
+                    .warn,
+                    category: "net",
+                    "client identity unavailable: \(error.localizedDescription)"
+                )
+            }
             ep = try await Endpoint.bind(options: EndpointOptions(preset: presetN0()))
             endpoint = ep
         } catch {
@@ -215,7 +261,11 @@ final class IrohSession: ObservableObject {
                 reportCancellationIfNeeded()
                 return
             } catch {
-                LogCapture.shared.log(.warn, category: "net", "connection \(attempt == 0 ? "failed" : "dropped"): \(error.localizedDescription)")
+                LogCapture.shared.log(
+                    .warn,
+                    category: "net",
+                    "connection \(attempt == 0 ? "failed" : "dropped"): \(error.localizedDescription)"
+                )
                 attempt += 1
                 if await waitBeforeReconnect(after: error, attempt: attempt) == false {
                     return
@@ -257,8 +307,7 @@ final class IrohSession: ObservableObject {
         }
     }
 
-    /// Dial, send the initial RESIZE (v0.6 handshake — also tells the host
-    /// the terminal size before the first byte of input flows), and pump bytes
+    /// Dial, send the initial ATTACH (including terminal size), and pump bytes
     /// both ways until EOF (clean shell exit) or a thrown link error.
     private func runOneConnection(
         endpoint: Endpoint,
@@ -269,17 +318,22 @@ final class IrohSession: ObservableObject {
             // Stall boundary: the gap between this "dialing" line and the
             // "connected" one below shows where iroh is stuck (relay/NAT).
             LogCapture.shared.log(.info, category: "net", "dialing host")
-            let alpn = Self.alpn
-            let conn = try await Self.withConnectionTimeout(phase: "dial host") {
-                try await endpoint.connect(addr: addr, alpn: alpn)
-            }
+            let (conn, protocolVersion) = try await connectPreferred(endpoint: endpoint, addr: addr)
             connection = conn
-            LogCapture.shared.log(.info, category: "net", "connected — opening stream")
+            LogCapture.shared.log(
+                .info,
+                category: "net",
+                "connected via \(protocolVersion.rawValue) — opening stream"
+            )
             let bi = try await Self.withConnectionTimeout(phase: "open stream") {
                 try await conn.openBi()
             }
             let send = bi.send()
             let recv = bi.recv()
+            let (controlSend, controlRecv) = await openControlStreamIfAvailable(
+                conn: conn,
+                protocolVersion: protocolVersion
+            )
             LogCapture.shared.log(.info, category: "net", "stream open — sending attach")
 
             // Initial ATTACH — tells the host the grid size and the last
@@ -294,8 +348,13 @@ final class IrohSession: ObservableObject {
             }
             LogCapture.shared.log(.info, category: "net", "attach sent")
 
-            // Start the write pump (detached, owns `send` — see its docs).
-            startWritePump(send: send)
+            if let controlRecv {
+                startControlReadPump(recv: controlRecv)
+            }
+
+            // Start the write pump (detached, owns `send` and, for v2, the
+            // optional `controlSend` — see its docs).
+            startWritePump(send: send, controlSend: controlSend)
 
             status = .connected
 
@@ -306,12 +365,59 @@ final class IrohSession: ObservableObject {
 
             writeContinuation?.finish()
             writeContinuation = nil
+            controlReadTask?.cancel()
+            controlReadTask = nil
             connection = nil
         } catch {
             writeContinuation?.finish()
             writeContinuation = nil
+            controlReadTask?.cancel()
+            controlReadTask = nil
             connection = nil
             throw error
+        }
+    }
+
+    private func connectPreferred(
+        endpoint: Endpoint,
+        addr: EndpointAddr
+    ) async throws -> (IrohLib.Connection, ProtocolVersion) {
+        do {
+            let conn = try await Self.withConnectionTimeout(phase: "dial host zuko/2") {
+                try await endpoint.connect(addr: addr, alpn: ProtocolVersion.v2.alpn)
+            }
+            return (conn, .v2)
+        } catch {
+            LogCapture.shared.log(
+                .info,
+                category: "net",
+                "zuko/2 unavailable; falling back to zuko/1: \(error.localizedDescription)"
+            )
+            let conn = try await Self.withConnectionTimeout(phase: "dial host zuko/1") {
+                try await endpoint.connect(addr: addr, alpn: ProtocolVersion.v1.alpn)
+            }
+            return (conn, .v1)
+        }
+    }
+
+    private func openControlStreamIfAvailable(
+        conn: IrohLib.Connection,
+        protocolVersion: ProtocolVersion
+    ) async -> (SendStream?, RecvStream?) {
+        guard protocolVersion == .v2 else { return (nil, nil) }
+        do {
+            let controlBi = try await Self.withConnectionTimeout(phase: "open control stream") {
+                try await conn.openBi()
+            }
+            LogCapture.shared.log(.info, category: "net", "control stream open")
+            return (controlBi.send(), controlBi.recv())
+        } catch {
+            LogCapture.shared.log(
+                .warn,
+                category: "net",
+                "control stream unavailable; using data stream for control: \(error.localizedDescription)"
+            )
+            return (nil, nil)
         }
     }
 
@@ -326,122 +432,40 @@ final class IrohSession: ObservableObject {
         return min(delay, Self.reconnectMaxDelay)
     }
 
-    private static func withConnectionTimeout<T: Sendable>(
-        phase: String,
-        operation: @escaping @Sendable () async throws -> T
-    ) async throws -> T {
-        try await withThrowingTaskGroup(of: T.self) { group in
-            group.addTask(priority: .userInitiated) {
-                try await operation()
-            }
-            group.addTask {
-                try await Task.sleep(nanoseconds: connectionPhaseTimeoutNanoseconds)
-                throw ConnectionPhaseTimeout(
-                    phase: phase,
-                    seconds: Int(connectionPhaseTimeoutNanoseconds / 1_000_000_000)
-                )
-            }
-            defer { group.cancelAll() }
-            guard let result = try await group.next() else {
-                throw CancellationError()
-            }
-            return result
+    /// Consume the primary stream until EOF (host closed → shell exited) or a
+    /// link error. The blocking read + framing runs off the main actor (see
+    /// `Self.frameStream`); only `handleInboundFrame` — which touches the
+    /// libghostty surface and session state — runs here on the main actor.
+    /// Returning/throwing drives the reconnect loop exactly as before.
+    private func readLoop(recv: RecvStream) async throws {
+        for try await frame in Self.frameStream(recv: recv) {
+            handleInboundFrame(frame)
         }
     }
 
-    private func readLoop(recv: RecvStream) async throws {
-        var buffer = Data()
-        while !Task.isCancelled {
-            let chunk: Data
-            do {
-                chunk = try await recv.read(sizeLimit: 16 * 1024)
-            } catch {
-                throw error
+    func handleInboundFrame(_ frame: Wire.Frame) {
+        switch frame.type {
+        case Wire.data:
+            // Hand the raw PTY bytes to libghostty for ANSI parse + grid
+            // update. `receive(_:)` is lock-protected on the
+            // InMemoryTerminalSession.
+            inMemorySession.receive(Data(frame.payload))
+        case Wire.ping:
+            // App-level heartbeats are optional; reply on the serial write pump
+            // so the response stays framed with all other outbound data.
+            enqueuePong(frame.payload)
+        case Wire.attached:
+            if let token = Wire.parseAttached(frame.payload) {
+                sessionToken = token
+                LogCapture.shared.log(.info, category: "net", "host attached")
             }
-            if chunk.isEmpty {
-                // Recv EOF → the host closed the stream → shell exited.
-                return
-            }
-            buffer.append(chunk)
-            while let frame = Wire.parse(&buffer) {
-                switch frame.type {
-                case Wire.data:
-                    // Hand the raw PTY bytes to libghostty for ANSI parse +
-                    // grid update. `receive(_:)` is lock-protected on the
-                    // InMemoryTerminalSession.
-                    inMemorySession.receive(Data(frame.payload))
-                case Wire.ping:
-                    // v0.6 hosts don't initiate app-level heartbeats today,
-                    // but PING/PONG remains in the protocol for compatibility.
-                    // Reply on the serial write pump so the response stays
-                    // framed with all other outbound data.
-                    enqueuePong(frame.payload)
-                case Wire.attached:
-                    if let token = Wire.parseAttached(frame.payload) {
-                        sessionToken = token
-                        LogCapture.shared.log(.info, category: "net", "host attached")
-                    }
-                default:
-                    break // PONG, legacy HELLO/WELCOME, unknown: ignore
-                }
-            }
+        default:
+            break // PONG, legacy HELLO/WELCOME, unknown: ignore
         }
     }
 
     private func enqueuePong(_ payload: [UInt8]) {
         writeContinuation?.yield(Wire.encode(type: Wire.pong, payload: Data(payload)))
-    }
-
-    /// Single long-running consumer that writes frames one at a time. This
-    /// guarantees frames never interleave on the wire even when keystrokes and
-    /// resize events arrive back-to-back.
-    ///
-    /// Runs as a `Task.detached` **off the main actor** so output flood on the
-    /// read loop can't starve outbound keystrokes. The read loop renders via
-    /// `inMemorySession.receive` on the main actor (libghostty's ANSI parse +
-    /// grid update is synchronous), and a main-actor write pump would only get
-    /// scheduled in the gaps between those bursts — under dense output (`vim`
-    /// redraw, `yes`, `cat hugefile`) the gaps shrink and keystroke latency
-    /// spikes. Detached, the pump ships input on its own thread regardless of
-    /// how busy the main actor is with rendering.
-    ///
-    /// The pump is the sole owner/writer of `send` (Iroh's `SendStream` is
-    /// `Arc<Mutex<…>>`, held across each `await`, so this is race-free), and
-    /// it signals EOF itself when the loop ends — `disconnect` never touches
-    /// `send` directly.
-    private func startWritePump(send: SendStream) {
-        // `.bufferingOldest` caps the queue; `yield` returns `.dropped` when
-        // full, which we intentionally ignore — the link is stalling and will
-        // time out shortly, so dropping recent input beats growing memory or
-        // blocking GhosttyTerminal's surface callback.
-        //
-        // `makeStream(of:bufferingPolicy:)` (Swift 6) is used instead of
-        // `AsyncStream<Data>(.bufferingOldest(n)) { ... }` because the
-        // latter triggers an overload-resolution bug on Xcode 26's Swift 6
-        // compiler — the compiler resolves `.bufferingOldest` against
-        // `Data.Type` instead of `Continuation.BufferingPolicy`, regardless
-        // of explicit type annotations. `makeStream` takes the policy as a
-        // labeled argument, which sidesteps the issue.
-        let (stream, continuation) = AsyncStream.makeStream(
-            of: Data.self,
-            bufferingPolicy: .bufferingOldest(Self.outboundFrameCap)
-        )
-        writeContinuation = continuation
-        Task.detached(priority: .userInitiated) {
-            // `disconnect` signals shutdown via the continuation (`finish`) +
-            // `cancel`; the pump drains what's queued (or aborts on cancel /
-            // write error), then signals EOF to the host. No `self` capture:
-            // the pump only needs `send` + `stream`, both `Sendable`.
-            for await frame in stream {
-                if Task.isCancelled { break }
-                do {
-                    try await send.writeAll(buf: frame)
-                } catch {
-                    break
-                }
-            }
-            do { try await send.finish() } catch {}
-        }
     }
 
     private func unpackSize(_ packed: UInt32) -> (UInt16, UInt16) {

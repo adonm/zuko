@@ -31,6 +31,10 @@ packages:
   # build-ios CI step) + the uniffi-generated Swift bindings.
   ZukoFFI:
     path: ../ZukoFFI
+  # Wire protocol package (framing shared with `zuko host`), unit-tested on
+  # Linux/CI like the Rust `src/wire.rs`. See ../ZukoWire/Package.swift.
+  ZukoWire:
+    path: ../ZukoWire
 
 targets:
   Zuko:
@@ -53,7 +57,7 @@ targets:
         # strictly-increasing build number on every upload. Bump these
         # defaults when you cut a release so a fresh `mise run build-ios`
         # matches the binary version.
-        MARKETING_VERSION: "0.6.12"
+        MARKETING_VERSION: "0.7.2"
         CURRENT_PROJECT_VERSION: "1"
         # Universal iPhone + iPad app. App Store Connect validates the base
         # UISupportedInterfaceOrientations key for iPad multitasking, so both
@@ -81,16 +85,23 @@ targets:
         INFOPLIST_KEY_LSApplicationCategoryType: public.app-category.utilities
         INFOPLIST_KEY_NSLocalNetworkUsageDescription: "Zuko connects to your own hosts over the local network when they're nearby. No data leaves your devices except the terminal session to your host."
         INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents: YES
+        # Export compliance: only standard exempt crypto (iroh QUIC/TLS +
+        # Argon2id). Stops App Store Connect prompting for encryption docs on
+        # every upload. Mirrors ITSAppUsesNonExemptEncryption in Info.plist.
+        INFOPLIST_KEY_ITSAppUsesNonExemptEncryption: NO
         INFOPLIST_KEY_UIRequiresFullScreen: NO
         INFOPLIST_KEY_UILaunchScreen_Generation: YES
     dependencies:
       - package: libghostty-spm
         product: GhosttyTerminal
       - package: libghostty-spm
+        product: GhosttyKit
+      - package: libghostty-spm
         product: GhosttyTheme
       - package: iroh-ffi
         product: IrohLib
       - package: ZukoFFI
+      - package: ZukoWire
     postBuildScripts:
       - name: Patch framework MinimumOSVersion
         # iroh-ffi's binary XCFramework ships without MinimumOSVersion in its

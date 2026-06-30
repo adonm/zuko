@@ -45,6 +45,13 @@
     <array/>
     <key>UIApplicationSupportsIndirectInputEvents</key>
     <true/>
+    <!-- Export compliance: Zuko's only cryptography is standard transport
+         security (iroh's QUIC/TLS) and Argon2id pairing-key derivation — all
+         exempt. Declaring this here means App Store Connect doesn't prompt for
+         encryption documentation on every upload, and no annual self-
+         classification report is required. -->
+    <key>ITSAppUsesNonExemptEncryption</key>
+    <false/>
     <key>UIRequiredDeviceCapabilities</key>
     <array>
         <string>arm64</string>
