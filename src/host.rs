@@ -83,14 +83,12 @@ enum OutItem {
     /// An already-framed control frame (PONG replies to client PINGs) —
     /// written as-is.
     Frame(Vec<u8>),
-    /// PTY reader hit EOF (shell exited). Drain any earlier output, then finish
-    /// the send stream so the client exits instead of waiting for more input.
-    End,
 }
 
 struct Attachment {
     id: u64,
     tx: tokio::sync::mpsc::Sender<OutItem>,
+    cancel: tokio::sync::watch::Sender<bool>,
 }
 
 struct Session {
@@ -98,20 +96,25 @@ struct Session {
     pty_tx: tokio::sync::mpsc::Sender<PtyCmd>,
     child: Arc<std::sync::Mutex<Option<Box<dyn portable_pty::Child + Send + Sync>>>>,
     attachment: std::sync::Mutex<Option<Attachment>>,
+    exit_tx: tokio::sync::watch::Sender<bool>,
     next_attach_id: AtomicU64,
     lease_generation: AtomicU64,
     exited: AtomicBool,
 }
 
 impl Session {
-    fn attach(&self, tx: tokio::sync::mpsc::Sender<OutItem>) -> u64 {
+    fn attach(
+        &self,
+        tx: tokio::sync::mpsc::Sender<OutItem>,
+        cancel: tokio::sync::watch::Sender<bool>,
+    ) -> u64 {
         let id = self.next_attach_id.fetch_add(1, Ordering::Relaxed) + 1;
         let old = {
             let mut guard = self.attachment.lock().expect("attachment mutex poisoned");
-            guard.replace(Attachment { id, tx })
+            guard.replace(Attachment { id, tx, cancel })
         };
         if let Some(old) = old {
-            let _ = old.tx.try_send(OutItem::End);
+            let _ = old.cancel.send(true);
         }
         id
     }
@@ -170,15 +173,7 @@ impl Session {
 
     fn mark_exited(&self) {
         self.exited.store(true, Ordering::Relaxed);
-        let tx = self
-            .attachment
-            .lock()
-            .expect("attachment mutex poisoned")
-            .as_ref()
-            .map(|a| a.tx.clone());
-        if let Some(tx) = tx {
-            let _ = tx.try_send(OutItem::End);
-        }
+        let _ = self.exit_tx.send(true);
     }
 
     fn active(&self, id: u64) -> bool {
@@ -366,8 +361,10 @@ async fn serve(
     // Iroh/QUIC owns transport liveness. PING/PONG is just cheap peer
     // compatibility for clients that still send protocol control frames.
     let (out_tx, mut out_rx) = tokio::sync::mpsc::channel::<OutItem>(PUMP_CHANNEL_CAP);
+    let (cancel_tx, mut cancel_rx) = tokio::sync::watch::channel(false);
+    let mut exit_rx = session.exit_tx.subscribe();
     let pong_tx = out_tx.clone();
-    let attach_id = session.attach(out_tx);
+    let attach_id = session.attach(out_tx, cancel_tx);
     let token = session.token;
 
     let mut control_task = if is_v2 {
@@ -386,21 +383,41 @@ async fn serve(
         None
     };
 
-    // PTY output (via the out channel) + control frames -> network.
-    // Ends when all senders are dropped (reader thread done) or the send
-    // errors (connection dropped).
+    // PTY output (via the out channel) + control frames -> network. Attachment
+    // lifecycle uses watch channels, not best-effort queue sentinels: takeover
+    // cancels immediately even if this bounded data queue is full, and PTY EOF
+    // reliably closes the send stream after draining already-queued output.
     let mut pty_to_net = tokio::spawn(async move {
         if send.write_all(&wire::attached_frame(token)).await.is_err() {
             return;
         }
-        while let Some(item) = out_rx.recv().await {
-            let frame = match item {
-                OutItem::Pty(bytes) => wire::data_frame(&bytes),
-                OutItem::Frame(pre) => pre,
-                OutItem::End => break,
-            };
-            if send.write_all(&frame).await.is_err() {
-                break;
+        if *exit_rx.borrow() {
+            let _ = send.finish();
+            return;
+        }
+        loop {
+            tokio::select! {
+                item = out_rx.recv() => {
+                    let Some(item) = item else { break };
+                    if write_out_item(&mut send, item).await.is_err() {
+                        break;
+                    }
+                }
+                changed = cancel_rx.changed() => {
+                    if changed.is_err() || *cancel_rx.borrow() {
+                        break;
+                    }
+                }
+                changed = exit_rx.changed() => {
+                    if changed.is_err() || *exit_rx.borrow() {
+                        while let Ok(item) = out_rx.try_recv() {
+                            if write_out_item(&mut send, item).await.is_err() {
+                                break;
+                            }
+                        }
+                        break;
+                    }
+                }
             }
         }
         let _ = send.finish();
@@ -447,7 +464,7 @@ async fn serve(
     }
 
     if session.exited.load(Ordering::Relaxed) {
-        sessions.lock().await.remove(&session.token);
+        remove_session_if_same(&sessions, &session).await;
         session.kill();
     } else if let Some(generation) = session.detach(attach_id) {
         schedule_reap(sessions, session, generation);
@@ -498,6 +515,16 @@ async fn handle_control_stream(
             Ok(None) | Err(_) => return true,
         }
     }
+}
+
+async fn write_out_item(send: &mut iroh::endpoint::SendStream, item: OutItem) -> Result<()> {
+    let frame = match item {
+        OutItem::Pty(bytes) => wire::data_frame(&bytes),
+        OutItem::Frame(pre) => pre,
+    };
+    send.write_all(&frame)
+        .await
+        .context("write frame to client")
 }
 
 /// Handle one frame from the client. Returns `false` if the session's PTY
@@ -613,43 +640,47 @@ async fn get_or_create_session(
     cwd: Option<PathBuf>,
     size: TermSize,
 ) -> Result<Arc<Session>> {
-    if !empty_session_token(&requested_token)
-        && let Some(existing) = sessions.lock().await.get(&requested_token).cloned()
-        && !existing.exited.load(Ordering::Relaxed)
-    {
-        // Force the remote app to repaint on reattach. The kernel only emits
-        // SIGWINCH on an *actual* size change, so resizing straight to
-        // (cols, rows) is a no-op when the client reconnects at the same size
-        // — and a full-screen app (vim/htop/tmux) would keep showing a stale
-        // screen. Resize to a deliberately-different width then back to
-        // the real one: two SIGWINCHes, final state correct. The intermediate
-        // frame is superseded before it ships over the relay, so there's no
-        // visible flicker in practice.
-        let mut nudge = size;
-        nudge.cols = redraw_nudge_cols(size.cols);
-        let _ = existing.pty_tx.send(PtyCmd::Resize(nudge)).await;
-        let _ = existing.pty_tx.send(PtyCmd::Resize(size)).await;
-        return Ok(existing);
-    }
+    let (session, existed) = {
+        let mut guard = sessions.lock().await;
 
-    // Creating a new session: honor a client-proposed token when given so a
-    // client with a stable identity always lands on the same PTY (across
-    // reconnects and fresh `zuko <host>` invocations). Clients that send an
-    // all-zero token (legacy/first-run, or clients without a persistent key)
-    // get a fresh random one — unchanged behaviour.
-    //
-    // `requested_token` reaching here is guaranteed non-colliding in practice:
-    // it's derived from the client's 32-byte secret, and we only arrive when
-    // no live session holds it (the reuse branch above, or an exited session
-    // already removed from the registry by `serve`).
-    let token = if empty_session_token(&requested_token) {
-        fresh_session_token(sessions).await
-    } else {
-        requested_token
+        if !empty_session_token(&requested_token)
+            && let Some(existing) = guard.get(&requested_token).cloned()
+            && !existing.exited.load(Ordering::Relaxed)
+        {
+            (existing, true)
+        } else {
+            // Create while holding the registry lock so two simultaneous
+            // connects with the same deterministic token cannot both spawn a
+            // PTY and race to overwrite the registry entry. PTY spawn is a
+            // short synchronous boundary; no `.await` happens under this lock.
+            let token = if empty_session_token(&requested_token) {
+                fresh_session_token_in(&guard)
+            } else {
+                requested_token
+            };
+            let session = spawn_session(token, shell, shell_args, cwd, size)?;
+            guard.insert(token, session.clone());
+            (session, false)
+        }
     };
-    let session = spawn_session(token, shell, shell_args, cwd, size)?;
-    sessions.lock().await.insert(token, session.clone());
+
+    if existed {
+        nudge_redraw(&session, size).await;
+    }
     Ok(session)
+}
+
+async fn nudge_redraw(session: &Session, size: TermSize) {
+    // Force the remote app to repaint on reattach. The kernel only emits
+    // SIGWINCH on an *actual* size change, so resizing straight to (cols, rows)
+    // is a no-op when the client reconnects at the same size — and a
+    // full-screen app (vim/htop/tmux) would keep showing a stale screen. Resize
+    // to a deliberately-different width then back to the real one: two
+    // SIGWINCHes, final state correct.
+    let mut nudge = size;
+    nudge.cols = redraw_nudge_cols(size.cols);
+    let _ = session.pty_tx.send(PtyCmd::Resize(nudge)).await;
+    let _ = session.pty_tx.send(PtyCmd::Resize(size)).await;
 }
 
 /// A column count guaranteed to differ from `cols` (and stay ≥1), used to
@@ -663,7 +694,7 @@ const fn redraw_nudge_cols(cols: u16) -> u16 {
     }
 }
 
-async fn fresh_session_token(sessions: &SessionRegistry) -> SessionToken {
+fn fresh_session_token_in(sessions: &HashMap<SessionToken, Arc<Session>>) -> SessionToken {
     loop {
         let bytes = SecretKey::generate().to_bytes();
         let mut token = [0u8; SESSION_TOKEN_LEN];
@@ -671,7 +702,7 @@ async fn fresh_session_token(sessions: &SessionRegistry) -> SessionToken {
         if empty_session_token(&token) {
             continue;
         }
-        if !sessions.lock().await.contains_key(&token) {
+        if !sessions.contains_key(&token) {
             return token;
         }
     }
@@ -697,6 +728,7 @@ fn spawn_session(
         pty_tx,
         child,
         attachment: std::sync::Mutex::new(None),
+        exit_tx: tokio::sync::watch::channel(false).0,
         next_attach_id: AtomicU64::new(0),
         lease_generation: AtomicU64::new(0),
         exited: AtomicBool::new(false),
@@ -768,10 +800,20 @@ fn schedule_reap(sessions: SessionRegistry, session: Arc<Session>, generation: u
     tokio::spawn(async move {
         tokio::time::sleep(DETACHED_SESSION_TTL).await;
         if session.should_reap(generation) {
-            sessions.lock().await.remove(&session.token);
+            remove_session_if_same(&sessions, &session).await;
             session.kill();
         }
     });
+}
+
+async fn remove_session_if_same(sessions: &SessionRegistry, session: &Arc<Session>) {
+    let mut guard = sessions.lock().await;
+    if guard
+        .get(&session.token)
+        .is_some_and(|current| Arc::ptr_eq(current, session))
+    {
+        guard.remove(&session.token);
+    }
 }
 
 /// Read exactly one complete frame, blocking on the stream until one arrives.
