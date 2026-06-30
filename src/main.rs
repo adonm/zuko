@@ -23,7 +23,7 @@
 //! this file is just the CLI dispatcher. The library also builds an optional
 //! FFI surface (`--features ffi`) for mobile clients — see [`zuko::ffi`].
 //!
-//! ## Wire protocol (single bidirectional Iroh stream, ALPN `zuko/1`)
+//! ## Wire protocol (Iroh streams, ALPN `zuko/2` with `zuko/1` fallback)
 //!
 //! Every message is length-prefixed so the frame types share an ordering and
 //! nothing leaks into the terminal as in-band escape sequences:
@@ -31,10 +31,10 @@
 //! ```text
 //! [type: u8][len: u16 big-endian][payload: `len` bytes]
 //!   0x00 DATA    payload = raw terminal bytes (keystrokes up, PTY output down)
-//!   0x01 RESIZE  payload = [cols: u16 BE][rows: u16 BE]   (client -> host, also first frame)
+//!   0x01 RESIZE  payload = [cols][rows][pixel_width][pixel_height] u16 BE
 //!   0x04 PING    payload = [nonce: u64 BE]   (optional control/compat)
 //!   0x05 PONG    payload = [nonce: u64 BE]   (optional control/compat)
-//!   0x06 ATTACH  payload = [token: 16 bytes][cols: u16 BE][rows: u16 BE]
+//!   0x06 ATTACH  payload = [token: 16 bytes][cols][rows][pixel_width][pixel_height] u16 BE
 //!   0x07 ATTACHED payload = [token: 16 bytes]
 //! ```
 //!

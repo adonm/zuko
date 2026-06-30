@@ -1,30 +1,32 @@
 # zuko wire protocol
 
-zuko connects a **client** to a remote shell on a **host** over a single
-Iroh bidirectional stream. This document is the spec for client authors — the
+zuko connects a **client** to a remote shell on a **host** over Iroh QUIC
+streams. This document is the spec for client authors — the
 CLI (`src/`) and the iOS app (`ios/Zuko/`) are reference implementations.
 
 zuko is **not** an RPC or a terminal emulator protocol. It is deliberately
-tiny: one stream, two frame types that matter, raw bytes. The host runs a real
-PTY; the client renders it. Everything that works in a local terminal (`vim`,
+tiny: raw terminal bytes plus a few control frames. The host runs a real PTY;
+the client renders it. Everything that works in a local terminal (`vim`,
 `htop`, resize, signals) works because the bytes are passed through verbatim.
 
 ## Transport
 
 - **Backend:** [Iroh](https://www.iroh.computer/) — QUIC, dial-by-key,
   end-to-end encrypted, NAT traversal via public relays. No open ports.
-- **ALPN:** `zuko/1`.
-- **Stream:** the client opens exactly **one bidirectional stream**
-  (`open_bi`) after connecting. The session runs on that stream until either
-  side closes it.
+- **ALPN:** clients try `zuko/2` first and fall back to `zuko/1`.
+- **v1 stream:** the client opens exactly **one bidirectional stream**
+  (`open_bi`) after connecting. Data and control frames share it.
+- **v2 streams:** the first bidirectional stream is the data stream. The client
+  may open a second bidirectional control stream for `RESIZE`/`PING`; terminal
+  `DATA` stays on the data stream so control does not queue behind bulk output.
 
-The host accepts any connection advertising ALPN `zuko/1` and calls
-`accept_bi` to get the session stream.
+The host advertises both ALPNs. v1 peers keep the original one-stream behavior;
+v2 peers get the separate control stream foundation without changing frame
+encoding.
 
 ## Framing
 
-Every message on the stream is length-prefixed, so the frame types share an
-ordering and resize never interleaves with data on the wire:
+Every message on each stream is length-prefixed:
 
 ```
 [type: u8][len: u16 big-endian][payload: len bytes]
@@ -39,10 +41,10 @@ across QUIC packets; receivers must accumulate bytes and parse greedily (see
 | type | name | direction | payload |
 |------|------|-----------|---------|
 | `0x00` | `DATA` | both | raw terminal bytes |
-| `0x01` | `RESIZE` | client → host | `[cols: u16 BE][rows: u16 BE]` |
+| `0x01` | `RESIZE` | client → host | `[cols: u16 BE][rows: u16 BE][pixel_width: u16 BE][pixel_height: u16 BE]` |
 | `0x04` | `PING` | both | `[nonce: u64 BE]` (optional control/compat) |
 | `0x05` | `PONG` | both | `[nonce: u64 BE]` (optional control/compat) |
-| `0x06` | `ATTACH` | client → host | `[token: 16 bytes][cols: u16 BE][rows: u16 BE]` |
+| `0x06` | `ATTACH` | client → host | `[token: 16 bytes][cols: u16 BE][rows: u16 BE][pixel_width: u16 BE][pixel_height: u16 BE]` |
 | `0x07` | `ATTACHED` | host → client | `[token: 16 bytes]` |
 
 - **`DATA`** — client→host carries keystrokes; host→client carries PTY output.
@@ -50,9 +52,8 @@ across QUIC packets; receivers must accumulate bytes and parse greedily (see
   interpretation — a Ctrl-C is the byte `0x03`, a resize keystroke is whatever
   the terminal emulator sends.
 - **`RESIZE`** — tells the host to resize the PTY. May be sent any time the
-  client's window changes. **The first frame** the client sends after
-  `open_bi` must be a `RESIZE` carrying the initial size — that doubles as the
-  entire handshake (see [Connection lifecycle](#connection-lifecycle)).
+  client's window changes. Legacy clients may use `RESIZE` as the first frame;
+  current clients use `ATTACH` first so they can resume a leased PTY.
 - **`PING`/`PONG`** — optional control frames kept for compatibility. zuko does
   not require application heartbeats (Iroh/QUIC owns transport liveness), but
   peers should answer `PING` with `PONG` carrying the same nonce.
@@ -69,7 +70,8 @@ across QUIC packets; receivers must accumulate bytes and parse greedily (see
 
 ## Connection lifecycle
 
-1. **Client dials** the host's ticket (see [Ticket](#ticket)) on ALPN `zuko/1`.
+1. **Client dials** the host's ticket (see [Ticket](#ticket)) on ALPN `zuko/2`,
+   falling back to `zuko/1` if the host is older.
 2. **Client opens** the bidi stream and sends `ATTACH` with its last token and
    current terminal size. First connection uses an all-zero token. Legacy
    clients may send `RESIZE` instead, which always creates a fresh PTY. The
@@ -148,7 +150,8 @@ A minimal client, in any language with Iroh bindings (Rust `iroh`, Swift
    accept a short code from the user, derive the throwaway key, dial it, and
    read the real ticket off the uni stream.
 2. Parse the ticket → `EndpointAddr`.
-3. `Endpoint::builder(presets::N0).bind()`; `connect(addr, b"zuko/1")`.
+3. `Endpoint::builder(presets::N0).bind()`; connect on `zuko/2`, falling back
+   to `zuko/1` for older hosts.
 4. `open_bi()` → `(send, recv)`. Send initial `ATTACH` (or legacy `RESIZE`).
 5. Put the local terminal into raw mode. Pump:
    - keystrokes → `DATA` frames on `send`;
@@ -206,6 +209,29 @@ pasting during a brownout can't grow memory; it drops the impatient tail rather
 than block the UI. During reconnect backoff there is intentionally no input
 buffer — keystrokes typed while no stream exists are discarded instead of being
 replayed later into a possibly reattached shell.
+
+### GUI apps use terminal graphics first
+
+`zuko app` deliberately streams GUI frames through the existing terminal session
+using the Kitty graphics protocol. That keeps the baseline client "any terminal
+that supports the de-facto graphics/input escapes" instead of "a custom zuko GUI
+client". It also keeps Ghostty a primary target: the iOS app already embeds
+GhosttyTerminal, and desktop Ghostty/Kitty-compatible terminals can render the
+same stream without a second renderer.
+
+The terminal path may emit either Kitty PNG payloads (`f=100`) or raw RGB payloads
+(`f=24`). The default `--graphics-codec auto` keeps PNG for compressible UI and
+switches to raw RGB for high-entropy video-like frames to reduce CPU cost.
+Flatpak app aliases are launched Wayland-only under cage; portal-correct full
+desktop workflows should use an RDP client launched through `zuko app`.
+
+A future custom GUI/video protocol could be valuable as an optional native-client
+fast path: binary frames, damage rectangles or video codecs, explicit cursor /
+touch / clipboard capabilities, and separate QUIC flow control. But it should be
+additive. If it replaced Kitty graphics, zuko would lose interop with existing
+Kitty-compatible terminals and make desktop/Ghostty usage harder, not easier.
+
+The more complete product rationale is in [`DESIGN.md`](DESIGN.md).
 
 ### Why only a short lease, not full session replay
 

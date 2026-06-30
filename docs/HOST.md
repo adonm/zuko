@@ -15,6 +15,7 @@ zuko <code>            pair: fetch the host's ticket, save it, connect
 zuko claim <code>      the same, with flags (--as, --no-connect, --timeout)
 zuko connect <name>    attach a terminal to a saved host
 zuko <name>            shorthand for `zuko connect <name>`
+zuko app <command>     run one Wayland GUI app through Kitty graphics (Linux)
 zuko                   ask which saved host to connect to (TTY only)
 zuko ls                list saved hosts (by name)
 zuko rm <name>         remove a saved host
@@ -178,8 +179,9 @@ rm ~/.config/zuko/key
 
 ## Wire protocol
 
-The full spec is in [`PROTOCOL.md`](PROTOCOL.md) — ALPN `zuko/1` for sessions,
-`zuko/handoff/1` for the ticket handoff. Reference code:
+The full spec is in [`PROTOCOL.md`](PROTOCOL.md) — ALPN `zuko/2` with `zuko/1`
+fallback for sessions, `zuko/handoff/1` for the ticket handoff. Architecture
+rationale is in [`DESIGN.md`](DESIGN.md). Reference code:
 [`../src/wire.rs`](../src/wire.rs) (framing),
 [`../src/handoff.rs`](../src/handoff.rs) (handoff),
 [`../src/service.rs`](../src/service.rs) (service install/uninstall).

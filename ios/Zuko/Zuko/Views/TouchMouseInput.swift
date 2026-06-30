@@ -80,11 +80,23 @@ extension UITerminalView {
     /// TUI app's mouse mode expects (SGR for modern apps, legacy
     /// formats otherwise) — we don't have to care which.
     func zuko_sendMouseClick(at point: CGPoint) {
+        zuko_sendMouseButton(at: point, button: GHOSTTY_MOUSE_LEFT)
+    }
+
+    /// Send a right-button click (press + release) — the touch equivalent
+    /// of a long-press context menu. Delivered natively as SGR button 2,
+    /// so `zuko app`'s `handle_mouse` receives `MouseButton::Right` directly
+    /// (no Alt-click hack, no long-press fallback needed on the host side).
+    func zuko_sendRightClick(at point: CGPoint) {
+        zuko_sendMouseButton(at: point, button: GHOSTTY_MOUSE_RIGHT)
+    }
+
+    private func zuko_sendMouseButton(at point: CGPoint, button: ghostty_input_mouse_button_e) {
         guard let raw = zuko_rawSurface() else { return }
         let mods = ghostty_input_mods_e(rawValue: 0)
         ghostty_surface_mouse_pos(raw, Double(point.x), Double(point.y), mods)
-        ghostty_surface_mouse_button(raw, GHOSTTY_MOUSE_PRESS, GHOSTTY_MOUSE_LEFT, mods)
-        ghostty_surface_mouse_button(raw, GHOSTTY_MOUSE_RELEASE, GHOSTTY_MOUSE_LEFT, mods)
+        ghostty_surface_mouse_button(raw, GHOSTTY_MOUSE_PRESS, button, mods)
+        ghostty_surface_mouse_button(raw, GHOSTTY_MOUSE_RELEASE, button, mods)
     }
 
     /// Send a precision wheel-scroll delta at the given terminal point. This
@@ -144,6 +156,14 @@ final class InputView: UIView {
         target: self,
         action: #selector(handlePan(_:))
     )
+    private lazy var longPressGesture = UILongPressGestureRecognizer(
+        target: self,
+        action: #selector(handleLongPress(_:))
+    )
+    private lazy var twoFingerTapGesture = UITapGestureRecognizer(
+        target: self,
+        action: #selector(handleTwoFingerTap(_:))
+    )
     private weak var attachedTerminal: UITerminalView?
     private var tapModeEnabled: Bool
     private var accessoryKeysVisible: Bool
@@ -165,8 +185,12 @@ final class InputView: UIView {
         backgroundColor = .clear
         panGesture.allowedTouchTypes = [NSNumber(value: UITouch.TouchType.direct.rawValue)]
         panGesture.maximumNumberOfTouches = 1
+        longPressGesture.minimumPressDuration = 0.4
+        twoFingerTapGesture.numberOfTouchesRequired = 2
         addGestureRecognizer(tapGesture)
         addGestureRecognizer(panGesture)
+        addGestureRecognizer(longPressGesture)
+        addGestureRecognizer(twoFingerTapGesture)
         // In keyboard mode this representable must not win hit-testing, or
         // taps would stop focusing the terminal / showing the software
         // keyboard. Tap mode flips this on to swallow touches before
@@ -235,6 +259,25 @@ final class InputView: UIView {
         // converts pixels → cells using the current grid metrics.
         let location = gesture.location(in: terminal)
         terminal.zuko_sendMouseClick(at: location)
+    }
+
+    @objc private func handleLongPress(_ gesture: UILongPressGestureRecognizer) {
+        guard tapModeEnabled else { return }
+        guard gesture.state == .began else { return }
+        guard let terminal = attachedTerminal,
+              terminal.zuko_mouseCaptured()
+        else { return }
+        let location = gesture.location(in: terminal)
+        terminal.zuko_sendRightClick(at: location)
+    }
+
+    @objc private func handleTwoFingerTap(_ gesture: UITapGestureRecognizer) {
+        guard tapModeEnabled else { return }
+        guard let terminal = attachedTerminal,
+              terminal.zuko_mouseCaptured()
+        else { return }
+        let location = gesture.location(in: terminal)
+        terminal.zuko_sendRightClick(at: location)
     }
 
     @objc private func handlePan(_ gesture: UIPanGestureRecognizer) {

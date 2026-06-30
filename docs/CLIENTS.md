@@ -2,8 +2,8 @@
 
 zuko is **remote terminals over Iroh**: a [host daemon](../src/) and a
 [tiny wire protocol](PROTOCOL.md). Clients connect to a host and render its
-shell. Anyone can write one — the protocol is one Iroh stream and a handful of
-frame types.
+shell. Anyone can write one — the protocol is Iroh streams and a handful of
+frame types. Product/architecture rationale lives in [`DESIGN.md`](DESIGN.md).
 
 ## Status
 
@@ -38,14 +38,17 @@ Read [`PROTOCOL.md`](PROTOCOL.md) first — it's short. In brief:
    into an XCFramework (iOS) / AAR (Android); see [`ios/Zuko/`](../ios/Zuko)
    for the reference.
 2. Parse the host's `endpointa…` ticket.
-3. Connect over Iroh on ALPN `zuko/1`, open one bidi stream, and send `ATTACH`
-   as the **first frame** (`[last_token_or_zero][cols][rows]`). Iroh only
+3. Connect over Iroh on ALPN `zuko/2`, falling back to `zuko/1` for older
+   hosts. Open the data bidi stream and send `ATTACH` as the **first frame**
+   (`[last_token_or_zero][cols][rows][pixel_width][pixel_height]`). Iroh only
    surfaces a stream to the peer once the initiator sends data, so `ATTACH`
    doubles as the stream-opening write and the entire handshake. Legacy clients
    may send first-frame `RESIZE`, but that always starts a fresh PTY.
 4. Pump `[type:u8][len:u16 BE][payload]` frames (`0x00 DATA`, `0x01 RESIZE`)
-   between the stream and a terminal emulator: keystrokes → `DATA` → host →
-   PTY; PTY output → `DATA` → client → render; window-size changes → `RESIZE`.
+   between Iroh and a terminal emulator: keystrokes → `DATA` → host → PTY; PTY
+   output → `DATA` → client → render; window-size changes → `RESIZE`. On v2,
+   route `RESIZE`/`PING`/`PONG` over the optional control stream; keep terminal
+   `DATA` on the data stream.
 5. Store `ATTACHED`'s token. End when `recv` closes (host closed the stream →
    the shell exited) or errors (network drop). A client may auto-redial
    transient link errors with the token (the iOS client does); clean EOF should

@@ -7,7 +7,7 @@ use std::io::Write;
 use std::os::fd::{AsFd, OwnedFd};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, mpsc};
 use std::time::{Duration, Instant};
 use std::{env, fs};
 
@@ -27,6 +27,13 @@ use wayland_protocols_misc::zwp_virtual_keyboard_v1::client::{
     zwp_virtual_keyboard_manager_v1::{self, ZwpVirtualKeyboardManagerV1},
     zwp_virtual_keyboard_v1::{self, ZwpVirtualKeyboardV1},
 };
+use wayland_protocols_wlr::output_management::v1::client::{
+    zwlr_output_configuration_head_v1::{self, ZwlrOutputConfigurationHeadV1},
+    zwlr_output_configuration_v1::{self, ZwlrOutputConfigurationV1},
+    zwlr_output_head_v1::{self, ZwlrOutputHeadV1},
+    zwlr_output_manager_v1::{self, ZwlrOutputManagerV1},
+    zwlr_output_mode_v1::{self, ZwlrOutputModeV1},
+};
 use wayland_protocols_wlr::screencopy::v1::client::{
     zwlr_screencopy_frame_v1::{self, ZwlrScreencopyFrameV1},
     zwlr_screencopy_manager_v1::{self, ZwlrScreencopyManagerV1},
@@ -39,11 +46,11 @@ use wayland_protocols_wlr::virtual_pointer::v1::client::{
 // Reusable helpers from the parent (Kitty graphics, app discovery, terminal
 // guard). Child modules can reach the parent's private items.
 use super::{
-    DEFAULT_OUTPUT, Launch, TerminalModeGuard, encode_rgba_png, encode_test_pattern,
-    kitty_clear_screen, kitty_emit_png, print_discovered_apps, print_launch, resolve_launch,
-    validate_args,
+    DEFAULT_OUTPUT, KittyFramePayload, KittyGraphicsFormat, Launch, TerminalModeGuard,
+    encode_rgba_png, encode_rgba_rgb, encode_test_pattern_payload, kitty_clear_screen,
+    kitty_emit_frame, print_discovered_apps, print_launch, resolve_launch, validate_args,
 };
-use crate::AppArgs;
+use crate::{AppArgs, KittyGraphicsCodec};
 
 /// An XKB text keymap (us layout). cage's libxkbcommon parses this when we
 /// create the virtual keyboard. Embedded (not compiled at runtime) so zuko has
@@ -61,6 +68,45 @@ const SOCKET_WAIT: Duration = Duration::from_secs(5);
 /// cell-precision mouse (no sub-cell accuracy).
 const PIXEL_PROBE: Duration = Duration::from_millis(500);
 
+/// Left-click held this long (without moving) → right-click on release.
+/// Fallback for terminals that intercept right-click for their own menu.
+const LONG_PRESS_MS: u128 = 400;
+/// Max pointer drift (image-space units) during a press to still count as a
+/// "static" hold eligible for long-press → right-click.
+const LONG_PRESS_MOVE: i64 = 6;
+/// How long a terminal key tap stays pressed in the virtual Wayland keyboard.
+/// Must be long enough to avoid wlroots/client coalescing same-timestamp
+/// down+up, but short enough to stay below compositor/app key-repeat delays.
+const KEY_TAP: Duration = Duration::from_millis(25);
+/// Hard cap for adaptive cage output sizing. Higher resolutions explode PNG
+/// encode time and PTY bandwidth with little benefit inside a terminal.
+const MAX_OUTPUT_DIM: u32 = 4096;
+const MIN_OUTPUT_DIM: u32 = 160;
+const IDLE_FRAME_INTERVAL: Duration = Duration::from_millis(250);
+const FRAME_COST_MULTIPLIER: f64 = 1.25;
+const FRAME_PROFILE_SAMPLES: usize = 4096;
+const VIDEO_CHANGE_RATIO: f64 = 0.35;
+const HIGH_ENTROPY_DELTA: f64 = 48.0;
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct OutputSize {
+    width: u32,
+    height: u32,
+}
+
+impl OutputSize {
+    const DEFAULT: Self = Self {
+        width: DEFAULT_OUTPUT.0 as u32,
+        height: DEFAULT_OUTPUT.1 as u32,
+    };
+}
+
+impl Default for OutputSize {
+    fn default() -> Self {
+        Self::DEFAULT
+    }
+}
+
 pub fn run(args: AppArgs) -> Result<()> {
     let _ = tracing_subscriber::fmt()
         .with_writer(std::io::stderr)
@@ -76,15 +122,26 @@ pub fn run(args: AppArgs) -> Result<()> {
         let _terminal = TerminalModeGuard::enter().context("enter terminal app mode")?;
         let (w, h) = DEFAULT_OUTPUT;
         kitty_clear_screen().ok();
-        let png = encode_test_pattern(w as usize, h as usize)?;
+        let payload = encode_test_pattern_payload(w as usize, h as usize, args.graphics_codec)?;
         let placement = term_cell_size().map(|(c, r)| {
             compute_placement(u32::from(c), u32::from(r), None, (w as u32, h as u32))
         });
-        kitty_emit_png(w as u32, h as u32, &png, true, placement)?;
+        kitty_emit_frame(
+            w as u32,
+            h as u32,
+            payload.format,
+            &payload.bytes,
+            true,
+            placement,
+        )?;
         eprintln!("zuko app: Kitty test pattern rendered at {w}x{h}; press Enter to exit");
         let mut buf = String::new();
         let _ = std::io::stdin().read_line(&mut buf);
         return Ok(());
+    }
+
+    if args.doctor {
+        return doctor(&args);
     }
 
     if args.list {
@@ -107,6 +164,7 @@ pub fn run(args: AppArgs) -> Result<()> {
     // quantization. Best-effort: if the terminal won't tell us (or a slow relay
     // beats the probe), keep cell coords and the cursor just snaps to cells.
     let cell_px = probe_terminal_cell_pixels(PIXEL_PROBE);
+    let desired_output = desired_output_size(args.scale, cell_px);
     if term_pixel_dims(cell_px).is_some() {
         let _ = terminal.enable_pixel_mouse();
     } else {
@@ -123,51 +181,19 @@ pub fn run(args: AppArgs) -> Result<()> {
     let xdg_runtime = make_xdg_runtime_dir()?;
     let sockets_before = snapshot_wayland_sockets(&xdg_runtime);
 
-    // In-cage xdg-desktop-portal (default: auto, when the host has it). The
-    // private D-Bus starts BEFORE cage so the app can inherit its address;
-    // the portal daemons start AFTER cage's socket exists (the backend renders
-    // into cage). PortalStack drops at end of run() to reap the daemons.
-    let want_portal = if args.no_portal {
-        false
-    } else if args.portal {
-        true
-    } else {
-        portal_available()
-    };
-    let mut portal_stack = PortalStack {
-        dbus: None,
-        portal: None,
-        backend: None,
-        dbus_pgid: None,
-    };
-    let portal_bus = if want_portal && let Ok((bus, dbus, pgid)) = start_portal_dbus(&xdg_runtime) {
-        portal_stack.dbus = Some(dbus);
-        portal_stack.dbus_pgid = Some(pgid);
-        Some(bus)
-    } else if want_portal {
+    if launch.flatpak {
         eprintln!(
-            "zuko app: couldn't start the in-cage portal bus; portal dialogs \
-             may appear on the host desktop instead of the TUI"
+            "zuko app: Flatpak portals use the host desktop session and may not appear in the TUI; \
+             run an RDP client with `zuko app remmina` or `zuko app krdc` for full desktop sessions."
         );
-        None
-    } else {
-        None
-    };
-
-    let mut cage = spawn_cage(&args, &launch, &xdg_runtime, portal_bus.as_deref())?;
-    let socket = wait_for_socket(&mut cage, &xdg_runtime, &sockets_before)?;
-
-    if let (Some(bus), Some(pgid)) = (&portal_bus, portal_stack.dbus_pgid)
-        && let Ok((portal, backend)) = start_portal_backends(bus, &xdg_runtime, &socket, pgid)
-    {
-        portal_stack.portal = Some(portal);
-        portal_stack.backend = Some(backend);
-        eprintln!("zuko app: in-cage portal up (file dialogs will render in the TUI)");
     }
 
+    let mut cage = spawn_cage(&args, &launch, &xdg_runtime)?;
+    let socket = wait_for_socket(&mut cage, &xdg_runtime, &sockets_before)?;
+
     eprintln!(
-        "zuko app: cage running {} at {}x{} (pixman/headless) on {}; connecting…",
-        launch.label, DEFAULT_OUTPUT.0, DEFAULT_OUTPUT.1, socket
+        "zuko app: cage running {} targeting {}x{} (pixman/headless) on {}; connecting…",
+        launch.label, desired_output.width, desired_output.height, socket
     );
 
     // Point our own Wayland client env at cage's socket, then connect.
@@ -191,29 +217,44 @@ pub fn run(args: AppArgs) -> Result<()> {
         seat: globals.bind(&qh, 5..=9, ()).ok(),
         vk_manager: globals.bind(&qh, 1..=1, ()).ok(),
         vp_manager: globals.bind(&qh, 1..=2, ()).ok(),
+        output_manager: globals.bind(&qh, 1..=4, ()).ok(),
+        output_size: desired_output,
+        target_output_size: desired_output,
+        output_scale: args.scale,
+        graphics_codec: args.graphics_codec,
         cursor: !args.no_cursor,
         cell_px,
         ..Default::default()
     };
+
+    configure_output_size(&mut state, &conn, &mut queue, desired_output);
 
     // Create the virtual keyboard + pointer up front (best-effort; non-fatal).
     setup_input(&mut state, &qh);
     let _ = conn.flush();
 
     let frame_interval = Duration::from_millis((1000 / u64::from(args.fps)).max(1));
-    let mut next_frame = Instant::now();
+    let next_frame = Instant::now();
     let started_at = Instant::now();
 
     kitty_clear_screen().ok();
+    let input_rx = spawn_terminal_input_thread();
+    let mut loop_timing = LoopTiming {
+        max_frame_interval: frame_interval,
+        current_frame_interval: frame_interval,
+        next_frame,
+        started_at,
+        unchanged_frames: 0,
+        max_mbps: args.max_mbps,
+    };
 
     let result = run_loop(
         &mut state,
         &conn,
         &mut queue,
         &mut cage,
-        frame_interval,
-        &mut next_frame,
-        started_at,
+        &input_rx,
+        &mut loop_timing,
     );
 
     // Best-effort cleanup. SIGTERM cage first (don't SIGKILL) so it runs its
@@ -223,6 +264,10 @@ pub fn run(args: AppArgs) -> Result<()> {
     // in the shared XDG_RUNTIME_DIR — the "wayland lock" leftover). The
     // TerminalModeGuard drop then restores the terminal + clears Kitty.
     shutdown_cage(&mut cage, &xdg_runtime, &socket);
+    drop(terminal);
+    if let Err(e) = &result {
+        eprintln!("\nzuko app error: {e:#}");
+    }
     result
 }
 
@@ -251,14 +296,122 @@ fn shutdown_cage(cage: &mut Child, xdg_runtime: &Path, socket: &str) {
     let _ = fs::remove_file(format!("{}.lock", xdg_runtime.join(socket).display()));
 }
 
-// ──────────────────────── in-cage xdg-desktop-portal ────────────────────────
-//
-// When the host has xdg-desktop-portal + a backend installed, start a PRIVATE
-// D-Bus session + xdg-desktop-portal + (gtk) backend against cage's Wayland,
-// and point cage's child app at that bus. The app's portal calls (file open/
-// save dialogs) then route to OUR portal-gtk, which renders the dialog on
-// cage's output → captured → shown in the TUI. Without this, portal dialogs
-// render on the host's own desktop (invisible/unusable over a remote link).
+fn doctor(args: &AppArgs) -> Result<()> {
+    println!("zuko app doctor");
+    let mut fatal = false;
+
+    doctor_check(
+        "terminal cell size",
+        term_cell_size().is_some(),
+        "TIOCGWINSZ reports cells",
+    );
+    let pixels = term_pixel_dims(None);
+    doctor_check(
+        "terminal pixel size",
+        pixels.is_some(),
+        "TIOCGWINSZ reports pixels (otherwise zuko app falls back to defaults/cell mapping)",
+    );
+    let desired = desired_output_size(args.scale, None);
+    println!(
+        "  target output: {}x{} (--scale {})",
+        desired.width, desired.height, args.scale
+    );
+
+    let cage = cage_path();
+    doctor_check(
+        "cage binary",
+        cage.is_some(),
+        "bundled cage, $ZUKO_CAGE, or PATH",
+    );
+    if cage.is_none() {
+        fatal = true;
+    }
+    match doctor_cage_smoke(args, desired) {
+        Ok(()) => doctor_check(
+            "live cage smoke",
+            true,
+            "screencopy + virtual input + output management",
+        ),
+        Err(e) => {
+            doctor_check("live cage smoke", false, &format!("{e:#}"));
+            fatal = true;
+        }
+    }
+
+    if fatal {
+        bail!("zuko app doctor found missing required capabilities")
+    }
+    Ok(())
+}
+
+fn doctor_check(name: &str, ok: bool, detail: &str) {
+    println!(
+        "  {:<24} {}  {}",
+        name,
+        if ok { "ok  " } else { "warn" },
+        detail
+    );
+}
+
+fn doctor_cage_smoke(args: &AppArgs, desired: OutputSize) -> Result<()> {
+    let xdg_runtime = make_xdg_runtime_dir()?;
+    let sockets_before = snapshot_wayland_sockets(&xdg_runtime);
+    let launch = Launch {
+        label: "doctor".to_string(),
+        program: "sh".to_string(),
+        args: vec!["-c".to_string(), "sleep 5".to_string()],
+        env: Vec::new(),
+        flatpak: false,
+    };
+    let mut cage = spawn_cage(args, &launch, &xdg_runtime)?;
+    let socket = match wait_for_socket(&mut cage, &xdg_runtime, &sockets_before) {
+        Ok(socket) => socket,
+        Err(e) => {
+            shutdown_cage(&mut cage, &xdg_runtime, "wayland-0");
+            return Err(e);
+        }
+    };
+
+    unsafe {
+        env::set_var("XDG_RUNTIME_DIR", &xdg_runtime);
+        env::set_var("WAYLAND_DISPLAY", &socket);
+    }
+    let conn = Connection::connect_to_env().context("connect to cage Wayland socket")?;
+    let (globals, mut queue) = registry_queue_init::<State>(&conn)?;
+    let qh = queue.handle();
+    let mut state = State {
+        shm: globals.bind(&qh, 1..=2, ()).ok(),
+        output: globals.bind(&qh, 1..=4, ()).ok(),
+        manager: globals.bind(&qh, 1..=3, ()).ok(),
+        seat: globals.bind(&qh, 5..=9, ()).ok(),
+        vk_manager: globals.bind(&qh, 1..=1, ()).ok(),
+        vp_manager: globals.bind(&qh, 1..=2, ()).ok(),
+        output_manager: globals.bind(&qh, 1..=4, ()).ok(),
+        ..Default::default()
+    };
+    configure_output_size(&mut state, &conn, &mut queue, desired);
+    setup_input(&mut state, &qh);
+    let _ = conn.flush();
+
+    let required = [
+        ("wl_shm", state.shm.is_some()),
+        ("wl_output", state.output.is_some()),
+        ("wlr-screencopy", state.manager.is_some()),
+        ("virtual keyboard", state.vkeyboard.is_some()),
+        ("virtual pointer", state.vpointer.is_some()),
+        ("output management", state.output_manager.is_some()),
+    ];
+    for (name, ok) in required {
+        doctor_check(name, ok, "advertised by cage");
+        if !ok && name != "output management" {
+            shutdown_cage(&mut cage, &xdg_runtime, &socket);
+            bail!("required Wayland global missing: {name}");
+        }
+    }
+
+    shutdown_cage(&mut cage, &xdg_runtime, &socket);
+    Ok(())
+}
 
 /// Resolve a binary: an explicit `$ZUKO_*` override, then common libexec/lib
 /// dirs, then PATH.
@@ -285,127 +438,20 @@ fn find_bin(name: &str, override_var: &str) -> Option<PathBuf> {
     None
 }
 
-fn portal_daemon_bin() -> Option<PathBuf> {
-    find_bin("xdg-desktop-portal", "ZUKO_PORTAL")
+struct LoopTiming {
+    max_frame_interval: Duration,
+    current_frame_interval: Duration,
+    next_frame: Instant,
+    started_at: Instant,
+    unchanged_frames: u8,
+    max_mbps: f64,
 }
 
-/// A backend that renders dialogs over Wayland (gtk is standalone; gnome/wlr
-/// are fallbacks). portal-gtk is preferred because it doesn't need its desktop
-/// environment running (cage is just a kiosk).
-fn portal_backend_bin() -> Option<PathBuf> {
-    find_bin("xdg-desktop-portal-gtk", "ZUKO_PORTAL_BACKEND")
-        .or_else(|| find_bin("xdg-desktop-portal-gnome", "ZUKO_PORTAL_BACKEND"))
-        .or_else(|| find_bin("xdg-desktop-portal-wlr", "ZUKO_PORTAL_BACKEND"))
-}
-
-/// Whether the host can run an in-cage portal (both the daemon + a backend
-/// binary are present). Drives the auto-detect default for `--portal`.
-fn portal_available() -> bool {
-    portal_daemon_bin().is_some() && portal_backend_bin().is_some()
-}
-
-/// Held across the session so its `Drop` reaps the daemons; they're started in
-/// two phases (D-Bus before cage, portal+backend after the Wayland socket).
-/// `dbus_pgid` is the shared process group (D-Bus is the leader; the portal +
-/// backend join it), so a `killpg` reaps any helpers the daemons activate too.
-struct PortalStack {
-    dbus: Option<Child>,
-    portal: Option<Child>,
-    backend: Option<Child>,
-    dbus_pgid: Option<i32>,
-}
-
-impl PortalStack {
-    fn kill_all(&mut self) {
-        // Kill the whole group (D-Bus + portal + backend + any D-Bus-activated
-        // helpers), then reap the three we have handles for.
-        if let Some(pgid) = self.dbus_pgid
-            && pgid > 0
-        {
-            // SAFETY: killpg on a group we created. Signal-safe.
-            unsafe {
-                libc::killpg(pgid, libc::SIGTERM);
-            }
-        }
-        for child in [&mut self.backend, &mut self.portal, &mut self.dbus]
-            .into_iter()
-            .flatten()
-        {
-            let _ = child.wait();
-        }
-    }
-}
-
-impl Drop for PortalStack {
-    fn drop(&mut self) {
-        self.kill_all();
-    }
-}
-
-/// Start the private D-Bus session bus (before cage, so the app can inherit
-/// its address). Returns the bus address, the daemon child, and its process
-/// group id (the portal daemons join it so they can be reaped together).
-fn start_portal_dbus(xdg_runtime: &Path) -> Result<(String, Child, i32)> {
-    use std::os::unix::process::CommandExt;
-    let dbus_path = xdg_runtime.join(format!("zuko-dbus-{}", std::process::id()));
-    let _ = fs::remove_file(&dbus_path); // clear any stale socket
-    let bus = format!("unix:path={}", dbus_path.display());
-    let mut cmd = Command::new("dbus-daemon");
-    cmd.args(["--session", "--nofork", "--address", &bus])
-        .process_group(0) // new group; this child's pid == its pgid
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null());
-    let child = cmd
-        .spawn()
-        .context("spawn dbus-daemon for in-cage portal")?;
-    let pgid = child.id() as i32;
-    for _ in 0..50 {
-        if dbus_path.exists() {
-            return Ok((bus, child, pgid));
-        }
-        std::thread::sleep(Duration::from_millis(20));
-    }
-    bail!(
-        "dbus-daemon didn't create its socket at {}",
-        dbus_path.display()
-    );
-}
-
-/// Start xdg-desktop-portal + a backend on the private bus (in the D-Bus
-/// process group), the backend rendering into cage's Wayland socket.
-/// `XDG_CURRENT_DESKTOP` is emptied so the portal picks the standalone gtk
-/// backend (not a desktop-mandated one).
-fn start_portal_backends(
-    bus: &str,
-    xdg_runtime: &Path,
-    socket: &str,
-    dbus_pgid: i32,
-) -> Result<(Child, Child)> {
-    use std::os::unix::process::CommandExt;
-    let daemon_bin = portal_daemon_bin().context("xdg-desktop-portal binary vanished")?;
-    let backend_bin = portal_backend_bin().context("portal backend binary vanished")?;
-    let portal = Command::new(&daemon_bin)
-        .env("DBUS_SESSION_BUS_ADDRESS", bus)
-        .env("XDG_CURRENT_DESKTOP", "")
-        .process_group(dbus_pgid)
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn()
-        .with_context(|| format!("spawn {}", daemon_bin.display()))?;
-    let backend = Command::new(&backend_bin)
-        .env("DBUS_SESSION_BUS_ADDRESS", bus)
-        .env("XDG_RUNTIME_DIR", xdg_runtime)
-        .env("WAYLAND_DISPLAY", socket)
-        .env("XDG_CURRENT_DESKTOP", "")
-        .process_group(dbus_pgid)
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn()
-        .with_context(|| format!("spawn {}", backend_bin.display()))?;
-    Ok((portal, backend))
+#[derive(Clone, Copy, Debug)]
+struct FrameOutcome {
+    emitted: bool,
+    elapsed: Duration,
+    bytes: usize,
 }
 
 fn run_loop(
@@ -413,30 +459,41 @@ fn run_loop(
     conn: &Connection,
     queue: &mut EventQueue<State>,
     cage: &mut Child,
-    frame_interval: Duration,
-    next_frame: &mut Instant,
-    started_at: Instant,
+    input_rx: &mpsc::Receiver<TerminalInput>,
+    timing: &mut LoopTiming,
 ) -> Result<()> {
     let mut placed = false;
     let mut last_cells: Option<(u16, u16)> = None;
     loop {
         if let Some(status) = cage.try_wait().context("poll cage process")? {
-            eprintln!("zuko app: cage exited with {status}");
-            break;
+            bail!("cage exited with {status}");
+        }
+
+        drain_terminal_input(state, input_rx, timing.started_at)?;
+        release_due_key(state, timing.started_at);
+        if sync_output_size_to_terminal(state, conn, queue) || state.terminal_resized {
+            placed = false;
+            last_cells = None;
+            state.prev_frame = None;
+            state.terminal_resized = false;
         }
 
         let now = Instant::now();
-        if now >= *next_frame {
-            *next_frame = now + frame_interval;
-            if let Err(e) = capture_and_emit(state, conn, queue, &mut placed, &mut last_cells) {
-                // A single frame failing shouldn't kill the session (e.g. the
-                // app is mid-resize); log and continue. A broken connection,
-                // however, surfaces from blocking_dispatch below.
-                eprintln!("zuko app: frame skipped: {e:#}");
+        if now >= timing.next_frame {
+            match capture_and_emit(state, conn, queue, &mut placed, &mut last_cells) {
+                Ok(outcome) => update_frame_pacing(timing, outcome),
+                Err(e) => {
+                    // A single frame failing shouldn't kill the session (e.g. the
+                    // app is mid-resize); log and continue. A broken connection,
+                    // however, surfaces from blocking_dispatch below.
+                    eprintln!("zuko app: frame skipped: {e:#}");
+                    timing.current_frame_interval = timing.max_frame_interval;
+                }
             }
+            timing.next_frame = Instant::now() + timing.current_frame_interval;
         }
 
-        pump_terminal_input(state, started_at)?;
+        drain_terminal_input(state, input_rx, timing.started_at)?;
         let _ = conn.flush();
 
         // Drain any pending Wayland events without blocking (e.g. late
@@ -446,18 +503,18 @@ fn run_loop(
 
         std::thread::sleep(Duration::from_millis(8));
     }
-    Ok(())
 }
 
 /// Capture one frame from cage's headless output via wlr-screencopy and emit it
-/// to the terminal as a Kitty PNG, scaled to fit the terminal's cell grid.
+/// to the terminal as a Kitty graphics frame, scaled to fit the terminal's cell grid.
 fn capture_and_emit(
     state: &mut State,
     conn: &Connection,
     queue: &mut EventQueue<State>,
     placed: &mut bool,
     last_cells: &mut Option<(u16, u16)>,
-) -> Result<()> {
+) -> Result<FrameOutcome> {
+    let started = Instant::now();
     // Re-place when the terminal cell grid changes (resize) so the c=/r=
     // scale-to-fit picks up the new size.
     let cells = term_cell_size();
@@ -499,13 +556,19 @@ fn capture_and_emit(
         .captured
         .take()
         .context("capture Ready without frame bytes")?;
+    state.output_size = OutputSize {
+        width: w as u32,
+        height: h as u32,
+    };
     // Dirty-frame "diff": if the new RGBA is byte-identical to the last emitted
     // frame AND the placement is already live, skip encode/emit — the terminal
     // is already showing exactly this. Always (re)emit when (re)placing.
     let needs_place = !*placed;
     *placed = true;
     let changed = state.prev_frame.as_deref() != Some(rgba.as_slice());
-    if needs_place || changed {
+    let emitted = needs_place || changed;
+    let mut bytes = 0;
+    if emitted {
         // Aspect-preserving (letterboxed) cell rectangle for this terminal.
         let placement = cells.map(|(c, r)| {
             compute_placement(
@@ -515,11 +578,158 @@ fn capture_and_emit(
                 (w as u32, h as u32),
             )
         });
-        let png = encode_rgba_png(&rgba, w, h)?;
-        kitty_emit_png(w as u32, h as u32, &png, needs_place, placement)?;
+        let profile = frame_profile(&rgba, w, h, state.prev_frame.as_deref());
+        let payload = encode_kitty_payload(&rgba, w, h, state.graphics_codec, profile)?;
+        bytes = payload.transport_bytes();
+        kitty_emit_frame(
+            w as u32,
+            h as u32,
+            payload.format,
+            &payload.bytes,
+            needs_place,
+            placement,
+        )?;
         state.prev_frame = Some(rgba);
     }
-    Ok(())
+    Ok(FrameOutcome {
+        emitted,
+        elapsed: started.elapsed(),
+        bytes,
+    })
+}
+
+#[derive(Clone, Copy, Debug)]
+struct FrameProfile {
+    changed_ratio: Option<f64>,
+    avg_neighbor_delta: f64,
+}
+
+impl FrameProfile {
+    fn high_entropy(self) -> bool {
+        self.avg_neighbor_delta >= HIGH_ENTROPY_DELTA
+    }
+
+    fn video_like(self) -> bool {
+        self.high_entropy()
+            && self
+                .changed_ratio
+                .is_none_or(|ratio| ratio >= VIDEO_CHANGE_RATIO)
+    }
+
+    fn png_filter(self) -> png::Filter {
+        if self.video_like() {
+            png::Filter::NoFilter
+        } else {
+            png::Filter::Paeth
+        }
+    }
+}
+
+fn frame_profile(rgba: &[u8], width: usize, height: usize, prev: Option<&[u8]>) -> FrameProfile {
+    let pixels = width.saturating_mul(height);
+    if pixels == 0 {
+        return FrameProfile {
+            changed_ratio: prev.map(|_| 0.0),
+            avg_neighbor_delta: 0.0,
+        };
+    }
+    let step = (pixels / FRAME_PROFILE_SAMPLES).max(1);
+    let mut samples = 0usize;
+    let mut changed = 0usize;
+    let mut deltas = 0u64;
+    let len = width * height * 4;
+    let rgba = &rgba[..rgba.len().min(len)];
+    let prev = prev.filter(|prev| prev.len() >= len);
+
+    for pixel in (0..pixels).step_by(step) {
+        let idx = pixel * 4;
+        if idx + 3 > rgba.len() {
+            break;
+        }
+        samples += 1;
+        if let Some(prev) = prev {
+            let old = &prev[idx..idx + 4];
+            let new = &rgba[idx..idx + 4];
+            if old != new {
+                changed += 1;
+            }
+        }
+        if pixel % width != 0 {
+            let left = idx - 4;
+            if left + 2 < rgba.len() {
+                deltas += u64::from(rgba[idx].abs_diff(rgba[left]));
+                deltas += u64::from(rgba[idx + 1].abs_diff(rgba[left + 1]));
+                deltas += u64::from(rgba[idx + 2].abs_diff(rgba[left + 2]));
+            }
+        }
+    }
+
+    FrameProfile {
+        changed_ratio: prev.map(|_| changed as f64 / samples.max(1) as f64),
+        avg_neighbor_delta: deltas as f64 / samples.max(1) as f64,
+    }
+}
+
+fn encode_kitty_payload(
+    rgba: &[u8],
+    width: usize,
+    height: usize,
+    codec: KittyGraphicsCodec,
+    profile: FrameProfile,
+) -> Result<KittyFramePayload> {
+    match codec {
+        KittyGraphicsCodec::Rgb => Ok(KittyFramePayload {
+            format: KittyGraphicsFormat::Rgb,
+            bytes: encode_rgba_rgb(rgba, width, height)?,
+        }),
+        KittyGraphicsCodec::Png => Ok(KittyFramePayload {
+            format: KittyGraphicsFormat::Png,
+            bytes: encode_rgba_png(rgba, width, height, profile.png_filter())?,
+        }),
+        KittyGraphicsCodec::Auto if profile.video_like() => Ok(KittyFramePayload {
+            format: KittyGraphicsFormat::Rgb,
+            bytes: encode_rgba_rgb(rgba, width, height)?,
+        }),
+        KittyGraphicsCodec::Auto => Ok(KittyFramePayload {
+            format: KittyGraphicsFormat::Png,
+            bytes: encode_rgba_png(rgba, width, height, profile.png_filter())?,
+        }),
+    }
+}
+
+fn update_frame_pacing(timing: &mut LoopTiming, outcome: FrameOutcome) {
+    let active_interval = active_frame_interval(
+        timing.max_frame_interval,
+        outcome.elapsed,
+        outcome.bytes,
+        timing.max_mbps,
+    );
+    if outcome.emitted {
+        timing.unchanged_frames = 0;
+        timing.current_frame_interval = active_interval;
+    } else {
+        timing.unchanged_frames = timing.unchanged_frames.saturating_add(1);
+        timing.current_frame_interval = if timing.unchanged_frames >= 2 {
+            IDLE_FRAME_INTERVAL.max(timing.max_frame_interval)
+        } else {
+            active_interval
+        };
+    }
+}
+
+fn active_frame_interval(
+    max_fps_interval: Duration,
+    elapsed: Duration,
+    bytes: usize,
+    max_mbps: f64,
+) -> Duration {
+    let cost_limited = Duration::from_secs_f64(elapsed.as_secs_f64() * FRAME_COST_MULTIPLIER);
+    let bandwidth_limited = if max_mbps > 0.0 && bytes > 0 {
+        Duration::from_secs_f64(bytes as f64 * 8.0 / (max_mbps * 1_000_000.0))
+    } else {
+        Duration::ZERO
+    };
+    max_fps_interval.max(cost_limited).max(bandwidth_limited)
 }
 
 /// The current terminal cell grid (cols, rows) via TIOCGWINSZ. Always available
@@ -594,6 +804,151 @@ fn term_pixel_dims(cell_px: Option<(u16, u16)>) -> Option<(u32, u32)> {
         ));
     }
     None
+}
+
+fn desired_output_size(scale: f32, cell_px: Option<(u16, u16)>) -> OutputSize {
+    let base =
+        term_pixel_dims(cell_px).unwrap_or((OutputSize::DEFAULT.width, OutputSize::DEFAULT.height));
+    scaled_output_size_for_terminal(base, scale)
+}
+
+fn scaled_output_size_for_terminal(base: (u32, u32), scale: f32) -> OutputSize {
+    let scale = f64::from(scale);
+    let width = (base.0.max(1) as f64 * scale).round() as u32;
+    let height = (base.1.max(1) as f64 * scale).round() as u32;
+    OutputSize {
+        width: width.clamp(MIN_OUTPUT_DIM, MAX_OUTPUT_DIM),
+        height: height.clamp(MIN_OUTPUT_DIM, MAX_OUTPUT_DIM),
+    }
+}
+
+fn sync_output_size_to_terminal(
+    state: &mut State,
+    conn: &Connection,
+    queue: &mut EventQueue<State>,
+) -> bool {
+    let desired = desired_output_size(state.output_scale, state.cell_px);
+    if desired == state.target_output_size {
+        return false;
+    }
+    state.target_output_size = desired;
+    configure_output_size(state, conn, queue, desired)
+}
+
+fn configure_output_size(
+    state: &mut State,
+    conn: &Connection,
+    queue: &mut EventQueue<State>,
+    desired: OutputSize,
+) -> bool {
+    if env::var_os("ZUKO_APP_NO_OUTPUT_CONFIG").is_some() {
+        return false;
+    }
+    if let Err(e) = try_configure_output_size(state, conn, queue, desired) {
+        eprintln!(
+            "zuko app: couldn't set cage output to {}x{} ({e:#}); continuing with compositor default",
+            desired.width, desired.height
+        );
+        return false;
+    }
+    true
+}
+
+fn try_configure_output_size(
+    state: &mut State,
+    conn: &Connection,
+    queue: &mut EventQueue<State>,
+    desired: OutputSize,
+) -> Result<()> {
+    let manager = state
+        .output_manager
+        .as_ref()
+        .context("zwlr_output_manager_v1 unavailable")?
+        .clone();
+    conn.flush().ok();
+
+    if let Err(first) = apply_output_config(state, conn, queue, &manager, desired) {
+        // A resize can race with wlroots publishing the next output-management
+        // serial. Refresh the serial and retry once; this is the common failure
+        // mode after the initial launch-time configuration succeeded.
+        let stale_serial = state.output_config_serial;
+        state.output_config_serial = None;
+        let deadline = Instant::now() + Duration::from_millis(500);
+        while state.output_config_serial.is_none() && Instant::now() <= deadline {
+            let _ = queue.dispatch_pending(state);
+            if state.output_config_serial.is_none() {
+                std::thread::sleep(Duration::from_millis(8));
+            }
+        }
+        if state.output_config_serial.is_some() && state.output_config_serial != stale_serial {
+            apply_output_config(state, conn, queue, &manager, desired).map_err(|second| {
+                anyhow::anyhow!("first attempt: {first:#}; retry after serial refresh: {second:#}")
+            })
+        } else {
+            Err(first)
+        }
+    } else {
+        Ok(())
+    }
+}
+
+fn apply_output_config(
+    state: &mut State,
+    conn: &Connection,
+    queue: &mut EventQueue<State>,
+    manager: &ZwlrOutputManagerV1,
+    desired: OutputSize,
+) -> Result<()> {
+    state.output_config_result = None;
+    let deadline = Instant::now() + Duration::from_secs(2);
+    while state.output_config_serial.is_none() {
+        if Instant::now() > deadline {
+            bail!("timed out waiting for output-management head list");
+        }
+        queue.blocking_dispatch(state)?;
+    }
+    let serial = state
+        .output_config_serial
+        .context("missing output-management serial")?;
+    if state.output_heads.is_empty() {
+        bail!("output-management advertised no heads");
+    }
+
+    let qh = queue.handle();
+    let config = manager.create_configuration(serial, &qh, ());
+    let head = state
+        .output_heads
+        .first()
+        .context("output-management advertised no heads")?;
+    let head_config = config.enable_head(head, &qh, ());
+    head_config.set_custom_mode(desired.width as i32, desired.height as i32, 0);
+    head_config.set_position(0, 0);
+    config.apply();
+    conn.flush().ok();
+
+    let deadline = Instant::now() + Duration::from_secs(2);
+    while state.output_config_result.is_none() {
+        if Instant::now() > deadline {
+            config.destroy();
+            bail!("timed out applying output size");
+        }
+        queue.blocking_dispatch(state)?;
+    }
+    match state.output_config_result.take() {
+        Some(Ok(())) => {
+            config.destroy();
+            eprintln!(
+                "zuko app: cage output set to {}x{} via wlr-output-management",
+                desired.width, desired.height
+            );
+            Ok(())
+        }
+        Some(Err(e)) => {
+            config.destroy();
+            bail!(e)
+        }
+        None => unreachable!("checked above"),
+    }
 }
 
 /// Probe the terminal's per-cell pixel size via the XTWINOPS `CSI 16 t` query.
@@ -730,6 +1085,152 @@ mod tests {
         draw_cursor(&mut buf, w, h, -5, -5);
         draw_cursor(&mut buf, w, h, 100, 100);
     }
+
+    #[test]
+    fn printable_key_mapping_uses_raw_evdev_and_infers_shift() {
+        assert_eq!(evdev_keycode_for(KeyCode::Char('a')), Some(30));
+        assert_eq!(evdev_keycode_for(KeyCode::Char('A')), Some(30));
+        assert!(!key_requires_shift(KeyCode::Char('a')));
+        assert!(key_requires_shift(KeyCode::Char('A')));
+
+        assert_eq!(evdev_keycode_for(KeyCode::Char('1')), Some(2));
+        assert_eq!(evdev_keycode_for(KeyCode::Char('!')), Some(2));
+        assert!(!key_requires_shift(KeyCode::Char('1')));
+        assert!(key_requires_shift(KeyCode::Char('!')));
+
+        assert_eq!(evdev_keycode_for(KeyCode::Char('/')), Some(53));
+        assert_eq!(evdev_keycode_for(KeyCode::Char('?')), Some(53));
+        assert!(!key_requires_shift(KeyCode::Char('/')));
+        assert!(key_requires_shift(KeyCode::Char('?')));
+        assert!(key_requires_shift(KeyCode::BackTab));
+    }
+
+    #[test]
+    fn terminal_sized_output_scales_and_clamps() {
+        assert_eq!(
+            scaled_output_size_for_terminal((1000, 500), 1.5),
+            OutputSize {
+                width: 1500,
+                height: 750,
+            }
+        );
+        assert_eq!(
+            scaled_output_size_for_terminal((10, 10), 0.5),
+            OutputSize {
+                width: MIN_OUTPUT_DIM,
+                height: MIN_OUTPUT_DIM,
+            }
+        );
+        assert_eq!(
+            scaled_output_size_for_terminal((9000, 9000), 1.0),
+            OutputSize {
+                width: MAX_OUTPUT_DIM,
+                height: MAX_OUTPUT_DIM,
+            }
+        );
+    }
+
+    #[test]
+    fn frame_pacing_tracks_changes_and_idles_when_static() {
+        let max = Duration::from_millis(33);
+        assert_eq!(
+            active_frame_interval(max, Duration::from_millis(5), 0, 30.0),
+            max
+        );
+        assert_eq!(
+            active_frame_interval(max, Duration::from_millis(80), 0, 30.0),
+            Duration::from_millis(100)
+        );
+        assert_eq!(
+            active_frame_interval(max, Duration::from_millis(5), 3_750_000, 30.0),
+            Duration::from_secs(1)
+        );
+
+        let mut timing = LoopTiming {
+            max_frame_interval: max,
+            current_frame_interval: max,
+            next_frame: Instant::now(),
+            started_at: Instant::now(),
+            unchanged_frames: 0,
+            max_mbps: 80.0,
+        };
+        update_frame_pacing(
+            &mut timing,
+            FrameOutcome {
+                emitted: true,
+                elapsed: Duration::from_millis(5),
+                bytes: 0,
+            },
+        );
+        assert_eq!(timing.current_frame_interval, max);
+        assert_eq!(timing.unchanged_frames, 0);
+
+        for _ in 0..2 {
+            update_frame_pacing(
+                &mut timing,
+                FrameOutcome {
+                    emitted: false,
+                    elapsed: Duration::from_millis(2),
+                    bytes: 0,
+                },
+            );
+        }
+        assert_eq!(timing.current_frame_interval, IDLE_FRAME_INTERVAL);
+
+        update_frame_pacing(
+            &mut timing,
+            FrameOutcome {
+                emitted: true,
+                elapsed: Duration::from_millis(5),
+                bytes: 0,
+            },
+        );
+        assert_eq!(timing.current_frame_interval, max);
+        assert_eq!(timing.unchanged_frames, 0);
+    }
+
+    #[test]
+    fn graphics_auto_uses_png_for_ui_and_rgb_for_video_like_frames() {
+        let (w, h) = (64usize, 64usize);
+        let solid = vec![32u8; w * h * 4];
+        let solid_profile = frame_profile(&solid, w, h, None);
+        let solid_payload =
+            encode_kitty_payload(&solid, w, h, KittyGraphicsCodec::Auto, solid_profile).unwrap();
+        assert_eq!(solid_payload.format, KittyGraphicsFormat::Png);
+
+        let mut prev = Vec::with_capacity(w * h * 4);
+        let mut next = Vec::with_capacity(w * h * 4);
+        let mut x = 0x1234_5678u32;
+        for _ in 0..w * h {
+            x = x.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+            prev.extend_from_slice(&[x as u8, (x >> 8) as u8, (x >> 16) as u8, 255]);
+            x = x.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+            next.extend_from_slice(&[x as u8, (x >> 8) as u8, (x >> 16) as u8, 255]);
+        }
+        let video_profile = frame_profile(&next, w, h, Some(&prev));
+        assert!(video_profile.video_like());
+        let video_payload =
+            encode_kitty_payload(&next, w, h, KittyGraphicsCodec::Auto, video_profile).unwrap();
+        assert_eq!(video_payload.format, KittyGraphicsFormat::Rgb);
+        assert_eq!(video_payload.bytes.len(), w * h * 3);
+    }
+
+    #[test]
+    fn mouse_mapping_uses_actual_adaptive_output_size() {
+        // Terminal reports pixel mouse coords in an 800x600 terminal. The cage
+        // output is 960x540, letterboxed vertically into 800x450 at y=75.
+        let (x, y, ex, ey) =
+            map_terminal_point_to_image(400, 300, (80, 30), Some((10, 20)), (960, 540));
+        assert_eq!((ex, ey), (800, 460));
+        assert_eq!(x, 400);
+        assert_eq!(y, 240);
+
+        // With cell coords and a non-default output, the image extent is still
+        // derived from the adaptive source aspect, not DEFAULT_OUTPUT.
+        let (x, y, ex, ey) = map_terminal_point_to_image(40, 15, (80, 30), None, (960, 540));
+        assert_eq!((ex, ey), (80, 23));
+        assert_eq!((x, y), (40, 12));
+    }
 }
 
 // ────────────────────────── crossterm → cage input ──────────────────────────
@@ -738,18 +1239,52 @@ mod tests {
 // virtual-pointer requests cage receives. Ctrl-Alt-q is the escape hatch (it
 // can't go to the app — terminals don't forward it cleanly anyway).
 
-fn pump_terminal_input(state: &mut State, started_at: Instant) -> Result<()> {
-    while event::poll(Duration::ZERO).context("poll terminal input")? {
-        match event::read().context("read terminal input")? {
-            Event::Key(key) if is_escape_chord(&key) => {
+enum TerminalInput {
+    Event(Event),
+    Error(String),
+}
+
+fn spawn_terminal_input_thread() -> mpsc::Receiver<TerminalInput> {
+    let (tx, rx) = mpsc::channel();
+    std::thread::spawn(move || {
+        loop {
+            match event::read() {
+                Ok(ev) => {
+                    if tx.send(TerminalInput::Event(ev)).is_err() {
+                        break;
+                    }
+                }
+                Err(e) => {
+                    let _ = tx.send(TerminalInput::Error(e.to_string()));
+                    break;
+                }
+            }
+        }
+    });
+    rx
+}
+
+fn drain_terminal_input(
+    state: &mut State,
+    rx: &mpsc::Receiver<TerminalInput>,
+    started_at: Instant,
+) -> Result<()> {
+    loop {
+        match rx.try_recv() {
+            Ok(TerminalInput::Event(Event::Key(key))) if is_escape_chord(&key) => {
                 bail!("zuko app interrupted by Ctrl-Alt-q");
             }
-            Event::Key(key) => handle_key(state, key, started_at),
-            Event::Mouse(mouse) => handle_mouse(state, mouse, started_at),
-            _ => {}
+            Ok(TerminalInput::Event(Event::Key(key))) => handle_key(state, key, started_at),
+            Ok(TerminalInput::Event(Event::Mouse(mouse))) => handle_mouse(state, mouse, started_at),
+            Ok(TerminalInput::Event(Event::Resize(_, _))) => {
+                state.terminal_resized = true;
+            }
+            Ok(TerminalInput::Event(_)) => {}
+            Ok(TerminalInput::Error(e)) => bail!("read terminal input: {e}"),
+            Err(mpsc::TryRecvError::Empty) => return Ok(()),
+            Err(mpsc::TryRecvError::Disconnected) => return Ok(()),
         }
     }
-    Ok(())
 }
 
 fn is_escape_chord(key: &KeyEvent) -> bool {
@@ -760,29 +1295,75 @@ fn is_escape_chord(key: &KeyEvent) -> bool {
 }
 
 fn handle_key(state: &mut State, key: KeyEvent, started_at: Instant) {
+    let time = started_at.elapsed().as_millis() as u32;
+
+    if matches!(key.kind, KeyEventKind::Release) {
+        release_pending_key(state, time);
+        if let (Some(kb), Some(evdev)) = (state.vkeyboard.as_ref(), evdev_keycode_for(key.code)) {
+            kb.key(time, evdev, 0);
+        }
+        return;
+    }
+
+    if !matches!(key.kind, KeyEventKind::Press | KeyEventKind::Repeat) {
+        return;
+    }
+
+    // Terminals usually only report Press events. Press now, then release from
+    // the main loop after a short delay. This avoids two bad extremes:
+    // same-timestamp down+up can vanish, but holding until the next key triggers
+    // compositor/app repeat floods (IBus queue growth in GNOME apps).
+    release_pending_key(state, time);
+
+    if let Some(evdev) = evdev_keycode_for(key.code) {
+        tracing::debug!(code = ?key.code, kind = ?key.kind, modifiers = ?key.modifiers, evdev, "forward key");
+        let Some(kb) = state.vkeyboard.as_ref() else {
+            tracing::debug!("drop key: no virtual keyboard");
+            return;
+        };
+        let mut mods = key_modifiers(key.modifiers);
+        if key_requires_shift(key.code) && !mods.contains(&KEY_LEFTSHIFT) {
+            mods.evdev.push(KEY_LEFTSHIFT);
+            mods.xkb_depressed |= XKB_MOD_SHIFT;
+        }
+        for &m in &mods.evdev {
+            kb.key(time, m, 1);
+        }
+        kb.modifiers(mods.xkb_depressed, 0, 0, 0);
+        kb.key(time, evdev, 1);
+        state.pending_key = Some(PendingKey {
+            evdev,
+            mods,
+            release_at: Instant::now() + KEY_TAP,
+        });
+    } else {
+        tracing::debug!(code = ?key.code, kind = ?key.kind, modifiers = ?key.modifiers, "drop key: unmapped");
+    }
+}
+
+fn release_due_key(state: &mut State, started_at: Instant) {
+    if state
+        .pending_key
+        .as_ref()
+        .is_some_and(|pending| Instant::now() >= pending.release_at)
+    {
+        let time = started_at.elapsed().as_millis() as u32;
+        release_pending_key(state, time);
+    }
+}
+
+fn release_pending_key(state: &mut State, time: u32) {
+    let Some(pending) = state.pending_key.take() else {
+        return;
+    };
     let Some(kb) = state.vkeyboard.as_ref() else {
         return;
     };
-    let Some(code) = xkb_keycode_for(key.code) else {
-        return;
-    };
-    let pressed = matches!(key.kind, KeyEventKind::Press | KeyEventKind::Repeat);
-    let time = started_at.elapsed().as_millis() as u32;
-
-    // Press the active modifiers first (and release them after), so the app
-    // sees e.g. Shift+a as 'A'. Compositor repeat is disabled; the terminal's
-    // own key-repeat arrives as additional Press events.
-    if pressed {
-        for m in modifier_keycodes(key.modifiers) {
-            kb.key(time, m, 1);
-        }
+    kb.key(time, pending.evdev, 0);
+    for &m in pending.mods.evdev.iter().rev() {
+        kb.key(time, m, 0);
     }
-    kb.key(time, code, u32::from(pressed));
-    if matches!(key.kind, KeyEventKind::Release | KeyEventKind::Press) {
-        for m in modifier_keycodes(key.modifiers).into_iter().rev() {
-            kb.key(time, m, 0);
-        }
-    }
+    kb.modifiers(0, 0, 0, 0);
 }
 
 fn handle_mouse(state: &mut State, mouse: MouseEvent, started_at: Instant) {
@@ -791,68 +1372,88 @@ fn handle_mouse(state: &mut State, mouse: MouseEvent, started_at: Instant) {
     };
     let time = started_at.elapsed().as_millis() as u32;
     let (ow, oh) = (
-        u32::try_from(DEFAULT_OUTPUT.0).unwrap_or(1),
-        u32::try_from(DEFAULT_OUTPUT.1).unwrap_or(1),
+        state.output_size.width.max(1),
+        state.output_size.height.max(1),
     );
     // Map the click into the letterboxed image rectangle (off_*, span_*),
     // preserving the click's units: pixels when the cell size is known (mode
     // 1016 → sub-cell accuracy), else cells (mode 1006). Clicks in the
     // letterbox bars clamp to the image edge.
-    let (cols, rows) = term_cell_size().unwrap_or((mouse.column.max(1), mouse.row.max(1)));
-    let (span_cols, span_rows, off_col, off_row) =
-        compute_placement(u32::from(cols), u32::from(rows), state.cell_px, (ow, oh));
+    let cells = term_cell_size().unwrap_or((mouse.column.max(1), mouse.row.max(1)));
     let (x, y, ex, ey) =
-        if let Some((cw, ch)) = state.cell_px.map(|(w, h)| (u32::from(w), u32::from(h))) {
-            let (img_x0, img_w) = (off_col * cw, span_cols * cw);
-            let (img_y0, img_h) = (off_row * ch, span_rows * ch);
-            let x = u32::from(mouse.column)
-                .saturating_sub(img_x0)
-                .min(img_w.saturating_sub(1));
-            let y = u32::from(mouse.row)
-                .saturating_sub(img_y0)
-                .min(img_h.saturating_sub(1));
-            (x, y, img_w.max(1), img_h.max(1))
-        } else {
-            let x = u32::from(mouse.column)
-                .saturating_sub(off_col)
-                .min(span_cols.saturating_sub(1));
-            let y = u32::from(mouse.row)
-                .saturating_sub(off_row)
-                .min(span_rows.saturating_sub(1));
-            (x, y, span_cols.max(1), span_rows.max(1))
-        };
+        map_terminal_point_to_image(mouse.column, mouse.row, cells, state.cell_px, (ow, oh));
     ptr.motion_absolute(time, x, y, ex, ey);
     if state.cursor {
         state.pointer = Some((x * ow / ex.max(1), y * oh / ey.max(1)));
     }
+
+    // Native right/middle clicks pass through directly (SGR mouse mode 1006
+    // delivers them when the terminal doesn't intercept). Left clicks are
+    // sent immediately on press so drag works; on release, if the press was
+    // a long static hold, we ALSO fire a right-click — a fallback for
+    // terminals that swallow right-click for their own context menu.
     if let MouseEventKind::Down(btn) | MouseEventKind::Up(btn) = mouse.kind
-        && let Some(btn) = linux_button_code(effective_button(btn, mouse.modifiers))
+        && let Some(code) = linux_button_code(btn)
     {
         let pressed = matches!(mouse.kind, MouseEventKind::Down(_));
-        let button_state = if pressed {
-            wl_pointer::ButtonState::Pressed
-        } else {
-            wl_pointer::ButtonState::Released
-        };
-        ptr.button(time, btn, button_state);
+        ptr.button(
+            time,
+            code,
+            if pressed {
+                wl_pointer::ButtonState::Pressed
+            } else {
+                wl_pointer::ButtonState::Released
+            },
+        );
+
+        if btn == MouseButton::Left {
+            if pressed {
+                state.left_press = Some((Instant::now(), (x, y)));
+            } else if let Some((start, (px, py))) = state.left_press.take() {
+                let moved = (x as i64 - px as i64)
+                    .abs()
+                    .max((y as i64 - py as i64).abs());
+                if start.elapsed().as_millis() >= LONG_PRESS_MS && moved <= LONG_PRESS_MOVE {
+                    ptr.button(time, 0x111, wl_pointer::ButtonState::Pressed);
+                    ptr.button(time, 0x111, wl_pointer::ButtonState::Released);
+                }
+            }
+        }
     }
     ptr.frame();
 }
 
-/// Map a crossterm click to the button we send to the compositor.
-///
-/// Most terminals intercept plain right-click (their own context menu) and
-/// Shift+click (text selection), so the hosted app never receives a
-/// right-button press. Hold **Alt** while left-clicking: terminals forward
-/// Alt+click with the modifier flag intact, and we turn it into a right-button
-/// event.
-fn effective_button(button: MouseButton, mods: KeyModifiers) -> MouseButton {
-    match (button, mods.contains(KeyModifiers::ALT)) {
-        (MouseButton::Left, true) => MouseButton::Right,
-        (_, _) => button,
+fn map_terminal_point_to_image(
+    column: u16,
+    row: u16,
+    cells: (u16, u16),
+    cell_px: Option<(u16, u16)>,
+    src: (u32, u32),
+) -> (u32, u32, u32, u32) {
+    let (span_cols, span_rows, off_col, off_row) =
+        compute_placement(u32::from(cells.0), u32::from(cells.1), cell_px, src);
+    if let Some((cw, ch)) = cell_px.map(|(w, h)| (u32::from(w), u32::from(h))) {
+        let (img_x0, img_w) = (off_col * cw, span_cols * cw);
+        let (img_y0, img_h) = (off_row * ch, span_rows * ch);
+        let x = u32::from(column)
+            .saturating_sub(img_x0)
+            .min(img_w.saturating_sub(1));
+        let y = u32::from(row)
+            .saturating_sub(img_y0)
+            .min(img_h.saturating_sub(1));
+        (x, y, img_w.max(1), img_h.max(1))
+    } else {
+        let x = u32::from(column)
+            .saturating_sub(off_col)
+            .min(span_cols.saturating_sub(1));
+        let y = u32::from(row)
+            .saturating_sub(off_row)
+            .min(span_rows.saturating_sub(1));
+        (x, y, span_cols.max(1), span_rows.max(1))
     }
 }
 
+/// Map a crossterm click to the compositor button code (linux input.h BTN_*).
 fn linux_button_code(button: MouseButton) -> Option<u32> {
     match button {
         MouseButton::Left => Some(0x110),
@@ -861,94 +1462,160 @@ fn linux_button_code(button: MouseButton) -> Option<u32> {
     }
 }
 
-fn modifier_keycodes(mods: KeyModifiers) -> Vec<u32> {
-    let mut keys = Vec::new();
+/// Linux evdev keycodes for modifier keys (from `linux/input-event-codes.h`).
+const KEY_LEFTCTRL: u32 = 29;
+const KEY_LEFTSHIFT: u32 = 42;
+const KEY_LEFTALT: u32 = 56;
+const XKB_MOD_SHIFT: u32 = 1 << 0;
+const XKB_MOD_CONTROL: u32 = 1 << 2;
+const XKB_MOD_ALT: u32 = 1 << 3;
+
+#[derive(Clone, Debug, Default)]
+struct ActiveKeyModifiers {
+    evdev: Vec<u32>,
+    xkb_depressed: u32,
+}
+
+impl ActiveKeyModifiers {
+    fn contains(&self, evdev: &u32) -> bool {
+        self.evdev.contains(evdev)
+    }
+}
+
+fn key_modifiers(mods: KeyModifiers) -> ActiveKeyModifiers {
+    let mut active = ActiveKeyModifiers::default();
     if mods.contains(KeyModifiers::CONTROL) {
-        keys.push(37); // left ctrl
+        active.evdev.push(KEY_LEFTCTRL);
+        active.xkb_depressed |= XKB_MOD_CONTROL;
     }
     if mods.contains(KeyModifiers::SHIFT) {
-        keys.push(50); // left shift
+        active.evdev.push(KEY_LEFTSHIFT);
+        active.xkb_depressed |= XKB_MOD_SHIFT;
     }
     if mods.contains(KeyModifiers::ALT) {
-        keys.push(64); // left alt
+        active.evdev.push(KEY_LEFTALT);
+        active.xkb_depressed |= XKB_MOD_ALT;
     }
-    keys
+    active
 }
 
-fn xkb_keycode_for(code: KeyCode) -> Option<u32> {
+/// Terminals report printable characters after applying the user's keyboard
+/// layout, and not all of them consistently preserve a Shift modifier for
+/// printable ASCII. Our virtual keyboard uses a US XKB keymap, so synthesize
+/// Shift for characters that require it on that keymap.
+fn key_requires_shift(code: KeyCode) -> bool {
+    use KeyCode::*;
+    match code {
+        Char(c) if c.is_ascii_uppercase() => true,
+        Char(c) => matches!(
+            c,
+            '!' | '@'
+                | '#'
+                | '$'
+                | '%'
+                | '^'
+                | '&'
+                | '*'
+                | '('
+                | ')'
+                | '_'
+                | '+'
+                | '{'
+                | '}'
+                | ':'
+                | '"'
+                | '~'
+                | '|'
+                | '<'
+                | '>'
+                | '?'
+        ),
+        BackTab => true,
+        _ => false,
+    }
+}
+
+/// US QWERTY evdev keycodes for 'a'–'z' (alphabetical order). Letters don't
+/// follow ASCII ordering — they follow the physical keyboard layout.
+const ALPHA_EVDEV: [u32; 26] = [
+    30, 48, 46, 32, 18, 33, 34, 35, 23, 36, 37, 38, 50, // a–m
+    49, 24, 25, 16, 19, 31, 20, 22, 47, 17, 45, 21, 44, // n–z
+];
+
+/// Map a crossterm `KeyCode` to a **raw Linux evdev keycode** (as used by
+/// `linux/input-event-codes.h` and expected by `zwp_virtual_keyboard_v1.key`).
+fn evdev_keycode_for(code: KeyCode) -> Option<u32> {
+    use KeyCode::*;
     Some(match code {
-        KeyCode::Backspace => 22,
-        KeyCode::Enter => 36,
-        KeyCode::Left => 113,
-        KeyCode::Right => 114,
-        KeyCode::Up => 111,
-        KeyCode::Down => 116,
-        KeyCode::Home => 110,
-        KeyCode::End => 115,
-        KeyCode::PageUp => 112,
-        KeyCode::PageDown => 117,
-        KeyCode::Tab | KeyCode::BackTab => 23,
-        KeyCode::Delete => 119,
-        KeyCode::Insert => 118,
-        KeyCode::Esc => 9,
-        KeyCode::F(n @ 1..=10) => 66 + u32::from(n),
-        KeyCode::F(11) => 95,
-        KeyCode::F(12) => 96,
-        KeyCode::Char(' ') => 65,
-        KeyCode::Char(c) => char_xkb_keycode(c)?,
-        _ => return None,
-    })
-}
-
-fn char_xkb_keycode(c: char) -> Option<u32> {
-    Some(match c.to_ascii_lowercase() {
-        '1' => 10,
-        '2' => 11,
-        '3' => 12,
-        '4' => 13,
-        '5' => 14,
-        '6' => 15,
-        '7' => 16,
-        '8' => 17,
-        '9' => 18,
-        '0' => 19,
-        '-' => 20,
-        '=' => 21,
-        'q' => 24,
-        'w' => 25,
-        'e' => 26,
-        'r' => 27,
-        't' => 28,
-        'y' => 29,
-        'u' => 30,
-        'i' => 31,
-        'o' => 32,
-        'p' => 33,
-        '[' => 34,
-        ']' => 35,
-        'a' => 38,
-        's' => 39,
-        'd' => 40,
-        'f' => 41,
-        'g' => 42,
-        'h' => 43,
-        'j' => 44,
-        'k' => 45,
-        'l' => 46,
-        ';' => 47,
-        '\'' => 48,
-        '`' => 49,
-        '\\' => 51,
-        'z' => 52,
-        'x' => 53,
-        'c' => 54,
-        'v' => 55,
-        'b' => 56,
-        'n' => 57,
-        'm' => 58,
-        ',' => 59,
-        '.' => 60,
-        '/' => 61,
+        // Letters — algorithmic lookup by position in the alphabet.
+        Char(c) if c.is_ascii_alphabetic() => {
+            ALPHA_EVDEV[(c.to_ascii_lowercase() as u32 - b'a' as u32) as usize]
+        }
+        // Digits — evdev KEY_1=2 … KEY_9=10, KEY_0=11.
+        Char(c) if c.is_ascii_digit() => {
+            if c == '0' {
+                11
+            } else {
+                (c as u32 - b'1' as u32) + 2
+            }
+        }
+        // Punctuation (US layout — no pattern, must be tabulated).
+        Char(c) => match c.to_ascii_lowercase() {
+            '!' => 2,
+            '@' => 3,
+            '#' => 4,
+            '$' => 5,
+            '%' => 6,
+            '^' => 7,
+            '&' => 8,
+            '*' => 9,
+            '(' => 10,
+            ')' => 11,
+            '-' => 12,
+            '_' => 12,
+            '=' => 13,
+            '+' => 13,
+            '[' => 26,
+            '{' => 26,
+            ']' => 27,
+            '}' => 27,
+            ';' => 39,
+            ':' => 39,
+            '\'' => 40,
+            '"' => 40,
+            '`' => 41,
+            '~' => 41,
+            '\\' => 43,
+            '|' => 43,
+            ',' => 51,
+            '<' => 51,
+            '.' => 52,
+            '>' => 52,
+            '/' => 53,
+            '?' => 53,
+            ' ' => 57,
+            _ => return None,
+        },
+        // Special keys.
+        Esc => 1,
+        Backspace => 14,
+        Tab | BackTab => 15,
+        Enter => 28,
+        // Function keys — F1–F10 are sequential (59–68), F11/F12 jump.
+        F(n @ 1..=10) => 58 + u32::from(n),
+        F(11) => 87,
+        F(12) => 88,
+        // Navigation cluster.
+        Home => 102,
+        Up => 103,
+        PageUp => 104,
+        Left => 105,
+        Right => 106,
+        End => 107,
+        Down => 108,
+        PageDown => 109,
+        Insert => 110,
+        Delete => 111,
         _ => return None,
     })
 }
@@ -964,11 +1631,19 @@ fn setup_input(state: &mut State, qh: &QueueHandle<State>) {
             // virtual_keyboard keymap: format=1 (XKB_KEYMAP_FORMAT_TEXT_V1).
             kb.keymap(1, fd.as_fd(), KEYMAP_US.len() as u32);
             state._keymap_fd = Some(fd);
+            tracing::debug!("virtual keyboard created + keymap uploaded");
+        } else {
+            tracing::debug!("virtual keyboard created, but keymap memfd failed");
         }
         state.vkeyboard = Some(kb);
+    } else {
+        tracing::debug!("virtual keyboard unavailable: missing manager or seat");
     }
     if let Some(mgr) = state.vp_manager.as_ref() {
         state.vpointer = Some(mgr.create_virtual_pointer(state.seat.as_ref(), qh, ()));
+        tracing::debug!("virtual pointer created");
+    } else {
+        tracing::debug!("virtual pointer unavailable: missing manager");
     }
 }
 
@@ -997,6 +1672,22 @@ fn cage_bin() -> String {
     }
     // Fall back to a cage on PATH (e.g. distro-packaged).
     "cage".to_string()
+}
+
+fn cage_path() -> Option<PathBuf> {
+    if let Some(p) = env::var_os("ZUKO_CAGE") {
+        let p = PathBuf::from(p);
+        if p.is_file() {
+            return Some(p);
+        }
+    }
+    if let Some(prefix) = bundled_cage_prefix() {
+        let p = prefix.join("cage");
+        if p.is_file() {
+            return Some(p);
+        }
+    }
+    find_bin("cage", "ZUKO_CAGE")
 }
 
 /// The bundled cage install dir, if present. Holds `cage` + the wlroots
@@ -1098,24 +1789,13 @@ fn wait_for_socket(cage: &mut Child, dir: &Path, before: &[String]) -> Result<St
     );
 }
 
-fn spawn_cage(
-    args: &AppArgs,
-    launch: &Launch,
-    xdg_runtime: &Path,
-    portal_bus: Option<&str>,
-) -> Result<Child> {
+fn spawn_cage(args: &AppArgs, launch: &Launch, xdg_runtime: &Path) -> Result<Child> {
     use std::os::unix::process::CommandExt;
     let mut cmd = Command::new(cage_bin());
     cmd.env("WLR_BACKENDS", "headless")
         .env("WLR_RENDERER", "pixman")
         .env("WLR_HEADLESS_OUTPUTS", "1")
         .env("XDG_RUNTIME_DIR", xdg_runtime);
-    // If the in-cage portal is enabled, route the app's portal calls (save/open
-    // dialogs) to the cage-side portal via a private D-Bus session — so dialogs
-    // render into cage (captured → TUI) instead of the host desktop.
-    if let Some(bus) = portal_bus {
-        cmd.env("DBUS_SESSION_BUS_ADDRESS", bus);
-    }
     // Bundled-lib path: prefer the release layout (next to the bundled cage
     // binary); allow an explicit override for dev/testing. Harmless if empty.
     let lib_dir = bundled_cage_prefix().map(|p| p.to_string_lossy().into_owned());
@@ -1155,8 +1835,8 @@ fn spawn_cage(
 // ──────────────────────────── Wayland client state ──────────────────────────
 //
 // Mirrors the proven spike: bind wl_shm + wl_output + screencopy manager once;
-// per capture, create a frame + SHM buffer, copy, wait for Ready. cage's
-// headless output is 1280×720 XRGB8888 (stride == width*4), so the tight RGBA
+// per capture, create a frame + SHM buffer, copy, wait for Ready. The captured
+// buffer is XRGB8888 with a compositor-provided stride, so the tight RGBA
 // conversion below is the only transform needed.
 
 #[derive(Default)]
@@ -1171,13 +1851,25 @@ struct State {
     mmap: Option<Arc<Mutex<MmapMut>>>,
     captured: Option<(usize, usize, Vec<u8>)>, // w, h, tight RGBA
     done: Option<Result<(), String>>,
+    // The memfd backing the current screencopy SHM buffer. Held until the next
+    // frame so the fd stays valid across the Wayland flush (see BufferDone).
+    _screencopy_fd: Option<OwnedFd>,
     // Input devices + a keymap memfd kept alive for the session.
     seat: Option<wl_seat::WlSeat>,
     vk_manager: Option<ZwpVirtualKeyboardManagerV1>,
     vp_manager: Option<ZwlrVirtualPointerManagerV1>,
+    output_manager: Option<ZwlrOutputManagerV1>,
     vkeyboard: Option<ZwpVirtualKeyboardV1>,
     vpointer: Option<ZwlrVirtualPointerV1>,
     _keymap_fd: Option<OwnedFd>,
+    output_heads: Vec<ZwlrOutputHeadV1>,
+    output_config_serial: Option<u32>,
+    output_config_result: Option<Result<(), String>>,
+    output_size: OutputSize,
+    target_output_size: OutputSize,
+    output_scale: f32,
+    terminal_resized: bool,
+    graphics_codec: KittyGraphicsCodec,
     // Pointer overlay: draw an inverted crosshair at the last pointer position
     // so touch/imprecise clicks can be aimed. `pointer` is in output pixels.
     cursor: bool,
@@ -1189,6 +1881,18 @@ struct State {
     // skip encode/emit — the cheap "diff" that avoids resending static screens
     // (idle menus, text) at 16 fps.
     prev_frame: Option<Vec<u8>>,
+    // Left-button press tracking for long-press → right-click. Stores the
+    // press instant and image-space (x, y) so we can detect a long static hold.
+    left_press: Option<(Instant, (u32, u32))>,
+    // Key currently held down on the virtual keyboard. Released from the main
+    // loop after KEY_TAP to synthesize terminal key-up without repeat floods.
+    pending_key: Option<PendingKey>,
+}
+
+struct PendingKey {
+    evdev: u32,
+    mods: ActiveKeyModifiers,
+    release_at: Instant,
 }
 
 impl Dispatch<wl_registry::WlRegistry, GlobalListContents> for State {
@@ -1229,6 +1933,89 @@ impl Dispatch<wl_buffer::WlBuffer, ()> for State {
         _: &mut State,
         _: &wl_buffer::WlBuffer,
         _: wl_buffer::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+    }
+}
+impl Dispatch<ZwlrOutputManagerV1, ()> for State {
+    fn event(
+        state: &mut State,
+        _: &ZwlrOutputManagerV1,
+        event: zwlr_output_manager_v1::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+        match event {
+            zwlr_output_manager_v1::Event::Head { head } => state.output_heads.push(head),
+            zwlr_output_manager_v1::Event::Done { serial } => {
+                state.output_config_serial = Some(serial);
+            }
+            zwlr_output_manager_v1::Event::Finished => {}
+            _ => {}
+        }
+    }
+
+    wayland_client::event_created_child!(State, ZwlrOutputManagerV1, [
+        // zwlr_output_manager_v1.head(new_id zwlr_output_head_v1)
+        0 => (ZwlrOutputHeadV1, ()),
+    ]);
+}
+impl Dispatch<ZwlrOutputHeadV1, ()> for State {
+    fn event(
+        _: &mut State,
+        _: &ZwlrOutputHeadV1,
+        _: zwlr_output_head_v1::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+    }
+
+    wayland_client::event_created_child!(State, ZwlrOutputHeadV1, [
+        // zwlr_output_head_v1.mode(new_id zwlr_output_mode_v1)
+        3 => (ZwlrOutputModeV1, ()),
+    ]);
+}
+impl Dispatch<ZwlrOutputModeV1, ()> for State {
+    fn event(
+        _: &mut State,
+        _: &ZwlrOutputModeV1,
+        _: zwlr_output_mode_v1::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+    }
+}
+impl Dispatch<ZwlrOutputConfigurationV1, ()> for State {
+    fn event(
+        state: &mut State,
+        _: &ZwlrOutputConfigurationV1,
+        event: zwlr_output_configuration_v1::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+        state.output_config_result = Some(match event {
+            zwlr_output_configuration_v1::Event::Succeeded => Ok(()),
+            zwlr_output_configuration_v1::Event::Failed => {
+                Err("output configuration failed".into())
+            }
+            zwlr_output_configuration_v1::Event::Cancelled => {
+                Err("output configuration cancelled".into())
+            }
+            _ => return,
+        });
+    }
+}
+impl Dispatch<ZwlrOutputConfigurationHeadV1, ()> for State {
+    fn event(
+        _: &mut State,
+        _: &ZwlrOutputConfigurationHeadV1,
+        _: zwlr_output_configuration_head_v1::Event,
         _: &(),
         _: &Connection,
         _: &QueueHandle<Self>,
@@ -1380,6 +2167,11 @@ impl Dispatch<ZwlrScreencopyFrameV1, ()> for State {
                 state._pool = Some(pool);
                 state._buffer = Some(buffer);
                 state.mmap = Some(mmap);
+                // Keep the memfd alive until the connection flushes —
+                // create_pool sent the raw fd number (via BorrowedFd), and if
+                // the OwnedFd closes before flush, the stale fd number causes
+                // "invalid arguments for wl_shm.create_pool" on the compositor.
+                state._screencopy_fd = Some(fd);
             }
             Ready { .. } => {
                 if let Some((w, h, stride)) = state.dims

@@ -1,6 +1,6 @@
 [package]
 name = "zuko"
-version = "0.7.0"
+version = "0.7.1"
 edition = "2024"
 license = "Apache-2.0"
 description = "Remote terminals over Iroh: the host daemon and reference CLI client."
@@ -113,8 +113,8 @@ libc = "0.2"
 # Wayland client over cage's private socket (wlr-screencopy to pull frames,
 # virtual-keyboard/virtual-pointer to inject input). This replaces the earlier
 # in-process Smithay compositor and removes the "guess the terminal's pixel
-# size" failure mode: cage's headless output is a known fixed size, and the
-# terminal simply scales the Kitty image to fit.
+# size" failure mode: zuko sizes cage from terminal pixels and updates the
+# output through wlr-output-management when the terminal is resized.
 [target.'cfg(target_os = "linux")'.dependencies]
 wayland-client = { version = "0.31", optional = true }
 wayland-protocols-wlr = { version = "0.3", features = ["client"], optional = true }

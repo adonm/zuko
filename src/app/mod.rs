@@ -12,9 +12,9 @@
 //! - `zwp_virtual_keyboard_manager_v1` / `zwlr_virtual_pointer_manager_v1`
 //!   to inject input (Phase 2).
 //!
-//! Sizing is solved by construction: cage's headless output is a known fixed
-//! size (1280×720), so there is nothing to guess — the terminal just scales the
-//! Kitty image to fit. The earlier pixel-size probing is gone entirely.
+//! Sizing is solved by construction: zuko chooses the terminal's pixel geometry
+//! (bounded by a safety cap), asks cage to use it via wlr-output-management,
+//! and reconfigures cage when the terminal is resized.
 
 use anyhow::{Context, Result, bail};
 use crossterm::{
@@ -25,7 +25,7 @@ use crossterm::{
 };
 use std::{collections::BTreeMap, env, io::Write, path::PathBuf};
 
-use crate::AppArgs;
+use crate::{AppArgs, KittyGraphicsCodec};
 
 #[cfg(target_os = "linux")]
 mod imp;
@@ -57,7 +57,12 @@ const DEFAULT_OUTPUT: (i32, i32) = (DEFAULT_WIDTH_PX, DEFAULT_HEIGHT_PX);
 
 /// Encode an RGBA frame to a fast-compressed PNG for the Kitty graphics
 /// protocol. Expects tightly-packed rows (`bytes.len() == width * 4 * height`).
-fn encode_rgba_png(bytes: &[u8], width: usize, height: usize) -> Result<Vec<u8>> {
+fn encode_rgba_png(
+    bytes: &[u8],
+    width: usize,
+    height: usize,
+    filter: png::Filter,
+) -> Result<Vec<u8>> {
     let row_bytes = width * 4;
     if height == 0 || row_bytes == 0 {
         bail!("empty frame {width}x{height}");
@@ -74,12 +79,10 @@ fn encode_rgba_png(bytes: &[u8], width: usize, height: usize) -> Result<Vec<u8>>
     encoder.set_color(png::ColorType::Rgba);
     encoder.set_depth(png::BitDepth::Eight);
     encoder.set_compression(png::Compression::Fast);
-    // Paeth row filtering: each row is delta-encoded against the row above, so
-    // unchanged regions (most of a mostly-static UI) collapse to near-zero
-    // before zlib — a full frame ships nearly as small as a true diff. The
-    // dirty-frame check in `capture_and_emit` additionally skips encode/emit
-    // entirely when the frame is byte-identical to the previous one.
-    encoder.set_filter(png::Filter::Paeth);
+    // Paeth is best for mostly-static UI; NoFilter is cheaper for high-entropy
+    // video-like frames where filtering rarely improves zlib output. The caller
+    // picks per-frame from a cheap sampler.
+    encoder.set_filter(filter);
     {
         let mut writer = encoder.write_header()?;
         writer.write_image_data(bytes)?;
@@ -87,7 +90,61 @@ fn encode_rgba_png(bytes: &[u8], width: usize, height: usize) -> Result<Vec<u8>>
     Ok(out)
 }
 
-fn encode_test_pattern(width: usize, height: usize) -> Result<Vec<u8>> {
+/// Convert tightly-packed RGBA to raw RGB for Kitty `f=24`. This avoids PNG
+/// filtering/zlib entirely, which is much cheaper for high-entropy video-like
+/// frames and often ships fewer bytes than PNG once the PNG no longer
+/// compresses well.
+fn encode_rgba_rgb(bytes: &[u8], width: usize, height: usize) -> Result<Vec<u8>> {
+    let row_bytes = width * 4;
+    if height == 0 || row_bytes == 0 {
+        bail!("empty frame {width}x{height}");
+    }
+    if bytes.len() < row_bytes * height {
+        bail!(
+            "frame too small: {} bytes for {width}x{height} RGBA (need {})",
+            bytes.len(),
+            row_bytes * height
+        );
+    }
+    let mut out = Vec::with_capacity(width * height * 3);
+    for px in bytes[..row_bytes * height].chunks_exact(4) {
+        out.extend_from_slice(&px[..3]);
+    }
+    Ok(out)
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum KittyGraphicsFormat {
+    Png,
+    Rgb,
+}
+
+impl KittyGraphicsFormat {
+    fn code(self) -> u16 {
+        match self {
+            Self::Png => 100,
+            Self::Rgb => 24,
+        }
+    }
+}
+
+#[derive(Debug)]
+struct KittyFramePayload {
+    format: KittyGraphicsFormat,
+    bytes: Vec<u8>,
+}
+
+impl KittyFramePayload {
+    fn transport_bytes(&self) -> usize {
+        kitty_transport_bytes(self.bytes.len())
+    }
+}
+
+fn encode_test_pattern_payload(
+    width: usize,
+    height: usize,
+    codec: KittyGraphicsCodec,
+) -> Result<KittyFramePayload> {
     let mut pixels = Vec::with_capacity(width * height * 4);
     for y in 0..height {
         for x in 0..width {
@@ -98,17 +155,16 @@ fn encode_test_pattern(width: usize, height: usize) -> Result<Vec<u8>> {
             pixels.extend_from_slice(&[r, g, b, 255]);
         }
     }
-    let mut out = Vec::new();
-    let mut encoder = png::Encoder::new(&mut out, width as u32, height as u32);
-    encoder.set_color(png::ColorType::Rgba);
-    encoder.set_depth(png::BitDepth::Eight);
-    encoder.set_compression(png::Compression::Fast);
-    encoder.set_filter(png::Filter::NoFilter);
-    {
-        let mut writer = encoder.write_header()?;
-        writer.write_image_data(&pixels)?;
+    match codec {
+        KittyGraphicsCodec::Rgb => Ok(KittyFramePayload {
+            format: KittyGraphicsFormat::Rgb,
+            bytes: encode_rgba_rgb(&pixels, width, height)?,
+        }),
+        KittyGraphicsCodec::Auto | KittyGraphicsCodec::Png => Ok(KittyFramePayload {
+            format: KittyGraphicsFormat::Png,
+            bytes: encode_rgba_png(&pixels, width, height, png::Filter::NoFilter)?,
+        }),
     }
-    Ok(out)
 }
 
 fn kitty_clear_screen() -> Result<()> {
@@ -118,10 +174,11 @@ fn kitty_clear_screen() -> Result<()> {
     Ok(())
 }
 
-fn kitty_emit_png(
+fn kitty_emit_frame(
     width: u32,
     height: u32,
-    png: &[u8],
+    format: KittyGraphicsFormat,
+    data: &[u8],
     place: bool,
     // (span_cols, span_rows, off_col, off_row): aspect-preserving cell
     // rectangle + centering offset for letterboxed display.
@@ -129,8 +186,17 @@ fn kitty_emit_png(
 ) -> Result<()> {
     use base64::Engine as _;
     const CHUNK: usize = 4096;
-    let encoded = base64::engine::general_purpose::STANDARD.encode(png);
+    let encoded = base64::engine::general_purpose::STANDARD.encode(data);
     let mut out = std::io::stdout();
+    let format = format.code();
+    if place {
+        // A resize re-places the image with a new c=/r= cell rectangle. Some
+        // terminals keep the old placement alive when another a=T with the same
+        // image id is emitted, which shows up as a "double image" after resize.
+        // Delete id=1 first; harmless on the initial frame, and a=t updates
+        // below continue to reuse the single fresh placement.
+        out.write_all(b"\x1b_Ga=d,i=1,q=2\x1b\\")?;
+    }
     // Position the cursor at the letterbox offset (1-indexed) so the image is
     // centered; home if no placement. Harmless on `a=t` updates (they target
     // the existing placement by id, not the cursor).
@@ -155,7 +221,7 @@ fn kitty_emit_png(
         if i == 0 {
             write!(
                 out,
-                "\x1b_G{action},f=100,t=d,i=1,q=2,s={width},v={height}{cell_rect},m={more};"
+                "\x1b_G{action},f={format},t=d,i=1,q=2,s={width},v={height}{cell_rect},m={more};"
             )?;
         } else {
             write!(out, "\x1b_Gm={more};")?;
@@ -165,6 +231,13 @@ fn kitty_emit_png(
     }
     out.flush()?;
     Ok(())
+}
+
+fn kitty_transport_bytes(data_bytes: usize) -> usize {
+    let base64 = data_bytes.div_ceil(3) * 4;
+    // Kitty chunks add a small escape/control overhead. This is intentionally
+    // approximate; frame pacing only needs the right order of magnitude.
+    base64 + base64.div_ceil(4096) * 64
 }
 
 // ─────────────────────────── terminal mode guard ────────────────────────────
@@ -232,7 +305,7 @@ impl Drop for TerminalModeGuard {
 // ──────────────────────────────── arg validation ────────────────────────────
 
 fn validate_args(args: &AppArgs) -> Result<()> {
-    if args.command.is_empty() && !args.list && !args.test_pattern {
+    if args.command.is_empty() && !args.list && !args.test_pattern && !args.doctor {
         bail!("missing app command");
     }
     if args.fps == 0 {
@@ -240,6 +313,9 @@ fn validate_args(args: &AppArgs) -> Result<()> {
     }
     if !args.scale.is_finite() || args.scale <= 0.0 {
         bail!("--scale must be a positive finite number");
+    }
+    if !args.max_mbps.is_finite() || args.max_mbps < 0.0 {
+        bail!("--max-mbps must be a non-negative finite number");
     }
     Ok(())
 }
@@ -263,16 +339,7 @@ fn resolve_launch(args: &AppArgs, software: bool, no_sandbox: bool) -> Result<La
     let env = app_env(software, no_sandbox);
     if let Some(entry) = find_desktop_app(query)? {
         if let Some(app_id) = entry.flatpak_app_id.as_deref() {
-            let mut flatpak_args = vec![
-                "run".to_string(),
-                "--socket=wayland".to_string(),
-                "--socket=fallback-x11".to_string(),
-            ];
-            for (k, v) in &env {
-                flatpak_args.push(format!("--env={k}={v}"));
-            }
-            flatpak_args.push(app_id.to_string());
-            flatpak_args.extend(child_args.iter().cloned());
+            let flatpak_args = flatpak_run_args(app_id, child_args, &env);
             return Ok(Launch {
                 label: format!("{} ({app_id})", entry.name),
                 program: "flatpak".to_string(),
@@ -307,6 +374,29 @@ fn resolve_launch(args: &AppArgs, software: bool, no_sandbox: bool) -> Result<La
     })
 }
 
+fn flatpak_run_args(app_id: &str, child_args: &[String], env: &[(String, String)]) -> Vec<String> {
+    let mut flatpak_args = vec![
+        "run".to_string(),
+        // Keep the sandbox attached to cage's lifecycle and Wayland socket.
+        "--die-with-parent".to_string(),
+        "--socket=wayland".to_string(),
+        "--share=ipc".to_string(),
+        // zuko app is a Wayland/cage path. X11 fallback can silently choose the
+        // wrong display path or fail later in less obvious ways, so make it an
+        // explicit Wayland-only launch.
+        "--nosocket=x11".to_string(),
+        "--nosocket=fallback-x11".to_string(),
+        // No host AT-SPI/a11y bus exists inside headless cage.
+        "--no-a11y-bus".to_string(),
+    ];
+    for (k, v) in env {
+        flatpak_args.push(format!("--env={k}={v}"));
+    }
+    flatpak_args.push(app_id.to_string());
+    flatpak_args.extend(child_args.iter().cloned());
+    flatpak_args
+}
+
 /// Environment that makes the *child* app prefer Wayland + render under cage.
 /// (cage sets `WAYLAND_DISPLAY` for its child itself; we only add the tunables.)
 fn app_env(software: bool, no_sandbox: bool) -> Vec<(String, String)> {
@@ -330,6 +420,21 @@ fn app_env(software: bool, no_sandbox: bool) -> Vec<(String, String)> {
         // cage surface). NOTE: Flatpaks mandate the portal regardless, so
         // sandboxed apps still route dialogs to the host desktop.
         ("GTK_USE_PORTAL".to_string(), "0".to_string()), // GTK in-process dialogs
+        // The app runs in a private cage/D-Bus session where the host IBus/a11y
+        // daemons are often unavailable. GTK text widgets otherwise pick IBus,
+        // fail to create an input context, and can drop ordinary key input
+        // (notably GNOME Text Editor). Use GTK's built-in simple IM instead.
+        (
+            "GTK_IM_MODULE".to_string(),
+            "gtk-im-context-simple".to_string(),
+        ),
+        ("QT_IM_MODULE".to_string(), String::new()),
+        ("XMODIFIERS".to_string(), "@im=none".to_string()),
+        // In a headless cage session there is no GNOME settings daemon or AT-SPI
+        // bus. Keep GTK/GSettings local to the process and disable a11y bridge
+        // probing so startup doesn't depend on host desktop services.
+        ("GSETTINGS_BACKEND".to_string(), "memory".to_string()),
+        ("NO_AT_BRIDGE".to_string(), "1".to_string()),
     ];
     // Firefox WebRender is a separate perf choice (software WR is slower), so it
     // stays opt-in behind --software unlike the toolkit renderers above.
@@ -529,4 +634,32 @@ fn print_launch(launch: &Launch) {
         "  cage -- {}",
         shell_join(std::iter::once(&launch.program).chain(launch.args.iter()))
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn flatpak_launch_is_wayland_only_and_cage_lifecycle_bound() {
+        let env = vec![
+            ("GDK_BACKEND".to_string(), "wayland".to_string()),
+            ("DISPLAY".to_string(), String::new()),
+        ];
+        let child_args = vec!["--new-window".to_string()];
+        let args = flatpak_run_args("org.example.App", &child_args, &env);
+
+        assert!(args.contains(&"run".to_string()));
+        assert!(args.contains(&"--die-with-parent".to_string()));
+        assert!(args.contains(&"--socket=wayland".to_string()));
+        assert!(args.contains(&"--share=ipc".to_string()));
+        assert!(args.contains(&"--nosocket=x11".to_string()));
+        assert!(args.contains(&"--nosocket=fallback-x11".to_string()));
+        assert!(args.contains(&"--no-a11y-bus".to_string()));
+        assert!(!args.contains(&"--socket=fallback-x11".to_string()));
+        assert!(args.contains(&"--env=GDK_BACKEND=wayland".to_string()));
+        assert!(args.contains(&"--env=DISPLAY=".to_string()));
+        assert_eq!(args[args.len() - 2], "org.example.App");
+        assert_eq!(args[args.len() - 1], "--new-window");
+    }
 }

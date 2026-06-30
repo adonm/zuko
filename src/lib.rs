@@ -132,6 +132,11 @@ pub struct AppArgs {
     #[arg(long)]
     pub test_pattern: bool,
 
+    /// Check zuko app runtime capabilities (cage, Wayland protocols, terminal
+    /// geometry) and exit without entering TUI mode.
+    #[arg(long)]
+    pub doctor: bool,
+
     /// Let the child app write stdout/stderr to this terminal. Normal mode
     /// suppresses child logs so they do not corrupt the Kitty graphics stream.
     #[arg(long)]
@@ -148,27 +153,23 @@ pub struct AppArgs {
     #[arg(long)]
     pub no_cursor: bool,
 
-    /// Route xdg-desktop-portal calls (file open/save dialogs, etc.) to a
-    /// portal backend running INSIDE cage, so the dialogs render into the TUI
-    /// instead of popping up on the host's own desktop. Starts a private
-    /// D-Bus + xdg-desktop-portal + the gtk backend against cage.
-    ///
-    /// **Default: auto** — enabled when `xdg-desktop-portal` + a backend are
-    /// installed on the host. `--no-portal` disables; `--portal` forces on even
-    /// when detection says otherwise.
-    #[arg(long)]
-    pub portal: bool,
-
-    /// Force-disable the in-cage portal (override the auto-detect default).
-    #[arg(long)]
-    pub no_portal: bool,
-
-    /// Maximum terminal frame ship rate. Rendering/damage can run faster; this
-    /// caps the expensive readback + Kitty output path.
-    #[arg(long, default_value_t = 16)]
+    /// Maximum terminal frame ship rate. zuko adapts down when frames are
+    /// unchanged or encode/output is slower than this cap.
+    #[arg(long, default_value_t = 30)]
     pub fps: u16,
 
-    /// Scale the hosted app's logical output before rendering to the terminal.
+    /// Approximate max Kitty graphics bandwidth in Mbit/s. zuko adapts FPS down
+    /// when full-motion frames exceed this budget. 0 disables the bandwidth cap.
+    #[arg(long, default_value_t = 80.0)]
+    pub max_mbps: f64,
+
+    /// Kitty graphics payload codec. `auto` uses PNG for UI/static frames and
+    /// raw RGB for high-entropy video-like frames to avoid PNG CPU cost.
+    #[arg(long, value_enum, default_value_t = KittyGraphicsCodec::Auto)]
+    pub graphics_codec: KittyGraphicsCodec,
+
+    /// Scale multiplier for the hosted app output relative to terminal pixels.
+    /// Default 1.0 makes cage match the terminal pixel size.
     #[arg(long, default_value_t = 1.0)]
     pub scale: f32,
 
@@ -181,10 +182,19 @@ pub struct AppArgs {
     /// Child command and arguments. Put zuko app flags before the command; use
     /// `--` before child flags, e.g. `zuko app --fps 5 -- firefox --new-window`.
     #[arg(
-        required_unless_present_any = ["list", "test_pattern"],
+        required_unless_present_any = ["list", "test_pattern", "doctor"],
         trailing_var_arg = true,
         allow_hyphen_values = true,
         value_name = "COMMAND"
     )]
     pub command: Vec<String>,
+}
+
+#[cfg(target_os = "linux")]
+#[derive(clap::ValueEnum, Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum KittyGraphicsCodec {
+    #[default]
+    Auto,
+    Png,
+    Rgb,
 }
