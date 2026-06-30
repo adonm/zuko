@@ -148,6 +148,21 @@ pub struct AppArgs {
     #[arg(long)]
     pub no_cursor: bool,
 
+    /// Route xdg-desktop-portal calls (file open/save dialogs, etc.) to a
+    /// portal backend running INSIDE cage, so the dialogs render into the TUI
+    /// instead of popping up on the host's own desktop. Starts a private
+    /// D-Bus + xdg-desktop-portal + the gtk backend against cage.
+    ///
+    /// **Default: auto** — enabled when `xdg-desktop-portal` + a backend are
+    /// installed on the host. `--no-portal` disables; `--portal` forces on even
+    /// when detection says otherwise.
+    #[arg(long)]
+    pub portal: bool,
+
+    /// Force-disable the in-cage portal (override the auto-detect default).
+    #[arg(long)]
+    pub no_portal: bool,
+
     /// Maximum terminal frame ship rate. Rendering/damage can run faster; this
     /// caps the expensive readback + Kitty output path.
     #[arg(long, default_value_t = 16)]

@@ -123,8 +123,47 @@ pub fn run(args: AppArgs) -> Result<()> {
     let xdg_runtime = make_xdg_runtime_dir()?;
     let sockets_before = snapshot_wayland_sockets(&xdg_runtime);
 
-    let mut cage = spawn_cage(&args, &launch, &xdg_runtime)?;
+    // In-cage xdg-desktop-portal (default: auto, when the host has it). The
+    // private D-Bus starts BEFORE cage so the app can inherit its address;
+    // the portal daemons start AFTER cage's socket exists (the backend renders
+    // into cage). PortalStack drops at end of run() to reap the daemons.
+    let want_portal = if args.no_portal {
+        false
+    } else if args.portal {
+        true
+    } else {
+        portal_available()
+    };
+    let mut portal_stack = PortalStack {
+        dbus: None,
+        portal: None,
+        backend: None,
+        dbus_pgid: None,
+    };
+    let portal_bus = if want_portal && let Ok((bus, dbus, pgid)) = start_portal_dbus(&xdg_runtime) {
+        portal_stack.dbus = Some(dbus);
+        portal_stack.dbus_pgid = Some(pgid);
+        Some(bus)
+    } else if want_portal {
+        eprintln!(
+            "zuko app: couldn't start the in-cage portal bus; portal dialogs \
+             may appear on the host desktop instead of the TUI"
+        );
+        None
+    } else {
+        None
+    };
+
+    let mut cage = spawn_cage(&args, &launch, &xdg_runtime, portal_bus.as_deref())?;
     let socket = wait_for_socket(&mut cage, &xdg_runtime, &sockets_before)?;
+
+    if let (Some(bus), Some(pgid)) = (&portal_bus, portal_stack.dbus_pgid)
+        && let Ok((portal, backend)) = start_portal_backends(bus, &xdg_runtime, &socket, pgid)
+    {
+        portal_stack.portal = Some(portal);
+        portal_stack.backend = Some(backend);
+        eprintln!("zuko app: in-cage portal up (file dialogs will render in the TUI)");
+    }
 
     eprintln!(
         "zuko app: cage running {} at {}x{} (pixman/headless) on {}; connecting…",
@@ -210,6 +249,163 @@ fn shutdown_cage(cage: &mut Child, xdg_runtime: &Path, socket: &str) {
     // cage's SIGTERM teardown doesn't unlink its socket; do it for it.
     let _ = fs::remove_file(xdg_runtime.join(socket));
     let _ = fs::remove_file(format!("{}.lock", xdg_runtime.join(socket).display()));
+}
+
+// ──────────────────────── in-cage xdg-desktop-portal ────────────────────────
+//
+// When the host has xdg-desktop-portal + a backend installed, start a PRIVATE
+// D-Bus session + xdg-desktop-portal + (gtk) backend against cage's Wayland,
+// and point cage's child app at that bus. The app's portal calls (file open/
+// save dialogs) then route to OUR portal-gtk, which renders the dialog on
+// cage's output → captured → shown in the TUI. Without this, portal dialogs
+// render on the host's own desktop (invisible/unusable over a remote link).
+
+/// Resolve a binary: an explicit `$ZUKO_*` override, then common libexec/lib
+/// dirs, then PATH.
+fn find_bin(name: &str, override_var: &str) -> Option<PathBuf> {
+    if let Some(p) = env::var_os(override_var)
+        && PathBuf::from(&p).is_file()
+    {
+        return Some(PathBuf::from(p));
+    }
+    for dir in ["/usr/libexec", "/usr/lib", "/usr/lib/x86_64-linux-gnu"] {
+        let p = PathBuf::from(dir).join(name);
+        if p.is_file() {
+            return Some(p);
+        }
+    }
+    if let Ok(path) = env::var("PATH") {
+        for dir in path.split(':') {
+            let p = PathBuf::from(dir).join(name);
+            if p.is_file() {
+                return Some(p);
+            }
+        }
+    }
+    None
+}
+
+fn portal_daemon_bin() -> Option<PathBuf> {
+    find_bin("xdg-desktop-portal", "ZUKO_PORTAL")
+}
+
+/// A backend that renders dialogs over Wayland (gtk is standalone; gnome/wlr
+/// are fallbacks). portal-gtk is preferred because it doesn't need its desktop
+/// environment running (cage is just a kiosk).
+fn portal_backend_bin() -> Option<PathBuf> {
+    find_bin("xdg-desktop-portal-gtk", "ZUKO_PORTAL_BACKEND")
+        .or_else(|| find_bin("xdg-desktop-portal-gnome", "ZUKO_PORTAL_BACKEND"))
+        .or_else(|| find_bin("xdg-desktop-portal-wlr", "ZUKO_PORTAL_BACKEND"))
+}
+
+/// Whether the host can run an in-cage portal (both the daemon + a backend
+/// binary are present). Drives the auto-detect default for `--portal`.
+fn portal_available() -> bool {
+    portal_daemon_bin().is_some() && portal_backend_bin().is_some()
+}
+
+/// Held across the session so its `Drop` reaps the daemons; they're started in
+/// two phases (D-Bus before cage, portal+backend after the Wayland socket).
+/// `dbus_pgid` is the shared process group (D-Bus is the leader; the portal +
+/// backend join it), so a `killpg` reaps any helpers the daemons activate too.
+struct PortalStack {
+    dbus: Option<Child>,
+    portal: Option<Child>,
+    backend: Option<Child>,
+    dbus_pgid: Option<i32>,
+}
+
+impl PortalStack {
+    fn kill_all(&mut self) {
+        // Kill the whole group (D-Bus + portal + backend + any D-Bus-activated
+        // helpers), then reap the three we have handles for.
+        if let Some(pgid) = self.dbus_pgid
+            && pgid > 0
+        {
+            // SAFETY: killpg on a group we created. Signal-safe.
+            unsafe {
+                libc::killpg(pgid, libc::SIGTERM);
+            }
+        }
+        for child in [&mut self.backend, &mut self.portal, &mut self.dbus]
+            .into_iter()
+            .flatten()
+        {
+            let _ = child.wait();
+        }
+    }
+}
+
+impl Drop for PortalStack {
+    fn drop(&mut self) {
+        self.kill_all();
+    }
+}
+
+/// Start the private D-Bus session bus (before cage, so the app can inherit
+/// its address). Returns the bus address, the daemon child, and its process
+/// group id (the portal daemons join it so they can be reaped together).
+fn start_portal_dbus(xdg_runtime: &Path) -> Result<(String, Child, i32)> {
+    use std::os::unix::process::CommandExt;
+    let dbus_path = xdg_runtime.join(format!("zuko-dbus-{}", std::process::id()));
+    let _ = fs::remove_file(&dbus_path); // clear any stale socket
+    let bus = format!("unix:path={}", dbus_path.display());
+    let mut cmd = Command::new("dbus-daemon");
+    cmd.args(["--session", "--nofork", "--address", &bus])
+        .process_group(0) // new group; this child's pid == its pgid
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+    let child = cmd
+        .spawn()
+        .context("spawn dbus-daemon for in-cage portal")?;
+    let pgid = child.id() as i32;
+    for _ in 0..50 {
+        if dbus_path.exists() {
+            return Ok((bus, child, pgid));
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    bail!(
+        "dbus-daemon didn't create its socket at {}",
+        dbus_path.display()
+    );
+}
+
+/// Start xdg-desktop-portal + a backend on the private bus (in the D-Bus
+/// process group), the backend rendering into cage's Wayland socket.
+/// `XDG_CURRENT_DESKTOP` is emptied so the portal picks the standalone gtk
+/// backend (not a desktop-mandated one).
+fn start_portal_backends(
+    bus: &str,
+    xdg_runtime: &Path,
+    socket: &str,
+    dbus_pgid: i32,
+) -> Result<(Child, Child)> {
+    use std::os::unix::process::CommandExt;
+    let daemon_bin = portal_daemon_bin().context("xdg-desktop-portal binary vanished")?;
+    let backend_bin = portal_backend_bin().context("portal backend binary vanished")?;
+    let portal = Command::new(&daemon_bin)
+        .env("DBUS_SESSION_BUS_ADDRESS", bus)
+        .env("XDG_CURRENT_DESKTOP", "")
+        .process_group(dbus_pgid)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .with_context(|| format!("spawn {}", daemon_bin.display()))?;
+    let backend = Command::new(&backend_bin)
+        .env("DBUS_SESSION_BUS_ADDRESS", bus)
+        .env("XDG_RUNTIME_DIR", xdg_runtime)
+        .env("WAYLAND_DISPLAY", socket)
+        .env("XDG_CURRENT_DESKTOP", "")
+        .process_group(dbus_pgid)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .with_context(|| format!("spawn {}", backend_bin.display()))?;
+    Ok((portal, backend))
 }
 
 fn run_loop(
@@ -902,13 +1098,24 @@ fn wait_for_socket(cage: &mut Child, dir: &Path, before: &[String]) -> Result<St
     );
 }
 
-fn spawn_cage(args: &AppArgs, launch: &Launch, xdg_runtime: &Path) -> Result<Child> {
+fn spawn_cage(
+    args: &AppArgs,
+    launch: &Launch,
+    xdg_runtime: &Path,
+    portal_bus: Option<&str>,
+) -> Result<Child> {
     use std::os::unix::process::CommandExt;
     let mut cmd = Command::new(cage_bin());
     cmd.env("WLR_BACKENDS", "headless")
         .env("WLR_RENDERER", "pixman")
         .env("WLR_HEADLESS_OUTPUTS", "1")
         .env("XDG_RUNTIME_DIR", xdg_runtime);
+    // If the in-cage portal is enabled, route the app's portal calls (save/open
+    // dialogs) to the cage-side portal via a private D-Bus session — so dialogs
+    // render into cage (captured → TUI) instead of the host desktop.
+    if let Some(bus) = portal_bus {
+        cmd.env("DBUS_SESSION_BUS_ADDRESS", bus);
+    }
     // Bundled-lib path: prefer the release layout (next to the bundled cage
     // binary); allow an explicit override for dev/testing. Harmless if empty.
     let lib_dir = bundled_cage_prefix().map(|p| p.to_string_lossy().into_owned());
