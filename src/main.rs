@@ -204,12 +204,8 @@ async fn main() -> Result<()> {
             no_connect,
             timeout,
         }) => handoff::claim(&code, r#as, no_connect, timeout).await,
-        #[cfg(all(target_os = "linux", feature = "gui-app"))]
+        #[cfg(target_os = "linux")]
         Some(Command::App(args)) => zuko::app::run(args),
-        #[cfg(all(target_os = "linux", not(feature = "gui-app")))]
-        Some(Command::App(_args)) => anyhow::bail!(
-            "this zuko binary was built without `zuko app` (built with --no-default-features). The standard build includes it; at runtime it needs cage + libxkbcommon/libdrm/etc."
-        ),
         None => match cli.name {
             // Bare `zuko <input>`: the power-user shortcut. Distinguish a
             // saved-host name (the common case after the first claim) from a

@@ -29,7 +29,7 @@ uniffi::setup_scaffolding!();
 pub mod code;
 pub mod ffi;
 
-#[cfg(all(target_os = "linux", feature = "gui-app"))]
+#[cfg(target_os = "linux")]
 pub mod app;
 #[cfg(not(target_os = "ios"))]
 pub mod client;

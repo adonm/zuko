@@ -1,7 +1,7 @@
 //! Linux-only implementation of `zuko app` (the cage + wlr-screencopy backend).
 //!
 //! See [`super`] for the cross-platform shell + reusable helpers. This module
-//! pulls in the wayland-client stack (feature-gated under `gui-app`).
+//! pulls in the Wayland client stack only on Linux builds.
 
 use std::io::Write;
 use std::os::fd::{AsFd, OwnedFd};
@@ -157,14 +157,19 @@ pub fn run(args: AppArgs) -> Result<()> {
         return Ok(());
     }
 
+    run_launch(&args, launch)
+}
+
+fn run_launch(args: &AppArgs, mut launch: Launch) -> Result<()> {
     let mut terminal = TerminalModeGuard::enter().context("enter terminal app mode")?;
 
-    // Probe the terminal's pixel geometry so we can switch mouse reporting to
-    // SGR-pixel (1016) — pixel-accurate clicks/cursor instead of ~1-cell
-    // quantization. Best-effort: if the terminal won't tell us (or a slow relay
-    // beats the probe), keep cell coords and the cursor just snaps to cells.
+    // Probe the terminal's pixel geometry ONCE for the whole process so we can
+    // switch mouse reporting to SGR-pixel (1016) — pixel-accurate clicks/cursor
+    // instead of ~1-cell quantization. Best-effort: if the terminal won't tell
+    // us (or a slow relay beats the probe), keep cell coords and the cursor just
+    // snaps to cells. Probing again after a fallback relaunch would race the
+    // long-lived input thread for stdin and corrupt the reply, so do it here.
     let cell_px = probe_terminal_cell_pixels(PIXEL_PROBE);
-    let desired_output = desired_output_size(args.scale, cell_px);
     if term_pixel_dims(cell_px).is_some() {
         let _ = terminal.enable_pixel_mouse();
     } else {
@@ -174,6 +179,68 @@ pub fn run(args: AppArgs) -> Result<()> {
             PIXEL_PROBE
         );
     }
+
+    // Spawn the terminal input reader ONCE. crossterm's event::read() blocks on
+    // stdin and can't be interrupted, so a second reader (from a per-profile
+    // relaunch) would split stdin bytes with the first and desync the pointer.
+    let input_rx = spawn_terminal_input_thread();
+
+    // Walk the display-profile fallback chain, recreating only the cage/Wayland
+    // session per profile. Fall back ONLY on a real startup failure (early
+    // crash or stuck-blank) or a hard error; a clean quit or an app that
+    // rendered then exited is `Done` and never retried — that was the old
+    // retry-on-any-error bug (it relaunched on every normal exit).
+    loop {
+        let fallback = launch.fallback.take();
+        let result = run_session(args, &launch, cell_px, &input_rx, fallback.is_some());
+        match result {
+            Ok(SessionEnd::Done) => return Ok(()),
+            Ok(SessionEnd::StartupFailed(reason)) => match fallback {
+                Some(next) => {
+                    eprintln!(
+                        "\nzuko app: {} on {} did not render ({reason}); retrying with {}…",
+                        launch.label,
+                        launch.profile.label(),
+                        next.profile.label()
+                    );
+                    launch = *next;
+                }
+                None => {
+                    eprintln!("\nzuko app: {} did not render ({reason})", launch.label);
+                    return Ok(());
+                }
+            },
+            Err(e) => match fallback {
+                Some(next) => {
+                    eprintln!(
+                        "\nzuko app: {} on {} failed; retrying with {}…\n  {e:#}",
+                        launch.label,
+                        launch.profile.label(),
+                        next.profile.label()
+                    );
+                    launch = *next;
+                }
+                None => {
+                    eprintln!("\nzuko app error: {e:#}");
+                    return Err(e);
+                }
+            },
+        }
+    }
+}
+
+/// Run one display profile end to end: spawn cage, connect to its Wayland
+/// socket, stream frames, then tear cage back down. The terminal guard, pixel
+/// probe, and input thread are owned by the caller and shared across profiles
+/// so a fallback relaunch never re-probes stdin or double-reads input.
+fn run_session(
+    args: &AppArgs,
+    launch: &Launch,
+    cell_px: Option<(u16, u16)>,
+    input_rx: &mpsc::Receiver<TerminalInput>,
+    allow_fallback: bool,
+) -> Result<SessionEnd> {
+    let desired_output = desired_output_size(args.scale, cell_px);
 
     // cage runs in the real XDG_RUNTIME_DIR (so Flatpak children reach the
     // session); it auto-names its socket, so snapshot first and discover the
@@ -188,7 +255,7 @@ pub fn run(args: AppArgs) -> Result<()> {
         );
     }
 
-    let mut cage = spawn_cage(&args, &launch, &xdg_runtime)?;
+    let mut cage = spawn_cage(args, launch, &xdg_runtime)?;
     let socket = wait_for_socket(&mut cage, &xdg_runtime, &sockets_before)?;
 
     eprintln!(
@@ -238,7 +305,6 @@ pub fn run(args: AppArgs) -> Result<()> {
     let started_at = Instant::now();
 
     kitty_clear_screen().ok();
-    let input_rx = spawn_terminal_input_thread();
     let mut loop_timing = LoopTiming {
         max_frame_interval: frame_interval,
         current_frame_interval: frame_interval,
@@ -253,21 +319,19 @@ pub fn run(args: AppArgs) -> Result<()> {
         &conn,
         &mut queue,
         &mut cage,
-        &input_rx,
+        input_rx,
         &mut loop_timing,
+        allow_fallback,
     );
 
     // Best-effort cleanup. SIGTERM cage first (don't SIGKILL) so it runs its
     // wlroots teardown and reaps the app child; SIGKILL only as a fallback.
     // cage doesn't reliably unlink its Wayland socket on SIGTERM, so we remove
     // the socket + `.lock` ourselves after it exits (otherwise they accumulate
-    // in the shared XDG_RUNTIME_DIR — the "wayland lock" leftover). The
-    // TerminalModeGuard drop then restores the terminal + clears Kitty.
+    // in the shared XDG_RUNTIME_DIR — the "wayland lock" leftover). The terminal
+    // guard stays owned by run_launch (shared across profiles) and restores the
+    // terminal + clears Kitty when the whole process unwinds.
     shutdown_cage(&mut cage, &xdg_runtime, &socket);
-    drop(terminal);
-    if let Err(e) = &result {
-        eprintln!("\nzuko app error: {e:#}");
-    }
     result
 }
 
@@ -362,6 +426,8 @@ fn doctor_cage_smoke(args: &AppArgs, desired: OutputSize) -> Result<()> {
         args: vec!["-c".to_string(), "sleep 5".to_string()],
         env: Vec::new(),
         flatpak: false,
+        profile: super::DisplayProfile::Wayland,
+        fallback: None,
     };
     let mut cage = spawn_cage(args, &launch, &xdg_runtime)?;
     let socket = match wait_for_socket(&mut cage, &xdg_runtime, &sockets_before) {
@@ -452,7 +518,28 @@ struct FrameOutcome {
     emitted: bool,
     elapsed: Duration,
     bytes: usize,
+    /// The captured frame contained real (non-uniform) pixels — i.e. the app
+    /// actually drew something, not just cage's blank output. The session
+    /// "commits" to its display profile once this is true.
+    content: bool,
 }
+
+/// How a session loop ended, so the caller can decide whether to fall back to
+/// the next display profile.
+enum SessionEnd {
+    /// The user quit (escape chord) or the app exited after rendering real
+    /// content — a normal end. Never fall back.
+    Done,
+    /// Startup failed on this display profile: cage/app died before rendering,
+    /// or only blank frames appeared within the probe window. Try the next
+    /// profile if one exists.
+    StartupFailed(String),
+}
+
+/// How long an app may stay blank after launch before we treat the current
+/// display profile as wrong and fall back. Generous enough for slow Electron /
+/// browser cold starts, short enough that a wrong backend isn't a long hang.
+const STARTUP_PROBE: Duration = Duration::from_secs(8);
 
 fn run_loop(
     state: &mut State,
@@ -461,15 +548,31 @@ fn run_loop(
     cage: &mut Child,
     input_rx: &mpsc::Receiver<TerminalInput>,
     timing: &mut LoopTiming,
-) -> Result<()> {
+    allow_fallback: bool,
+) -> Result<SessionEnd> {
     let mut placed = false;
     let mut last_cells: Option<(u16, u16)> = None;
+    // Whether the app has drawn real content yet. Until this is true on a
+    // fallback-capable launch, an early exit or a stuck-blank window means the
+    // chosen display profile is wrong and we should try the next one. Once
+    // true, the session is "committed": any later exit is the user's.
+    let mut saw_content = false;
     loop {
         if let Some(status) = cage.try_wait().context("poll cage process")? {
-            bail!("cage exited with {status}");
+            // cage (and its app child) exited. If we already rendered, that's a
+            // normal quit. If not — and a fallback exists — the backend likely
+            // failed at startup, so report it for a profile switch.
+            if saw_content || !allow_fallback {
+                return Ok(SessionEnd::Done);
+            }
+            return Ok(SessionEnd::StartupFailed(format!(
+                "cage exited with {status} before the app rendered"
+            )));
         }
 
-        drain_terminal_input(state, input_rx, timing.started_at)?;
+        if drain_terminal_input(state, input_rx, timing.started_at)? {
+            return Ok(SessionEnd::Done);
+        }
         release_due_key(state, timing.started_at);
         if sync_output_size_to_terminal(state, conn, queue) || state.terminal_resized {
             placed = false;
@@ -481,7 +584,10 @@ fn run_loop(
         let now = Instant::now();
         if now >= timing.next_frame {
             match capture_and_emit(state, conn, queue, &mut placed, &mut last_cells) {
-                Ok(outcome) => update_frame_pacing(timing, outcome),
+                Ok(outcome) => {
+                    saw_content |= outcome.content;
+                    update_frame_pacing(timing, outcome);
+                }
                 Err(e) => {
                     // A single frame failing shouldn't kill the session (e.g. the
                     // app is mid-resize); log and continue. A broken connection,
@@ -493,7 +599,19 @@ fn run_loop(
             timing.next_frame = Instant::now() + timing.current_frame_interval;
         }
 
-        drain_terminal_input(state, input_rx, timing.started_at)?;
+        // Stuck-blank detection: a fallback-capable launch that has shown only
+        // cage's uniform output past the probe window is almost certainly on the
+        // wrong backend (the classic Electron/Chromium "black screen under
+        // headless pixman"). Switch profiles instead of leaving a black screen.
+        if allow_fallback && !saw_content && timing.started_at.elapsed() >= STARTUP_PROBE {
+            return Ok(SessionEnd::StartupFailed(format!(
+                "app stayed blank for {STARTUP_PROBE:?} (no content rendered)"
+            )));
+        }
+
+        if drain_terminal_input(state, input_rx, timing.started_at)? {
+            return Ok(SessionEnd::Done);
+        }
         let _ = conn.flush();
 
         // Drain any pending Wayland events without blocking (e.g. late
@@ -527,6 +645,7 @@ fn capture_and_emit(
     state.dims = None;
     state.captured = None;
     state.done = None;
+    state.frame_content = false;
 
     let output = state.output.as_ref().context("no wl_output bound")?;
     let manager = state
@@ -552,7 +671,7 @@ fn capture_and_emit(
         Some(Err(e)) => bail!("{e}"),
         None => bail!("capture ended without status"),
     }
-    let (w, h, rgba) = state
+    let (w, h) = state
         .captured
         .take()
         .context("capture Ready without frame bytes")?;
@@ -565,7 +684,10 @@ fn capture_and_emit(
     // is already showing exactly this. Always (re)emit when (re)placing.
     let needs_place = !*placed;
     *placed = true;
-    let changed = state.prev_frame.as_deref() != Some(rgba.as_slice());
+    let rgba = state.frame_scratch.as_slice();
+    // Computed in the Ready handler from the pre-cursor pixels.
+    let content = state.frame_content;
+    let changed = state.prev_frame.as_deref() != Some(rgba);
     let emitted = needs_place || changed;
     let mut bytes = 0;
     if emitted {
@@ -578,8 +700,8 @@ fn capture_and_emit(
                 (w as u32, h as u32),
             )
         });
-        let profile = frame_profile(&rgba, w, h, state.prev_frame.as_deref());
-        let payload = encode_kitty_payload(&rgba, w, h, state.graphics_codec, profile)?;
+        let profile = frame_profile(rgba, w, h, state.prev_frame.as_deref());
+        let payload = encode_kitty_payload(rgba, w, h, state.graphics_codec, profile)?;
         bytes = payload.transport_bytes();
         kitty_emit_frame(
             w as u32,
@@ -589,13 +711,31 @@ fn capture_and_emit(
             needs_place,
             placement,
         )?;
-        state.prev_frame = Some(rgba);
+        let old = state
+            .prev_frame
+            .replace(std::mem::take(&mut state.frame_scratch));
+        state.frame_scratch = old.unwrap_or_default();
+        state.frame_scratch.clear();
+    } else {
+        state.frame_scratch.clear();
     }
     Ok(FrameOutcome {
         emitted,
         elapsed: started.elapsed(),
         bytes,
+        content,
     })
+}
+
+/// Whether a captured RGBA frame holds real content rather than cage's uniform
+/// blank output. A solid color (the black/grey a misconfigured Electron or
+/// Chromium window shows under headless pixman) is uniform; a real UI is not.
+/// Sampled (not every pixel) so it stays cheap on large frames.
+fn frame_has_content(rgba: &[u8]) -> bool {
+    let Some(first) = rgba.get(0..4) else {
+        return false;
+    };
+    rgba.chunks_exact(4).step_by(97).any(|px| px != first)
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -1087,6 +1227,28 @@ mod tests {
     }
 
     #[test]
+    fn cursor_crosshair_would_mask_blank_detection_so_it_must_run_first() {
+        let (w, h) = (40usize, 40usize);
+        let mut buf = vec![0u8; w * h * 4]; // uniform (blank) frame
+        assert!(
+            !frame_has_content(&buf),
+            "uniform frame is blank before the cursor is drawn"
+        );
+        // Place the crosshair center on a pixel the blank-detector samples
+        // (it steps by 97 pixels, so index 776 = 97*8 -> x=16, y=19). On a real
+        // blank app the cursor lands wherever the user points, so detection run
+        // AFTER the composite would intermittently flip blank -> "has content"
+        // and defeat the startup fallback. The capture path computes content
+        // from the pre-cursor pixels instead; this guards that ordering.
+        assert_eq!(19 * w + 16, 776, "crosshair center sits on a sampled pixel");
+        draw_cursor(&mut buf, w, h, 16, 19);
+        assert!(
+            frame_has_content(&buf),
+            "post-cursor frame reads as content — proves it must not feed blank detection"
+        );
+    }
+
+    #[test]
     fn printable_key_mapping_uses_raw_evdev_and_infers_shift() {
         assert_eq!(evdev_keycode_for(KeyCode::Char('a')), Some(30));
         assert_eq!(evdev_keycode_for(KeyCode::Char('A')), Some(30));
@@ -1160,6 +1322,7 @@ mod tests {
                 emitted: true,
                 elapsed: Duration::from_millis(5),
                 bytes: 0,
+                content: false,
             },
         );
         assert_eq!(timing.current_frame_interval, max);
@@ -1172,6 +1335,7 @@ mod tests {
                     emitted: false,
                     elapsed: Duration::from_millis(2),
                     bytes: 0,
+                    content: false,
                 },
             );
         }
@@ -1183,6 +1347,7 @@ mod tests {
                 emitted: true,
                 elapsed: Duration::from_millis(5),
                 bytes: 0,
+                content: false,
             },
         );
         assert_eq!(timing.current_frame_interval, max);
@@ -1231,6 +1396,27 @@ mod tests {
         assert_eq!((ex, ey), (80, 23));
         assert_eq!((x, y), (40, 12));
     }
+
+    #[test]
+    fn scroll_events_map_to_wayland_axes() {
+        assert_eq!(
+            scroll_axis(MouseEventKind::ScrollUp),
+            Some((wl_pointer::Axis::VerticalScroll, -1))
+        );
+        assert_eq!(
+            scroll_axis(MouseEventKind::ScrollDown),
+            Some((wl_pointer::Axis::VerticalScroll, 1))
+        );
+        assert_eq!(
+            scroll_axis(MouseEventKind::ScrollLeft),
+            Some((wl_pointer::Axis::HorizontalScroll, -1))
+        );
+        assert_eq!(
+            scroll_axis(MouseEventKind::ScrollRight),
+            Some((wl_pointer::Axis::HorizontalScroll, 1))
+        );
+        assert_eq!(scroll_axis(MouseEventKind::Moved), None);
+    }
 }
 
 // ────────────────────────── crossterm → cage input ──────────────────────────
@@ -1244,13 +1430,22 @@ enum TerminalInput {
     Error(String),
 }
 
+const TERMINAL_INPUT_CAP: usize = 256;
+const WHEEL_AXIS_STEP: f64 = 15.0;
+
 fn spawn_terminal_input_thread() -> mpsc::Receiver<TerminalInput> {
-    let (tx, rx) = mpsc::channel();
+    let (tx, rx) = mpsc::sync_channel(TERMINAL_INPUT_CAP);
     std::thread::spawn(move || {
         loop {
             match event::read() {
                 Ok(ev) => {
-                    if tx.send(TerminalInput::Event(ev)).is_err() {
+                    let input = TerminalInput::Event(ev);
+                    let sent = if is_coalescible_mouse_motion(&input) {
+                        tx.try_send(input).is_ok()
+                    } else {
+                        tx.send(input).is_ok()
+                    };
+                    if !sent {
                         break;
                     }
                 }
@@ -1264,26 +1459,65 @@ fn spawn_terminal_input_thread() -> mpsc::Receiver<TerminalInput> {
     rx
 }
 
+fn is_coalescible_mouse_motion(input: &TerminalInput) -> bool {
+    matches!(
+        input,
+        TerminalInput::Event(Event::Mouse(MouseEvent {
+            kind: MouseEventKind::Moved,
+            ..
+        }))
+    )
+}
+
+/// Drain pending terminal input. Returns `Ok(true)` when the user pressed the
+/// Ctrl-Alt-q escape chord (an explicit quit — the caller must end the session
+/// and must NOT fall back to another display profile).
 fn drain_terminal_input(
     state: &mut State,
     rx: &mpsc::Receiver<TerminalInput>,
     started_at: Instant,
-) -> Result<()> {
+) -> Result<bool> {
+    let mut pending_motion: Option<MouseEvent> = None;
     loop {
         match rx.try_recv() {
-            Ok(TerminalInput::Event(Event::Key(key))) if is_escape_chord(&key) => {
-                bail!("zuko app interrupted by Ctrl-Alt-q");
+            Ok(TerminalInput::Event(Event::Mouse(mouse)))
+                if matches!(mouse.kind, MouseEventKind::Moved) =>
+            {
+                pending_motion = Some(mouse);
             }
-            Ok(TerminalInput::Event(Event::Key(key))) => handle_key(state, key, started_at),
-            Ok(TerminalInput::Event(Event::Mouse(mouse))) => handle_mouse(state, mouse, started_at),
+            Ok(TerminalInput::Event(Event::Key(key))) if is_escape_chord(&key) => {
+                flush_pending_motion(state, &mut pending_motion, started_at);
+                return Ok(true);
+            }
+            Ok(TerminalInput::Event(Event::Key(key))) => {
+                flush_pending_motion(state, &mut pending_motion, started_at);
+                handle_key(state, key, started_at);
+            }
+            Ok(TerminalInput::Event(Event::Mouse(mouse))) => {
+                flush_pending_motion(state, &mut pending_motion, started_at);
+                handle_mouse(state, mouse, started_at);
+            }
             Ok(TerminalInput::Event(Event::Resize(_, _))) => {
+                pending_motion = None;
                 state.terminal_resized = true;
             }
             Ok(TerminalInput::Event(_)) => {}
             Ok(TerminalInput::Error(e)) => bail!("read terminal input: {e}"),
-            Err(mpsc::TryRecvError::Empty) => return Ok(()),
-            Err(mpsc::TryRecvError::Disconnected) => return Ok(()),
+            Err(mpsc::TryRecvError::Empty) | Err(mpsc::TryRecvError::Disconnected) => {
+                flush_pending_motion(state, &mut pending_motion, started_at);
+                return Ok(false);
+            }
         }
+    }
+}
+
+fn flush_pending_motion(
+    state: &mut State,
+    pending_motion: &mut Option<MouseEvent>,
+    started_at: Instant,
+) {
+    if let Some(mouse) = pending_motion.take() {
+        handle_mouse(state, mouse, started_at);
     }
 }
 
@@ -1387,6 +1621,18 @@ fn handle_mouse(state: &mut State, mouse: MouseEvent, started_at: Instant) {
         state.pointer = Some((x * ow / ex.max(1), y * oh / ey.max(1)));
     }
 
+    if let Some((axis, sign)) = scroll_axis(mouse.kind) {
+        // Wayland axis values are positive for down/right, negative for up/left.
+        // Include both continuous `axis` and discrete wheel-click metadata so
+        // GTK/Qt/WebKit/mpv-style clients can pick their preferred signal.
+        let value = WHEEL_AXIS_STEP * f64::from(sign);
+        ptr.axis_source(wl_pointer::AxisSource::Wheel);
+        ptr.axis_discrete(time, axis, value, sign);
+        ptr.axis(time, axis, value);
+        ptr.frame();
+        return;
+    }
+
     // Native right/middle clicks pass through directly (SGR mouse mode 1006
     // delivers them when the terminal doesn't intercept). Left clicks are
     // sent immediately on press so drag works; on release, if the press was
@@ -1421,6 +1667,16 @@ fn handle_mouse(state: &mut State, mouse: MouseEvent, started_at: Instant) {
         }
     }
     ptr.frame();
+}
+
+fn scroll_axis(kind: MouseEventKind) -> Option<(wl_pointer::Axis, i32)> {
+    match kind {
+        MouseEventKind::ScrollUp => Some((wl_pointer::Axis::VerticalScroll, -1)),
+        MouseEventKind::ScrollDown => Some((wl_pointer::Axis::VerticalScroll, 1)),
+        MouseEventKind::ScrollLeft => Some((wl_pointer::Axis::HorizontalScroll, -1)),
+        MouseEventKind::ScrollRight => Some((wl_pointer::Axis::HorizontalScroll, 1)),
+        _ => None,
+    }
 }
 
 fn map_terminal_point_to_image(
@@ -1849,7 +2105,13 @@ struct State {
     _pool: Option<wl_shm_pool::WlShmPool>,
     _buffer: Option<wl_buffer::WlBuffer>,
     mmap: Option<Arc<Mutex<MmapMut>>>,
-    captured: Option<(usize, usize, Vec<u8>)>, // w, h, tight RGBA
+    captured: Option<(usize, usize)>, // w, h for frame_scratch's tight RGBA
+    frame_scratch: Vec<u8>,
+    // Whether the most recent capture held real content, computed from the raw
+    // screencopy pixels BEFORE the cursor crosshair is composited in (otherwise
+    // the crosshair could make a blank app read as non-blank and defeat the
+    // startup fallback).
+    frame_content: bool,
     done: Option<Result<(), String>>,
     // The memfd backing the current screencopy SHM buffer. Held until the next
     // frame so the fd stays valid across the Wayland flush (see BufferDone).
@@ -2178,7 +2440,10 @@ impl Dispatch<ZwlrScreencopyFrameV1, ()> for State {
                     && let Some(mmap_arc) = state.mmap.take()
                 {
                     let guard = mmap_arc.lock().unwrap();
-                    let mut out = Vec::with_capacity(w as usize * h as usize * 4);
+                    let frame_len = w as usize * h as usize * 4;
+                    let out = &mut state.frame_scratch;
+                    out.clear();
+                    out.reserve(frame_len.saturating_sub(out.capacity()));
                     for y in 0..h as usize {
                         let row = &guard[y * stride as usize..y * stride as usize + w as usize * 4];
                         for px in row.chunks_exact(4) {
@@ -2188,15 +2453,19 @@ impl Dispatch<ZwlrScreencopyFrameV1, ()> for State {
                             out.push(px[0]);
                             out.push(255);
                         }
-                        let _ = &mut out; // keep borrow tidy
                     }
                     let _ = &guard;
+                    // Detect blank/uniform output on the raw pixels, before the
+                    // cursor crosshair is drawn (it would otherwise add differing
+                    // pixels and mask a blank app from the startup fallback).
+                    let content = frame_has_content(out.as_slice());
                     if state.cursor
                         && let Some((px, py)) = state.pointer
                     {
-                        draw_cursor(&mut out, w as usize, h as usize, px as i32, py as i32);
+                        draw_cursor(out, w as usize, h as usize, px as i32, py as i32);
                     }
-                    state.captured = Some((w as usize, h as usize, out));
+                    state.frame_content = content;
+                    state.captured = Some((w as usize, h as usize));
                 }
                 state.done = Some(Ok(()));
             }
