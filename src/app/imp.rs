@@ -77,13 +77,10 @@ pub fn run(args: AppArgs) -> Result<()> {
         let (w, h) = DEFAULT_OUTPUT;
         kitty_clear_screen().ok();
         let png = encode_test_pattern(w as usize, h as usize)?;
-        kitty_emit_png(
-            w as u32,
-            h as u32,
-            &png,
-            true,
-            term_cell_size().map(|(c, r)| (c as u32, r as u32)),
-        )?;
+        let placement = term_cell_size().map(|(c, r)| {
+            compute_placement(u32::from(c), u32::from(r), None, (w as u32, h as u32))
+        });
+        kitty_emit_png(w as u32, h as u32, &png, true, placement)?;
         eprintln!("zuko app: Kitty test pattern rendered at {w}x{h}; press Enter to exit");
         let mut buf = String::new();
         let _ = std::io::stdin().read_line(&mut buf);
@@ -313,14 +310,17 @@ fn capture_and_emit(
     *placed = true;
     let changed = state.prev_frame.as_deref() != Some(rgba.as_slice());
     if needs_place || changed {
+        // Aspect-preserving (letterboxed) cell rectangle for this terminal.
+        let placement = cells.map(|(c, r)| {
+            compute_placement(
+                u32::from(c),
+                u32::from(r),
+                state.cell_px,
+                (w as u32, h as u32),
+            )
+        });
         let png = encode_rgba_png(&rgba, w, h)?;
-        kitty_emit_png(
-            w as u32,
-            h as u32,
-            &png,
-            needs_place,
-            cells.map(|(c, r)| (c as u32, r as u32)),
-        )?;
+        kitty_emit_png(w as u32, h as u32, &png, needs_place, placement)?;
         state.prev_frame = Some(rgba);
     }
     Ok(())
@@ -340,6 +340,34 @@ fn term_cell_size() -> Option<(u16, u16)> {
         return None;
     }
     Some((winsz.ws_col, winsz.ws_row))
+}
+
+/// Aspect-preserving placement: the largest source-aspect rectangle that fits
+/// in the terminal's cell grid, centered, with letterbox offsets. Returns
+/// `(span_cols, span_rows, off_col, off_row)`. Cell pixel size is the probed
+/// `cell_px` (or a 1:2 w:h default — typical for monospace), since cells aren't
+/// square and the source's pixel aspect must be preserved in the cell grid.
+fn compute_placement(
+    cols: u32,
+    rows: u32,
+    cell_px: Option<(u16, u16)>,
+    src: (u32, u32),
+) -> (u32, u32, u32, u32) {
+    let (sw, sh) = (src.0.max(1), src.1.max(1));
+    let (cw, ch) = cell_px
+        .map(|(w, h)| (u32::from(w).max(1), u32::from(h).max(1)))
+        .unwrap_or((1, 2));
+    let avail_w = cols.saturating_mul(cw);
+    let avail_h = rows.saturating_mul(ch);
+    // Fit the source aspect into the available pixel area (letterbox, not stretch).
+    let scale = (avail_w as f64 / sw as f64).min(avail_h as f64 / sh as f64);
+    let disp_w_px = ((sw as f64 * scale).round() as u32).max(1);
+    let disp_h_px = ((sh as f64 * scale).round() as u32).max(1);
+    let span_cols = ((disp_w_px + cw / 2) / cw).clamp(1, cols);
+    let span_rows = ((disp_h_px + ch / 2) / ch).clamp(1, rows);
+    let off_col = (cols - span_cols) / 2;
+    let off_row = (rows - span_rows) / 2;
+    (span_cols, span_rows, off_col, off_row)
 }
 
 /// Terminal pixel dimensions, for SGR-pixel mouse mapping. Resolution:
@@ -566,23 +594,39 @@ fn handle_mouse(state: &mut State, mouse: MouseEvent, started_at: Instant) {
         return;
     };
     let time = started_at.elapsed().as_millis() as u32;
-    // Extent for motion_absolute: terminal PIXEL dims if known (mode 1016 is
-    // on → mouse.column/.row are pixels → sub-cell accuracy), else cell counts
-    // (mode 1006 → coords quantize to ~1 cell). `x`/`y` and the extent are in
-    // the same unit either way, so the proportional map + crosshair stay
-    // consistent with where the click actually lands.
-    let (ex, ey) = term_pixel_dims(state.cell_px)
-        .or_else(|| term_cell_size().map(|(c, r)| (u32::from(c), u32::from(r))))
-        .unwrap_or((1, 1));
-    let x = u32::from(mouse.column).min(ex.saturating_sub(1));
-    let y = u32::from(mouse.row).min(ey.saturating_sub(1));
+    let (ow, oh) = (
+        u32::try_from(DEFAULT_OUTPUT.0).unwrap_or(1),
+        u32::try_from(DEFAULT_OUTPUT.1).unwrap_or(1),
+    );
+    // Map the click into the letterboxed image rectangle (off_*, span_*),
+    // preserving the click's units: pixels when the cell size is known (mode
+    // 1016 → sub-cell accuracy), else cells (mode 1006). Clicks in the
+    // letterbox bars clamp to the image edge.
+    let (cols, rows) = term_cell_size().unwrap_or((mouse.column.max(1), mouse.row.max(1)));
+    let (span_cols, span_rows, off_col, off_row) =
+        compute_placement(u32::from(cols), u32::from(rows), state.cell_px, (ow, oh));
+    let (x, y, ex, ey) =
+        if let Some((cw, ch)) = state.cell_px.map(|(w, h)| (u32::from(w), u32::from(h))) {
+            let (img_x0, img_w) = (off_col * cw, span_cols * cw);
+            let (img_y0, img_h) = (off_row * ch, span_rows * ch);
+            let x = u32::from(mouse.column)
+                .saturating_sub(img_x0)
+                .min(img_w.saturating_sub(1));
+            let y = u32::from(mouse.row)
+                .saturating_sub(img_y0)
+                .min(img_h.saturating_sub(1));
+            (x, y, img_w.max(1), img_h.max(1))
+        } else {
+            let x = u32::from(mouse.column)
+                .saturating_sub(off_col)
+                .min(span_cols.saturating_sub(1));
+            let y = u32::from(mouse.row)
+                .saturating_sub(off_row)
+                .min(span_rows.saturating_sub(1));
+            (x, y, span_cols.max(1), span_rows.max(1))
+        };
     ptr.motion_absolute(time, x, y, ex, ey);
-    // Track the pointer in output pixels for the crosshair overlay.
     if state.cursor {
-        let (ow, oh) = (
-            u32::try_from(DEFAULT_OUTPUT.0).unwrap_or(1),
-            u32::try_from(DEFAULT_OUTPUT.1).unwrap_or(1),
-        );
         state.pointer = Some((x * ow / ex.max(1), y * oh / ey.max(1)));
     }
     if let MouseEventKind::Down(btn) | MouseEventKind::Up(btn) = mouse.kind

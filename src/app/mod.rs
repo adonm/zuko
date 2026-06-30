@@ -123,23 +123,30 @@ fn kitty_emit_png(
     height: u32,
     png: &[u8],
     place: bool,
-    cells: Option<(u32, u32)>,
+    // (span_cols, span_rows, off_col, off_row): aspect-preserving cell
+    // rectangle + centering offset for letterboxed display.
+    placement: Option<(u32, u32, u32, u32)>,
 ) -> Result<()> {
     use base64::Engine as _;
     const CHUNK: usize = 4096;
     let encoded = base64::engine::general_purpose::STANDARD.encode(png);
     let mut out = std::io::stdout();
-    out.write_all(b"\x1b[H")?;
+    // Position the cursor at the letterbox offset (1-indexed) so the image is
+    // centered; home if no placement. Harmless on `a=t` updates (they target
+    // the existing placement by id, not the cursor).
+    match placement {
+        Some((_, _, off_col, off_row)) => write!(out, "\x1b[{};{}H", off_row + 1, off_col + 1)?,
+        None => out.write_all(b"\x1b[H")?,
+    }
     // Place (a=T) only on the first frame; subsequent frames transmit data
     // only (a=t) so the single existing placement updates in place.
     let action = if place { "a=T,C=1" } else { "a=t" };
-    // On the placing frame, optionally pin the display to a cell rectangle
-    // (c=,r=). Kitty then *scales* the source image to fill that many cells,
-    // so a 1280x720 frame fits any terminal instead of overflowing small
-    // windows. Only sent at placement; the caller forces a re-place (with new
-    // c/r) when the terminal cell grid changes.
-    let cell_rect = match (place, cells) {
-        (true, Some((cols, rows))) => format!(",c={cols},r={rows}"),
+    // On the placing frame, pin the display to the aspect-preserving cell
+    // rectangle (c=,r=). Kitty scales the source to span that many cells;
+    // because the rectangle matches the source's aspect (computed by the
+    // caller), there's no stretch — just letterbox bars around it.
+    let cell_rect = match (place, placement) {
+        (true, Some((span_cols, span_rows, _, _))) => format!(",c={span_cols},r={span_rows}"),
         _ => String::new(),
     };
     let chunks = encoded.as_bytes().chunks(CHUNK).collect::<Vec<_>>();
@@ -316,6 +323,13 @@ fn app_env(software: bool, no_sandbox: bool) -> Vec<(String, String)> {
         ("GSK_RENDERER".to_string(), "cairo".to_string()), // GTK4 scene kit
         ("LIBGL_ALWAYS_SOFTWARE".to_string(), "1".to_string()), // Mesa → llvmpipe
         ("QT_QUICK_BACKEND".to_string(), "software".to_string()), // QtQuick
+        // Keep file/save dialogs IN cage (so they're captured + shown in the
+        // TUI) instead of delegated to the host's xdg-desktop-portal, which
+        // would pop them up on the host's own desktop. GTK_USE_PORTAL=0 makes
+        // GTK use its in-process FileChooserDialog (rendered into the app's
+        // cage surface). NOTE: Flatpaks mandate the portal regardless, so
+        // sandboxed apps still route dialogs to the host desktop.
+        ("GTK_USE_PORTAL".to_string(), "0".to_string()), // GTK in-process dialogs
     ];
     // Firefox WebRender is a separate perf choice (software WR is slower), so it
     // stays opt-in behind --software unlike the toolkit renderers above.
