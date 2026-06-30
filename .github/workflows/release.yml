@@ -82,18 +82,16 @@ jobs:
         # matches what we tested (cage 0.3.0 + wlroots 0.20.1) regardless of the
         # Ubuntu runner. aarch64 cage bundling is a follow-up (needs QEMU); until
         # then aarch64 `zuko app` finds cage on PATH.
+        # NOTE: no apostrophes inside the bash -c '...' block — they close the
+        # single-quoted argument and break the quoting.
         if: ${{ matrix.target == 'x86_64-unknown-linux-gnu' }}
         run: |
           set -e
           mkdir -p dist/cage
-          # GitHub ubuntu runners ship docker. :z lets the container chown the mount.
           docker run --rm -v "$PWD/dist/cage:/out:z" fedora:latest bash -c '
             set -e
             dnf install -y -q --setopt=install_weak_deps=False cage >/dev/null
             cp /usr/bin/cage /out/cage
-            # The wlroots .so's a host is least likely to have pre-installed.
-            # The rest of cage's closure (libwayland, libxkbcommon, libdrm, …)
-            # is present on any box that runs GUI apps.
             for lib in libwlroots-0.20.so libliftoff.so.0 libseat.so.1 libxcb-errors.so.0; do
               cp -L "/usr/lib64/$lib" /out/ 2>/dev/null || true
             done
