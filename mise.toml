@@ -16,11 +16,9 @@ rust = { version = "latest", components = "clippy,rustfmt" }
 swiftlint = "latest"
 # mdBook for the docs site (published to GitHub Pages via docs.yml). Prebuilt
 # binary via mise's aqua backend — no compile. `mise run build-docs` builds.
+# Mermaid diagrams render client-side in theme/head.hbs (CDN + our own JS),
+# so no mdbook preprocessor dependency.
 mdbook = "latest"
-# mdBook preprocessor: renders ```mermaid fenced blocks as diagrams. The cargo
-# backend is the only install path (no prebuilt release); small pure-Rust crate,
-# compiles in seconds and is cached by Swatinem/rust-cache in CI.
-"cargo:mdbook-mermaid" = "latest"
 # Link/URL checker for markdown (the sensible md lint for this repo — no
 # node/ruby style linter, on purpose). Prebuilt binary via aqua.
 lychee = "latest"

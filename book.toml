@@ -14,12 +14,10 @@ src = "docs"
 build-dir = "target/book"
 create-missing = false
 
-# Render ```mermaid fenced blocks as `<pre class="mermaid">` (mdbook-mermaid
-# preprocessor). The mermaid JS itself is loaded from the jsdelivr CDN via
-# theme/head.hbs (no JS committed to the repo); head.hbs also runs the
-# theme-aware init.
-[preprocessor.mermaid]
-command = "mdbook-mermaid"
+# ```mermaid fenced blocks are rendered client-side by the JS in
+# theme/head.hbs (loads mermaid from the jsdelivr CDN, swaps mdBook's
+# `<code class="language-mermaid">` for `<pre class="mermaid">`, and runs
+# it). No mdbook preprocessor and no committed JS.
 
 [output.html]
 no-section-label = true
@@ -28,3 +26,8 @@ edit-url-template = "https://github.com/adonm/zuko/edit/main/docs/{path}"
 default-theme = "light"
 preferred-dark-theme = "ayu"
 theme = "theme"
+# Our ~30-line mermaid init (head.hbs loads mermaid itself from the CDN;
+# this is the small bit we own and commit). mdBook copies it into the build
+# output and hashes the filename; head.hbs references it as "mermaid.js"
+# and mdBook rewrites that to the hashed path at build time.
+additional-js = ["theme/mermaid.js"]

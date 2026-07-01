@@ -1,5 +1,12 @@
 # zuko
 
+[![build](https://github.com/adonm/zuko/actions/workflows/build.yml/badge.svg)](https://github.com/adonm/zuko/actions/workflows/build.yml)
+[![ios](https://github.com/adonm/zuko/actions/workflows/build-ios.yml/badge.svg)](https://github.com/adonm/zuko/actions/workflows/build-ios.yml)
+[![docs](https://github.com/adonm/zuko/actions/workflows/docs.yml/badge.svg)](https://adonm.github.io/zuko/)
+[![release](https://github.com/adonm/zuko/actions/workflows/release.yml/badge.svg)](https://github.com/adonm/zuko/releases/latest)
+[![license](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
+[![docs site](https://img.shields.io/website-up-down-green-red/https/adonm.github.io/zuko.svg?label=docs%20site)](https://adonm.github.io/zuko/)
+
 **Remote terminals over [Iroh](https://www.iroh.computer/).** Dial by key,
 end-to-end encrypted, no open ports or port forwarding. Run the **host** on any
 Linux/macOS box you want to reach, then attach a **client** from anywhere —
