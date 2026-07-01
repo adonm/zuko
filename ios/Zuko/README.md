@@ -1,7 +1,7 @@
 # Zuko (iOS / iPadOS)
 
 The **iOS/iPadOS client** for [zuko](../../) — remote terminals over Iroh. It
-speaks the same [wire protocol](../../docs/PROTOCOL.md) as the CLI client and
+speaks the same [wire protocol](../../docs/protocol.md) as the CLI client and
 dials the same `zuko host` daemon. Local and PR builds are driven by
 [xtool](https://github.com/xtool-org/xtool) from [`../Package.swift`](../Package.swift)
 and [`../xtool.yml`](../xtool.yml).

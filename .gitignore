@@ -32,6 +32,9 @@ ios/ZukoFFI/Generated/
 target/
 **/*.rs.bk
 
+# lychee link-checker cache (mise run lint-md)
+.lycheecache
+
 # Local secrets / runtime state
 *.key
 zuko-key

@@ -2,7 +2,7 @@
 
 The `zuko` binary is the **host daemon** (the machine you shell into), the
 **reference CLI client**, and the **service installer** — in a single binary.
-zuko is remote terminals over Iroh; the [wire protocol](PROTOCOL.md)
+zuko is remote terminals over Iroh; the [wire protocol](protocol.md)
 and the other clients (iOS, future Android/relm4) are documented in
 [`./`](.) (this `docs/` folder).
 
@@ -10,6 +10,7 @@ and the other clients (iOS, future Android/relm4) are documented in
 zuko host              serve this machine (writes a key + current_ticket)
 zuko install           install the host as a systemd/launchd user service
 zuko uninstall         stop + remove the service (keeps the key + saved hosts)
+zuko upgrade           pull the latest zuko via mise + bounce the host service
 zuko share             mint a one-time code that lets a new device pair
 zuko <code>            pair: fetch the host's ticket, save it, connect
 zuko claim <code>      the same, with flags (--as, --no-connect, --timeout)
@@ -80,6 +81,23 @@ clients can auto-redial and reattach with their token. Output while detached is
 discarded, and the CLI still exits on drop. For long-lived work that survives
 long disconnects or host restarts, run `tmux`/`zellij`/`screen` *inside* zuko.
 
+## Bare `zuko`
+
+With no arguments, `zuko` adapts to state and context:
+
+- **No saved hosts** → a first-run hint (the `zuko share` / `zuko install`
+  paths).
+- **Saved hosts, TTY** → an interactive type-to-filter picker. It always
+  prompts (even for one host) so bare `zuko` never surprises you by dropping
+  into raw terminal mode.
+- **Saved hosts, non-TTY** (piped/scripted) → lists names and exits, so a
+  script never blocks on a picker. Tickets are never echoed (long-lived
+  secret).
+- A successful connect **promotes** that host to the front of the saved list,
+  so the hosts you actually use surface first next time.
+
+The fast path is still `zuko <name>`; bare `zuko` is the "ask first" variant.
+
 ## Pairing: how `share` / `claim` work
 
 The pairing code is a *one-time symmetric secret* (the
@@ -91,11 +109,19 @@ retries the dial for ~60 s (`--timeout`, a hard overall wall-clock cap) while
 the throwaway endpoint's address propagates through Iroh's DNS lookup.
 
 Full mechanics (entropy, Argon2id derivation, the `zuko/handoff/1` wire) are in
-[`PROTOCOL.md#ticket-handoff`](PROTOCOL.md#ticket-handoff). `zuko share` reads
+[`protocol.md#ticket-handoff`](protocol.md#ticket-handoff). `zuko share` reads
 `~/.config/zuko/current_ticket` (which `zuko host` writes and refreshes every
 30 s); stale files are rejected so a stopped host doesn't hand out a dead
-ticket. Override with `--ticket "<ticket>"` to hand off a ticket captured
-elsewhere.
+ticket.
+
+`zuko share` flags:
+
+| Flag | Default | Notes |
+|------|---------|-------|
+| `--ticket` | _(reads `current_ticket`)_ | Hand off a ticket captured elsewhere, without the daemon running. |
+| `--label` | system hostname | Save name shown to the claimer (their default `--as`). |
+| `--count` | `1` | Number of claims to serve before exiting. |
+| `--timeout` | `300` | Overall wall-clock seconds. `0` = no timeout. |
 
 ## Build from source
 
@@ -106,7 +132,7 @@ cargo build --release
 
 The same `cargo build` also produces `target/release/libzuko.a` — the Rust
 staticlib wrapped into the `Zuko.xcframework` the iOS app uses for code
-derivation (see [`CLIENTS.md`](CLIENTS.md)). You don't need it for host-only
+derivation (see [`clients.md`](clients.md)). You don't need it for host-only
 use; it's just a side-effect of the crate being a library + binary + staticlib.
 
 ## Run the host in the foreground
@@ -141,6 +167,26 @@ remote output between presses** — that force-exits the client (code 130).
 The "no output" gate means interrupting a silent-but-healthy remote command
 (e.g. `find /`) doesn't false-trigger; only a session that's stopped
 responding altogether does.
+
+## Upgrading
+
+```sh
+zuko upgrade              # mise pulls latest + restarts the host service
+zuko upgrade --check      # preview: current version, mise command, service action
+zuko upgrade --version 0.7.0   # pin to a specific release
+zuko upgrade --no-restart       # upgrade the binary; restart the service later
+```
+
+`zuko upgrade` drives `mise upgrade github:adonm/zuko` (mise-managed installs
+only — it refuses to run against a cargo/distro install so it never clobbers
+your chosen install method). The `zuko install` wrapper routes through mise's
+`latest` symlink, so repointing lands on the new build without a re-`install`;
+only the already-running process lags. A restart execs the wrapper again.
+
+Restarting the host kills its in-memory PTYs — there is no live handoff yet.
+Clients auto-reconnect (the iOS app redials; the CLI is restarted by the
+user), but land in **fresh** shells, not the ones they had. For work that
+must survive a host upgrade, run `tmux`/`zellij`/`screen` inside the session.
 
 ## Debugging a connection stall
 
@@ -179,12 +225,13 @@ rm ~/.config/zuko/key
 
 ## Wire protocol
 
-The full spec is in [`PROTOCOL.md`](PROTOCOL.md) — ALPN `zuko/2` with `zuko/1`
+The full spec is in [`protocol.md`](protocol.md) — ALPN `zuko/2` with `zuko/1`
 fallback for sessions, `zuko/handoff/1` for the ticket handoff. Architecture
-rationale is in [`DESIGN.md`](DESIGN.md). Reference code:
-[`../src/wire.rs`](../src/wire.rs) (framing),
-[`../src/handoff.rs`](../src/handoff.rs) (handoff),
-[`../src/service.rs`](../src/service.rs) (service install/uninstall).
+rationale is in [`design.md`](design.md). `zuko app` (Linux GUI-app streaming)
+is documented in [`app.md`](app.md). Reference code:
+[`../src/wire.rs`](https://github.com/adonm/zuko/blob/main/src/wire.rs) (framing),
+[`../src/handoff.rs`](https://github.com/adonm/zuko/blob/main/src/handoff.rs) (handoff),
+[`../src/service.rs`](https://github.com/adonm/zuko/blob/main/src/service.rs) (service install/uninstall/upgrade).
 
 ## Testing
 
@@ -193,7 +240,7 @@ mise run test        # clippy + unit tests
 mise run test-e2e    # end-to-end: host<->connect + share<->claim over the real Iroh net
 ```
 
-The end-to-end harness ([`../tests/e2e.rs`](../tests/e2e.rs)) is a
+The end-to-end harness ([`../tests/e2e.rs`](https://github.com/adonm/zuko/blob/main/tests/e2e.rs)) is a
 `#[ignore]`'d Rust integration test (so `cargo test` stays fast and offline).
 It spawns `zuko host`, seeds the saved-hosts file under a temp
 `XDG_CONFIG_HOME`, drives `zuko connect <name>` under a PTY via `portable-pty`

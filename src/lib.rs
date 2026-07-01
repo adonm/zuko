@@ -14,7 +14,7 @@
 //! drift. Built with the same `uniffi` version (0.31) as `iroh-ffi`, so both
 //! XCFrameworks can link into the same app without runtime symbol conflicts.
 //!
-//! [uniffi]: https://mozilla.github.io/uniffi.rs/
+//! [uniffi]: https://mozilla.github.io/uniffi-rs/
 
 // uniffi scaffolding MUST live at the crate root — `#[uniffi::export]` in
 // submodules looks for `crate::UniFfiTag` which the macro generates here.

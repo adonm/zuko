@@ -50,6 +50,21 @@ jobs:
         # that `share` exits on its own after a claim.
         run: mise run test-e2e
 
+      - name: Lint markdown links
+        if: ${{ matrix.os == 'ubuntu-latest' }}
+        # lychee checks every link in all repo markdown (config in
+        # .lychee.toml). GITHUB_TOKEN lifts GitHub rate limits so CI is
+        # stable. Runs only on the ubuntu leg to avoid duplicating on macos.
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: mise run lint-md
+
+      - name: Lint GitHub Actions workflows
+        if: ${{ matrix.os == 'ubuntu-latest' }}
+        # actionlint validates workflow syntax, action versions/SHAs,
+        # permissions, expression contexts. Ubuntu leg only.
+        run: mise run lint-ci
+
       - name: Upload binary
         if: ${{ github.event_name != 'pull_request' }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1

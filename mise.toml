@@ -14,6 +14,19 @@ rust = { version = "latest", components = "clippy,rustfmt" }
 # SwiftLint for the iOS app. Installed + shimmed by mise on Linux (static
 # binary from realm/SwiftLint releases) and macOS. `mise run lint` uses it.
 swiftlint = "latest"
+# mdBook for the docs site (published to GitHub Pages via docs.yml). Prebuilt
+# binary via mise's aqua backend — no compile. `mise run build-docs` builds.
+mdbook = "latest"
+# mdBook preprocessor: renders ```mermaid fenced blocks as diagrams. The cargo
+# backend is the only install path (no prebuilt release); small pure-Rust crate,
+# compiles in seconds and is cached by Swatinem/rust-cache in CI.
+"cargo:mdbook-mermaid" = "latest"
+# Link/URL checker for markdown (the sensible md lint for this repo — no
+# node/ruby style linter, on purpose). Prebuilt binary via aqua.
+lychee = "latest"
+# Linter for .github/workflows/*.yml: validates syntax, action SHAs/versions,
+# permissions, expression contexts, job needs. `mise run lint-ci` runs it.
+actionlint = "latest"
 
 # System-level deps used by builds. `mise bootstrap packages install` installs
 # only the ones for the current OS/package manager. Just the linux/arm64
@@ -186,6 +199,27 @@ run = "sh scripts/zuko-host.sh"
 [tasks.release]
 description = "Cut a release: commit pending work, push, tag vX.Y.Z, push tag (triggers release.yml). Pass the version, e.g. `mise run release v0.1.0`."
 run = "sh scripts/release.sh ${@}"
+
+# ───────────────────────── docs (mdBook) ────────────────────────────
+# Source lives in `docs/` (see `book.toml`); the built site lands under
+# `target/book/` (gitignored via `target/`). CI publishes it to GitHub
+# Pages via `.github/workflows/docs.yml`.
+
+[tasks.build-docs]
+description = "Build the mdBook docs site into target/book/ (config in book.toml, source in docs/)."
+run = "mdbook build"
+
+[tasks.serve-docs]
+description = "Build + serve the mdBook docs site on http://localhost:3000 with live reload. Open in a browser."
+run = "mdbook serve --open"
+
+[tasks.lint-md]
+description = "Lint markdown links with lychee (config in .lychee.toml). Checks all repo .md except generated/build dirs. Network-enabled for external URLs."
+run = "lychee --config .lychee.toml --root-dir . '**/*.md'"
+
+[tasks.lint-ci]
+description = "Lint .github/workflows/*.yml with actionlint (syntax, action versions/SHAs, permissions, expression contexts, job needs)."
+run = "actionlint .github/workflows/*.yml"
 
 # ──────────────────────────── hooks ─────────────────────────────────
 # See https://mise.jdx.dev/hooks.html. All hooks fire only when

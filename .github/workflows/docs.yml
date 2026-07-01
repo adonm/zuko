@@ -1,0 +1,73 @@
+name: docs
+
+# Builds the mdBook site from `docs/` (config in `book.toml`) and publishes
+# it to GitHub Pages. Source of truth for tooling is `mise.toml`, so this
+# workflow just runs `mise install` + `mise run build-docs` — same as local.
+#
+# Pages must be configured in the repo settings: Settings → Pages →
+# "Build and deployment" → Source = "GitHub Actions" (not "Deploy from a
+# branch"). This workflow supplies the artifact.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "docs/**"
+      - "book.toml"
+      - "mise.toml"
+      - ".github/workflows/docs.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Allow only one concurrent deployment; don't cancel in-flight runs (Pages
+# deploy can leave the environment half-published if interrupted mid-deploy).
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: build mdbook
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - name: mise install
+        uses: jdx/mise-Action@e6a8b3978addb5a52f2b4cd9d91eafa7f0ab959d # v4.2.0
+        with:
+          cache: true
+
+      - name: Lint markdown links
+        # Gate the deploy on link health (config in .lychee.toml). GITHUB_TOKEN
+        # lifts GitHub rate limits.
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: mise run lint-md
+
+      - name: Build site
+        run: mise run build-docs
+
+      - name: Setup Pages
+        uses: actions/configure-pages@9830e1d77f6fd55906f4c6efebb6b2d84ff4e7b7 # v5.0.0
+
+      - name: Upload artifact
+        uses: actions/upload-pages-artifact@0a40082370076067d1a98a1e27ba6f68dc82e9c5 # v3.0.0
+        with:
+          # mdbook build.dir (book.toml [build] dir) = target/book
+          path: target/book
+
+  deploy:
+    name: deploy to pages
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@7656e8774cdc3c3d236a6f3d967fe47e3f8f8c7a # v4.0.0

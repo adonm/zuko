@@ -1,0 +1,27 @@
+<!-- mermaid: load from the jsdelivr CDN (no JS committed to the repo) and init
+     with theme awareness. The mdbook-mermaid preprocessor renders ```mermaid
+     fenced blocks as <pre class="mermaid">; this script turns them into SVG.
+     Ported from mdbook-mermaid's stock mermaid-init.js. -->
+<script src="https://cdn.jsdelivr.net/npm/mermaid@10.9.3/dist/mermaid.min.js"></script>
+<script>
+  (() => {
+    const darkThemes = ['ayu', 'navy', 'coal'];
+    const lightThemes = ['light', 'rust'];
+    const classList = document.getElementsByTagName('html')[0].classList;
+    let lastThemeWasLight = true;
+    for (const cssClass of classList) {
+      if (darkThemes.includes(cssClass)) { lastThemeWasLight = false; break; }
+    }
+    const theme = lastThemeWasLight ? 'default' : 'dark';
+    mermaid.initialize({ startOnLoad: true, theme });
+    // Re-render in the new theme by reloading (mermaid can't recolor in place).
+    for (const darkTheme of darkThemes) {
+      const el = document.getElementById(darkTheme);
+      if (el) el.addEventListener('click', () => { if (lastThemeWasLight) window.location.reload(); });
+    }
+    for (const lightTheme of lightThemes) {
+      const el = document.getElementById(lightTheme);
+      if (el) el.addEventListener('click', () => { if (!lastThemeWasLight) window.location.reload(); });
+    }
+  })();
+</script>

@@ -34,7 +34,7 @@ Every message on each stream is length-prefixed:
 
 `len` is the payload length only (max 65535). Frames may be coalesced or split
 across QUIC packets; receivers must accumulate bytes and parse greedily (see
-[`try_parse_frame` in `wire.rs`](../src/wire.rs)).
+[`try_parse_frame` in `wire.rs`](https://github.com/adonm/zuko/blob/main/src/wire.rs)).
 
 ## Frame types
 
@@ -167,12 +167,12 @@ A minimal client, in any language with Iroh bindings (Rust `iroh`, Swift
 
 Reference code:
 
-- **Rust:** [`src/wire.rs`](../src/wire.rs) (framing),
-  [`src/client.rs`](../src/client.rs) (the connect loop),
-  [`src/handoff.rs`](../src/handoff.rs) (the claim side of pairing).
-- **Swift:** [`ios/ZukoWire/Sources/ZukoWire/Wire.swift`](../ios/ZukoWire/Sources/ZukoWire/Wire.swift)
-  (unit-tested in [`ios/ZukoWire/Tests`](../ios/ZukoWire/Tests/ZukoWireTests/WireTests.swift)),
-  [`ios/Zuko/Zuko/Net/IrohSession.swift`](../ios/Zuko/Zuko/Net/IrohSession.swift).
+- **Rust:** [`src/wire.rs`](https://github.com/adonm/zuko/blob/main/src/wire.rs) (framing),
+  [`src/client.rs`](https://github.com/adonm/zuko/blob/main/src/client.rs) (the connect loop),
+  [`src/handoff.rs`](https://github.com/adonm/zuko/blob/main/src/handoff.rs) (the claim side of pairing).
+- **Swift:** [`ios/ZukoWire/Sources/ZukoWire/Wire.swift`](https://github.com/adonm/zuko/blob/main/ios/ZukoWire/Sources/ZukoWire/Wire.swift)
+  (unit-tested in [`ios/ZukoWire/Tests`](https://github.com/adonm/zuko/blob/main/ios/ZukoWire/Tests/ZukoWireTests/WireTests.swift)),
+  [`ios/Zuko/Zuko/Net/IrohSession.swift`](https://github.com/adonm/zuko/blob/main/ios/Zuko/Zuko/Net/IrohSession.swift).
 
 If your client needs a terminal emulator, [GhosttyTerminal](https://github.com/Lakr233/libghostty-spm)
 is used on iOS (host-managed I/O backend — no PTY spawn); on Linux,
@@ -236,7 +236,7 @@ touch / clipboard capabilities, and separate QUIC flow control. But it should be
 additive. If it replaced Kitty graphics, zuko would lose interop with existing
 Kitty-compatible terminals and make desktop/Ghostty usage harder, not easier.
 
-The more complete product rationale is in [`DESIGN.md`](DESIGN.md).
+The more complete product rationale is in [`design.md`](design.md).
 
 ### Why only a short lease, not full session replay
 
