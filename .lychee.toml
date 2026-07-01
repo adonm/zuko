@@ -1,0 +1,38 @@
+# lychee link-checker config. Run: `mise run lint-md`
+# Docs: https://lychee.linkchecker.cli.rs/
+# Valid field names: https://github.com/lycheeverse/lychee/blob/lychee-v0.24.2/lychee.example.toml
+
+# Accept 2xx and 3xx (redirects) + 429 (rate-limited → treat as transient).
+accept = ["200", "206", "301", "302", "308", "429"]
+
+# Collect all errors then exit non-zero (CI gate). No progress bar in CI.
+no_progress = true
+
+# Cache external results locally so repeated runs/CI are fast and avoid
+# rate-limiting.
+cache = true
+max_cache_age = "1d"
+
+# Be lenient about flaky external hosts: retry once.
+max_retries = 1
+
+# How many concurrent requests for external URLs.
+max_concurrency = 8
+
+# Skip verifying fragments (#anchors) — GitHub heading anchors change with
+# renames and lychee can't reliably verify them remotely anyway. Local-file
+# fragment checks still happen (those are reliable).
+include_fragments = "none"
+
+# Exclude paths lychee should never descend into (build output, local
+# toolchain dirs, generated iOS artifacts).
+exclude_path = [
+  "target/",
+  ".tmp/",
+  ".git/",
+  "ios/.build/",
+  "ios/xtool/",
+  "ios/ZukoFFI/ZukoRust.xcframework/",
+  "ios/ZukoFFI/Generated/",
+  "ios/Zuko/Zuko.xcodeproj/",
+]

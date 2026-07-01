@@ -1,0 +1,33 @@
+# mdBook config for the zuko docs site.
+# Source lives in `docs/` (alongside the long-form markdown); the built site
+# lands under `target/book/` (already gitignored via `target/`).
+# Build:   `mise run build-docs`   (== `mdbook build`)
+# Preview: `mise run serve-docs`   (== `mdbook serve --open`)
+
+[book]
+title = "zuko"
+description = "Remote terminals over Iroh — dial by key, end-to-end encrypted, no open ports."
+language = "en"
+src = "docs"
+
+[build]
+build-dir = "target/book"
+create-missing = false
+
+# ```mermaid fenced blocks are rendered client-side by the JS in
+# theme/head.hbs (loads mermaid from the jsdelivr CDN, swaps mdBook's
+# `<code class="language-mermaid">` for `<pre class="mermaid">`, and runs
+# it). No mdbook preprocessor and no committed JS.
+
+[output.html]
+no-section-label = true
+git-repository-url = "https://github.com/adonm/zuko"
+edit-url-template = "https://github.com/adonm/zuko/edit/main/docs/{path}"
+default-theme = "light"
+preferred-dark-theme = "ayu"
+theme = "theme"
+# Our ~30-line mermaid init (head.hbs loads mermaid itself from the CDN;
+# this is the small bit we own and commit). mdBook copies it into the build
+# output and hashes the filename; head.hbs references it as "mermaid.js"
+# and mdBook rewrites that to the hashed path at build time.
+additional-js = ["theme/mermaid.js"]

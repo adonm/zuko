@@ -1,41 +1,41 @@
 # zuko clients
 
-zuko is **remote terminals over Iroh**: a [host daemon](../src/) and a
-[tiny wire protocol](PROTOCOL.md). Clients connect to a host and render its
+zuko is **remote terminals over Iroh**: a [host daemon](https://github.com/adonm/zuko/tree/main/src) and a
+[tiny wire protocol](protocol.md). Clients connect to a host and render its
 shell. Anyone can write one — the protocol is Iroh streams and a handful of
-frame types. Product/architecture rationale lives in [`DESIGN.md`](DESIGN.md).
+frame types. Product/architecture rationale lives in [`design.md`](design.md).
 
 ## Status
 
 | Client | Status | Stack | Source |
 |--------|--------|-------|--------|
-| **CLI** | shipped | Rust + [crossterm](https://crates.io/crates/crossterm) | [`src/`](../src) — `zuko connect` (part of the `zuko` binary) |
-| **iOS / iPadOS** | shipped | Swift + [GhosttyTerminal](https://github.com/Lakr233/libghostty-spm) + [IrohLib](https://github.com/n0-computer/iroh-ffi) | [`ios/Zuko/`](../ios/Zuko) |
-| Android | planned | Kotlin/Rust via the crate's [uniffi](https://mozilla.github.io/uniffi.rs/) FFI surface | — |
+| **CLI** | shipped | Rust + [crossterm](https://crates.io/crates/crossterm) | [`src/`](https://github.com/adonm/zuko/tree/main/src) — `zuko connect` (part of the `zuko` binary) |
+| **iOS / iPadOS** | shipped | Swift + [GhosttyTerminal](https://github.com/Lakr233/libghostty-spm) + [IrohLib](https://github.com/n0-computer/iroh-ffi) | [`ios/Zuko/`](https://github.com/adonm/zuko/tree/main/ios/Zuko) |
+| Android | planned | Kotlin/Rust via the crate's [uniffi](https://mozilla.github.io/uniffi-rs/) FFI surface | — |
 | Linux GUI | planned | Rust + [relm4](https://relm4.org/) | — |
 | Web | idea | — | — |
 
 The CLI lives in the same `zuko` binary as the host — `mise use --global
 github:adonm/zuko` gives you both (`zuko host` to serve, `zuko connect` to
 attach). The universal iOS/iPadOS app is built from source (or
-[TestFlight from CI](../ios/DISTRIBUTION.md)).
+[TestFlight from CI](https://github.com/adonm/zuko/blob/main/ios/DISTRIBUTION.md)).
 
 ## Writing a client
 
-Read [`PROTOCOL.md`](PROTOCOL.md) first — it's short. In brief:
+Read [`protocol.md`](protocol.md) first — it's short. In brief:
 
 1. **Get the host's ticket** by implementing the
-   [ticket handoff](PROTOCOL.md#ticket-handoff): accept a short memorable code
+   [ticket handoff](protocol.md#ticket-handoff): accept a short memorable code
    from the user, derive the throwaway key from it, dial the ephemeral host,
    and read the real ticket off the uni stream. The CLI flow is
    `zuko share` → `zuko <code>` (or `zuko claim <code>` with flags); the same
    UX is the goal for every client.
 
    **Mobile clients:** don't reimplement the Argon2id key derivation — the
-   crate ships a [uniffi](https://mozilla.github.io/uniffi.rs/) FFI surface
-   ([`src/ffi.rs`](../src/ffi.rs)) exposing `derive_handoff_key(code)`, so the
+   crate ships a [uniffi](https://mozilla.github.io/uniffi-rs/) FFI surface
+   ([`src/ffi.rs`](https://github.com/adonm/zuko/blob/main/src/ffi.rs)) exposing `derive_handoff_key(code)`, so the
    derivation is bit-exact with the CLI by construction. Wrap the `staticlib`
-   into an XCFramework (iOS) / AAR (Android); see [`ios/Zuko/`](../ios/Zuko)
+   into an XCFramework (iOS) / AAR (Android); see [`ios/Zuko/`](https://github.com/adonm/zuko/tree/main/ios/Zuko)
    for the reference.
 2. Parse the host's `endpointa…` ticket.
 3. Connect over Iroh on ALPN `zuko/2`, falling back to `zuko/1` for older
@@ -61,10 +61,10 @@ Read [`PROTOCOL.md`](PROTOCOL.md) first — it's short. In brief:
 
 The reference implementations are deliberately small and worth cribbing from:
 
-- **Rust:** [`src/wire.rs`](../src/wire.rs) +
-  [`client.rs`](../src/client.rs).
-- **Swift:** [`ZukoWire/Wire.swift`](../ios/ZukoWire/Sources/ZukoWire/Wire.swift) +
-  [`IrohSession.swift`](../ios/Zuko/Zuko/Net/IrohSession.swift).
+- **Rust:** [`src/wire.rs`](https://github.com/adonm/zuko/blob/main/src/wire.rs) +
+  [`client.rs`](https://github.com/adonm/zuko/blob/main/src/client.rs).
+- **Swift:** [`ZukoWire/Wire.swift`](https://github.com/adonm/zuko/blob/main/ios/ZukoWire/Sources/ZukoWire/Wire.swift) +
+  [`IrohSession.swift`](https://github.com/adonm/zuko/blob/main/ios/Zuko/Zuko/Net/IrohSession.swift).
 
 The host sets `TERM=xterm-256color`, so pick an emulator that speaks it. Gotchas
 that bit the existing clients (so you don't have to):
@@ -92,7 +92,7 @@ that bit the existing clients (so you don't have to):
   network outage grow memory without limit. The reference clients cap theirs
   and drop under pressure rather than block.
 - Hold the connection open until the client has finished reading any
-  one-shot payload (relevant for the [ticket handoff](PROTOCOL.md#ticket-handoff),
+  one-shot payload (relevant for the [ticket handoff](protocol.md#ticket-handoff),
   where the host opens `open_uni` and writes the ticket before closing).
 
 If you build one, open a PR adding a row to the table above.

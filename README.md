@@ -1,5 +1,12 @@
 # zuko
 
+[![build](https://github.com/adonm/zuko/actions/workflows/build.yml/badge.svg)](https://github.com/adonm/zuko/actions/workflows/build.yml)
+[![ios](https://github.com/adonm/zuko/actions/workflows/build-ios.yml/badge.svg)](https://github.com/adonm/zuko/actions/workflows/build-ios.yml)
+[![docs](https://github.com/adonm/zuko/actions/workflows/docs.yml/badge.svg)](https://adonm.github.io/zuko/)
+[![release](https://github.com/adonm/zuko/actions/workflows/release.yml/badge.svg)](https://github.com/adonm/zuko/releases/latest)
+[![license](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
+[![docs site](https://img.shields.io/website-up-down-green-red/https/adonm.github.io/zuko.svg?label=docs%20site)](https://adonm.github.io/zuko/)
+
 **Remote terminals over [Iroh](https://www.iroh.computer/).** Dial by key,
 end-to-end encrypted, no open ports or port forwarding. Run the **host** on any
 Linux/macOS box you want to reach, then attach a **client** from anywhere —
@@ -8,8 +15,8 @@ real PTY.
 
 zuko is a small **wire protocol** and a **host daemon**. The reference clients
 are the CLI and iOS/iPadOS app; Android and desktop GUI clients can speak the
-same protocol later. See [`docs/PROTOCOL.md`](docs/PROTOCOL.md),
-[`docs/CLIENTS.md`](docs/CLIENTS.md), and [`docs/DESIGN.md`](docs/DESIGN.md).
+same protocol later. See [`docs/protocol.md`](docs/protocol.md),
+[`docs/clients.md`](docs/clients.md), and [`docs/design.md`](docs/design.md).
 
 ```mermaid
 flowchart TB
@@ -40,12 +47,15 @@ flowchart TB
   host's key.
 - **Service install in the CLI.** `zuko install` writes the systemd/launchd
   user unit and starts the daemon. `zuko uninstall` reverses it.
+- **Self-upgrade.** `zuko upgrade` pulls the latest binary via mise and
+  restarts the host service onto the new build (mise-managed installs only).
+  `--check` previews, `--version <v>` pins, `--no-restart` defers the bounce.
 
 ## Clients
 
 Anyone can write a client — zuko is Iroh streams and a tiny frame format. See
-[`docs/CLIENTS.md`](docs/CLIENTS.md) for the full list and
-[`docs/PROTOCOL.md`](docs/PROTOCOL.md) for the spec. Reference implementations:
+[`docs/clients.md`](docs/clients.md) for the full list and
+[`docs/protocol.md`](docs/protocol.md) for the spec. Reference implementations:
 
 | Client | Status | Stack | Source |
 |--------|--------|-------|--------|
@@ -79,6 +89,9 @@ Logs go to `journalctl --user -u zuko-host -f` (Linux) or
 
 > Manual / no service manager? Run `zuko host` in the foreground, or
 > [`scripts/zuko-host.sh`](scripts/zuko-host.sh) from a checkout.
+>
+> Updates: `zuko upgrade` pulls the newest release via mise and bounces the
+> host service. See [`docs/host.md`](docs/host.md#upgrading).
 
 ### 2. Pair a client
 
@@ -100,28 +113,21 @@ zuko ls                            # list saved hosts
 zuko home                          # = zuko connect home (shorthand)
 ```
 
-### GUI app streaming
+### GUI app streaming (Linux)
 
 On Linux, `zuko app <command-or-alias>` runs one Wayland GUI app under cage and
-streams it through Kitty graphics over the existing terminal session:
+streams it through Kitty graphics over the existing terminal session — no
+second port, pairing flow, or desktop client:
 
 ```sh
 zuko app --list
-zuko app text-editor
-zuko app --graphics-codec auto --max-mbps 80 firefox
+zuko app firefox
 ```
 
-Defaults favor terminal interop: cage is sized to the terminal's pixel geometry,
-resizes are followed when cage exposes output-management, unchanged frames are
-skipped, and `--graphics-codec auto` uses PNG for UI/static frames or raw Kitty
-RGB for high-entropy video-like frames. Use `--scale <n>` to render below/above
-terminal resolution.
-
-Flatpak aliases are launched as Wayland-only cage children (`--socket=wayland`,
-no X11 fallback, `--die-with-parent`). Portals still belong to the host desktop
-session; for full desktop or portal-heavy workflows, run an RDP client inside
-`zuko app` (for example `zuko app remmina` or `zuko app krdc`) and connect it to
-GNOME/KDE's built-in RDP server.
+Full flag table, the `--test-pattern` → `--doctor` → `--dry-run` diagnostic
+workflow, Flatpak alias launching, the RDP-inside-`zuko app` desktop pattern,
+runtime deps, and the aarch64 cage caveat are in
+[`docs/app.md`](docs/app.md).
 
 **iOS / iPadOS** — see [`ios/Zuko/README.md`](ios/Zuko/README.md) for building
 the universal app from source (Simulator or device).
@@ -137,7 +143,7 @@ long-lived work that survives long disconnects or host restarts, run
 
 If the session wedges hard (keystrokes vanish), **Ctrl-C 3× within ~1 s** with
 no remote output between presses force-exits the CLI — see
-[`docs/HOST.md`](docs/HOST.md#force-quitting-the-cli) for the detail.
+[`docs/host.md`](docs/host.md#force-quitting-the-cli) for the detail.
 
 `zuko share` reads the live `current_ticket` refreshed by `zuko host`; stale
 ticket files are rejected so pairing fails closed if the host service is gone.
@@ -146,7 +152,7 @@ ticket files are rejected so pairing fails closed if the host service is gone.
 
 Iroh streams with ALPN `zuko/2` and `zuko/1` fallback. The full spec (frame
 types, capability flags, the ticket-handoff ALPN) is in
-[`docs/PROTOCOL.md`](docs/PROTOCOL.md); reference impls in
+[`docs/protocol.md`](docs/protocol.md); reference impls in
 [`src/wire.rs`](src/wire.rs) (Rust) and
 [`ios/ZukoWire/Sources/ZukoWire/Wire.swift`](ios/ZukoWire/Sources/ZukoWire/Wire.swift) (Swift, unit-tested).
 
@@ -158,7 +164,7 @@ types, capability flags, the ticket-handoff ALPN) is in
 | `tests/e2e.rs` | End-to-end PTY harness — spawns host + client, exercises `share`→`claim` over the live Iroh network. |
 | `scripts/` | `zuko-host.sh` (foreground dev wrapper), `release.sh` (tag + push). |
 | `ios/Zuko/` | The iOS client (xtool + Swift + GhosttyTerminal, networking via IrohLib). |
-| `docs/` | [`HOST.md`](docs/HOST.md) (user guide), [`PROTOCOL.md`](docs/PROTOCOL.md) (wire spec), [`DESIGN.md`](docs/DESIGN.md) (architecture/product rationale), [`CLIENTS.md`](docs/CLIENTS.md) (client registry), [`RELEASING.md`](docs/RELEASING.md) (cutting releases). |
+| `docs/` | [`README.md`](docs/README.md) (index), [`host.md`](docs/host.md) (user guide), [`app.md`](docs/app.md) (`zuko app`), [`protocol.md`](docs/protocol.md) (wire spec), [`design.md`](docs/design.md) (architecture/product rationale), [`clients.md`](docs/clients.md) (client registry), [`releasing.md`](docs/releasing.md) (cutting releases). |
 | `.github/workflows/` | CI: build+test `zuko` + iOS app; publish release binaries. |
 
 ## Requirements
@@ -174,7 +180,7 @@ types, capability flags, the ticket-handoff ALPN) is in
 - The host's `endpointa…` ticket is the only long-lived secret. It moves only
   through `zuko share` → `zuko claim`: an E2E-encrypted Iroh stream keyed by a
   one-time code; `share`/`claim` never weaken the host key (see
-  [`docs/PROTOCOL.md`](docs/PROTOCOL.md#ticket-handoff)).
+  [`docs/protocol.md`](docs/protocol.md#ticket-handoff)).
 - Anyone with the ticket can connect — treat it like an SSH private key.
   Rotate by deleting `~/.config/zuko/key` and restarting; the node id changes
   and all old tickets stop working.
@@ -195,7 +201,10 @@ mise run run-host         # run `zuko host` in the foreground
 
 CI uses the same tasks via [`jdx/mise-Action`](https://github.com/jdx/mise-Action),
 so local and CI stay in lockstep. Cutting a release is documented in
-[`docs/RELEASING.md`](docs/RELEASING.md).
+[`docs/releasing.md`](docs/releasing.md). Contributing guide:
+[`docs/contributing.md`](docs/contributing.md). Security policy:
+[`docs/security.md`](docs/security.md). The full docs are also published as a
+browsable mdBook site (build locally with `mise run build-docs`).
 
 ## License
 

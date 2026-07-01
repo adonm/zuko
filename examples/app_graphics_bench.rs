@@ -1,7 +1,23 @@
+// Benchmarks the `zuko app` PNG/Kitty graphics encode path. The `bench` module
+// uses the `png` crate, a `cfg(target_os = "linux")` dependency in Cargo.toml,
+// so it is gated to Linux; `main` stays defined on every target (cargo requires
+// a bin example to have `main`) with a no-op fallback for non-Linux, where the
+// `zuko app` backend (cage + wlr-screencopy) doesn't build anyway.
+#![cfg_attr(not(target_os = "linux"), allow(unused))]
+
 fn main() -> anyhow::Result<()> {
-    bench::run()
+    #[cfg(target_os = "linux")]
+    {
+        bench::run()
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        eprintln!("app_graphics_bench is Linux-only (zuko app needs cage + wlr-screencopy).");
+        Ok(())
+    }
 }
 
+#[cfg(target_os = "linux")]
 mod bench {
     use std::time::Instant;
 

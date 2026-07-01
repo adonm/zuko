@@ -41,7 +41,7 @@ source against an older glibc, which shrinks the closure to ~5 libs.
 
 **Cutting a release** is one command — it commits any pending work, pushes
 the branch, creates an annotated `v*` tag, and pushes the tag (which fires
-[`release.yml`](../.github/workflows/release.yml)):
+[`release.yml`](https://github.com/adonm/zuko/blob/main/.github/workflows/release.yml)):
 
 ```sh
 mise run release v0.4.2   # = sh scripts/release.sh v0.4.2
@@ -59,11 +59,11 @@ mise run build-ios     # if any iOS Swift/build config changed
 ```
 
 For an iOS-facing patch, also skim the first-run tips in
-[`OnboardingView.swift`](../ios/Zuko/Zuko/Views/OnboardingView.swift) and the
-iOS app notes in [`ios/Zuko/README.md`](../ios/Zuko/README.md) so TestFlight
+[`OnboardingView.swift`](https://github.com/adonm/zuko/blob/main/ios/Zuko/Zuko/Views/OnboardingView.swift) and the
+iOS app notes in [`ios/Zuko/README.md`](https://github.com/adonm/zuko/blob/main/ios/Zuko/README.md) so TestFlight
 copy/screenshots don't drift from the toolbar controls.
 
 ## iOS app
 
-See [`ios/DISTRIBUTION.md`](../ios/DISTRIBUTION.md) for signed builds +
+See [`ios/DISTRIBUTION.md`](https://github.com/adonm/zuko/blob/main/ios/DISTRIBUTION.md) for signed builds +
 TestFlight, entirely from GitHub Actions (no Mac required).
