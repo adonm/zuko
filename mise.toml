@@ -28,17 +28,22 @@ lychee = "latest"
 # permissions, expression contexts, job needs. `mise run lint-ci` runs it.
 actionlint = "latest"
 
+# Swift is deliberately NOT in [tools]: mise installs every [tools] entry on
+# every `mise install` (every contributor + every CI leg), and Swift is ~1.5 GB
+# that only the iOS workflow needs. It's pinned to 6.2.4 and installed from
+# swift.org by the `setup-ios` task (opt-in). See that task for the pin
+# rationale. mise's `core:swift` backend also maps Bluefin -> a tarball
+# swift.org doesn't ship, so [tools] would break local Bluefin `mise install`.
+
 # System-level deps used by builds. `mise bootstrap packages install` installs
 # only the ones for the current OS/package manager. Just the linux/arm64
 # cross-compiler here (used by the release workflow).
 [bootstrap.packages]
 "apt:gcc-aarch64-linux-gnu" = "latest" # cross linker for aarch64-unknown-linux-gnu
-# Swift toolchain for local xtool/iOS work. Lives in bootstrap (not [tools])
-# because (a) Homebrew's `swift` formula is the only reliable Linux install
-# path on Bluefin, and (b) it's ~1.5 GB — opting in via `mise bootstrap`
-# keeps it off Rust-only contributors who never touch the iOS app. Anyone
-# iterating on ios/ runs `mise bootstrap packages install --yes` once.
-"brew:swift" = "latest"
+# Swiftly (and the Swift toolchain it installs) needs libcurl at runtime on
+# ubuntu-latest; Swiftly prints this as the fix hint when it's missing and
+# aborts the install. Lives in bootstrap (not [tools]) so only iOS work pulls it.
+"apt:libcurl4-openssl-dev" = "latest"
 
 [settings]
 # `mise bootstrap` (used for [bootstrap.packages]) is still experimental.
@@ -77,7 +82,7 @@ description = "Install the cached Darwin Swift SDK bundle for Linux xtool iOS bu
 run = "sh scripts/setup-ios-sdk.sh"
 
 [tasks.setup-ios]
-description = "Install local iOS build tooling for xtool. macOS: xtool tap. Linux: Homebrew Swift/libxml2 + xtool AppImage."
+description = "Install local iOS build tooling: Swift 6.2.4 (via Swiftly when missing — pins to match the cached xtoolsdk bundle, which 6.3 can't compile) + libxml2 from Homebrew + xtool."
 run = """
 case "$(uname -s)" in
     Linux)
@@ -86,11 +91,39 @@ case "$(uname -s)" in
         fi
         BREW="$(command -v brew || command -v /home/linuxbrew/.linuxbrew/bin/brew || true)"
         if [ -z "$BREW" ]; then
-            echo "setup-ios: Homebrew is required for Swift on Linux" >&2
+            echo "setup-ios: Homebrew is required for libxml2 on Linux" >&2
             exit 1
         fi
-        "$BREW" install swift libxml2
-        "$BREW" link --overwrite --force swift libxml2 || true
+
+        # Swift 6.2.4 (pinned to match the cached xtoolsdk bundle, built
+        # against Apple Swift 6.2.3.3.2 — Swift 6.3 can't compile its
+        # SwiftUI/Spatial modules: "this SDK is not supported by the
+        # compiler"). Homebrew's `swift` formula drifts to 6.3 and mise's
+        # core:swift backend maps Bluefin to a tarball swift.org doesn't
+        # ship, so neither is reliable. Swiftly is Apple's official
+        # version-pinned Swift installer — `swiftly install 6.2.4` fetches
+        # the exact toolchain, and its platform auto-detection works on
+        # ubuntu-latest (the CI runner). Unpin only after the xtoolsdk
+        # bundle is rebuilt against 6.3.
+        if ! command -v swift >/dev/null 2>&1 || ! swift --version 2>/dev/null | head -1 | grep -q '^Swift version 6[.]2'; then
+            export SWIFTLY_HOME_DIR="$HOME/.local/share/swiftly"
+            export SWIFTLY_BIN_DIR="$SWIFTLY_HOME_DIR/bin"
+            if ! [ -x "$SWIFTLY_BIN_DIR/swiftly" ]; then
+                echo "setup-ios: installing Swiftly"
+                tmp="$(mktemp -d)"
+                curl -fsSL "https://download.swift.org/swiftly/linux/swiftly-$(uname -m).tar.gz" -o "$tmp/swiftly.tar.gz"
+                tar zxf "$tmp/swiftly.tar.gz" -C "$tmp"
+                "$tmp/swiftly" init --skip-install --assume-yes --no-modify-profile --quiet-shell-followup
+            fi
+            "$SWIFTLY_BIN_DIR/swiftly" install 6.2.4 --use --no-verify --assume-yes
+            "$SWIFTLY_BIN_DIR/swiftly" link --assume-yes 2>/dev/null || true
+            # shellcheck disable=SC1091
+            . "$SWIFTLY_HOME_DIR/env.sh"
+        fi
+
+        # libxml2: Homebrew-only, no drift risk.
+        "$BREW" install libxml2
+        "$BREW" link --overwrite --force libxml2 || true
         BREW_PREFIX="$($BREW --prefix)"
         export PATH="$BREW_PREFIX/bin:$BREW_PREFIX/sbin:$PATH"
 
@@ -101,6 +134,7 @@ case "$(uname -s)" in
         done
         export LD_LIBRARY_PATH="${ld_libs}${LD_LIBRARY_PATH+:${LD_LIBRARY_PATH}}"
         if [ -n "${GITHUB_PATH:-}" ]; then
+            echo "$SWIFTLY_BIN_DIR" >> "$GITHUB_PATH"
             {
                 echo "$BREW_PREFIX/bin"
                 echo "$BREW_PREFIX/sbin"
@@ -121,7 +155,7 @@ description = "Install legacy signed-release tooling (xcodegen + fastlane). Used
 run = "brew install xcodegen fastlane"
 
 [tasks.setup-xtool]
-description = "Install xtool (cross-platform Xcode replacement). macOS: via the xtool-org Homebrew tap. Linux: the AppImage from GitHub releases. Pairs with `mise bootstrap packages install --yes` on Linux (which installs swift via Homebrew)."
+description = "Install xtool (cross-platform Xcode replacement). macOS: via the xtool-org Homebrew tap. Linux: the AppImage from GitHub releases. Swift itself comes from mise [tools], not Homebrew."
 run = """
 case "$(uname -s)" in
     Darwin)
