@@ -29,10 +29,11 @@ use tracing::{info, warn};
 use crate::HostArgs;
 use crate::config_dir;
 use crate::secret;
+use crate::store;
 use crate::ticket_file::write_current_ticket;
 use crate::wire::{
-    self, ALPN, ALPN_V2, SESSION_TOKEN_LEN, SessionToken, TYPE_ATTACH, TYPE_DATA, TYPE_PING,
-    TYPE_RESIZE, decode_nonce, empty_session_token, parse_attach, supported_alpns, try_parse_frame,
+    self, ALPN_V2, SESSION_TOKEN_LEN, SessionToken, TYPE_ATTACH, TYPE_DATA, TYPE_PING, TYPE_RESIZE,
+    decode_nonce, empty_session_token, parse_attach, supported_alpns, try_parse_frame,
 };
 
 /// Per-direction capacity of the bounded channels that connect the network
@@ -260,7 +261,7 @@ pub async fn run(args: HostArgs) -> Result<()> {
     eprintln!("  then on the other machine:");
     eprintln!("    zuko claim <code>");
     eprintln!();
-    info!(%node_id, "listening on alpn {:?}", String::from_utf8_lossy(ALPN));
+    info!(%node_id, "listening on alpn {:?}", String::from_utf8_lossy(ALPN_V2));
 
     // Publish the live ticket so `zuko share` can hand it off without an IPC
     // channel to this daemon. The ticket encodes current addresses, which can
@@ -328,9 +329,8 @@ async fn serve(
         .context("accept bidi stream")?;
 
     // ── Handshake: read the client's first frame. ──
-    // The client sends a single `RESIZE` carrying the initial terminal size.
-    // Anything else (e.g. a stale v0.4–v0.5 `HELLO`): ignore and default to
-    // 80×24; the client's first subsequent `RESIZE` corrects it.
+    // Current clients open with ATTACH carrying their authorisation/session
+    // token and initial terminal size. Anything else is rejected below.
     let mut acc: Vec<u8> = Vec::with_capacity(16 * 1024);
     let mut tmp = vec![0u8; 16 * 1024];
     let first = tokio::time::timeout(
@@ -340,6 +340,7 @@ async fn serve(
     .await
     .context("timed out waiting for initial frame")??;
     let request = initial_request(first);
+    store::ensure_client_authorized(&request.requested_token)?;
     let session = get_or_create_session(
         &sessions,
         request.requested_token,
@@ -359,7 +360,7 @@ async fn serve(
     // through here so the single `pty_to_net` writer puts frames on the wire
     // in order without interleaving. zuko doesn't run an app-level heartbeat;
     // Iroh/QUIC owns transport liveness. PING/PONG is just cheap peer
-    // compatibility for clients that still send protocol control frames.
+    // PING/PONG responses for clients that use protocol control frames.
     let (out_tx, mut out_rx) = tokio::sync::mpsc::channel::<OutItem>(PUMP_CHANNEL_CAP);
     let (cancel_tx, mut cancel_rx) = tokio::sync::watch::channel(false);
     let mut exit_rx = session.exit_tx.subscribe();
@@ -574,7 +575,7 @@ async fn handle_client_frame(
             let _ = pong_tx.send(OutItem::Frame(wire::pong_frame(nonce))).await;
             true
         }
-        _ => true, // ignore unknown types (forward compat — PONG, legacy HELLO/WELCOME, etc.)
+        _ => true, // ignore unknown types (forward compat — PONG, future control, etc.)
     }
 }
 
@@ -601,20 +602,6 @@ fn initial_request(first: wire::ParsedFrame) -> InitialRequest {
                 }
             } else {
                 default_initial_request(Some(first))
-            }
-        }
-        TYPE_RESIZE if first.payload.len() == 8 => {
-            let cols = u16::from_be_bytes([first.payload[0], first.payload[1]]);
-            let rows = u16::from_be_bytes([first.payload[2], first.payload[3]]);
-            let pixel_width = u16::from_be_bytes([first.payload[4], first.payload[5]]);
-            let pixel_height = u16::from_be_bytes([first.payload[6], first.payload[7]]);
-            InitialRequest {
-                requested_token: [0u8; SESSION_TOKEN_LEN],
-                cols: cols.max(1),
-                rows: rows.max(1),
-                pixel_width,
-                pixel_height,
-                pending_first: None,
             }
         }
         _ => default_initial_request(Some(first)),
@@ -905,17 +892,18 @@ mod tests {
     use super::*;
 
     #[test]
-    fn initial_resize_is_clamped_and_consumed() {
-        // 8-byte RESIZE: [cols=0][rows=0][pw=0][ph=0] — both clamp to 1.
+    fn first_resize_frame_is_rejected() {
+        // RESIZE is valid after ATTACH but no longer accepted as the first
+        // frame: first frame must carry the authorisation/session token.
         let frame = wire::ParsedFrame {
             typ: TYPE_RESIZE,
             payload: vec![0, 0, 0, 0, 0, 0, 0, 0],
         };
         let req = initial_request(frame);
-        assert_eq!((req.cols, req.rows), (1, 1));
+        assert_eq!((req.cols, req.rows), (DEFAULT_COLS, DEFAULT_ROWS));
         assert_eq!((req.pixel_width, req.pixel_height), (0, 0));
         assert!(empty_session_token(&req.requested_token));
-        assert!(req.pending_first.is_none());
+        assert!(req.pending_first.is_some());
     }
 
     #[test]

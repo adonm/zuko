@@ -46,8 +46,10 @@ use std::time::{Duration, Instant};
 use std::{fs, thread};
 
 use anyhow::{Context, Result, bail};
+use iroh_tickets::endpoint::EndpointTicket;
 use portable_pty::{CommandBuilder as PtyCommand, PtySize, native_pty_system};
 use tempfile::TempDir;
+use zuko::wire::{SESSION_TOKEN_LEN, SessionToken};
 
 const TOKEN: &str = "hello-zuko-ITEST";
 
@@ -139,6 +141,16 @@ fn zuko_cmd(zuko: &str, xdg: &Path) -> Command {
 
 fn short(s: &str) -> &str {
     s.get(..32).unwrap_or(s)
+}
+
+fn token_hex(token: &SessionToken) -> String {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let mut out = String::with_capacity(SESSION_TOKEN_LEN * 2);
+    for &b in token {
+        out.push(HEX[(b >> 4) as usize] as char);
+        out.push(HEX[(b & 0x0f) as usize] as char);
+    }
+    out
 }
 
 /// Wait until `path` exists and has non-empty trimmed contents, polling every
@@ -360,14 +372,25 @@ fn test_share_claim(zuko: &str, xdg: &Path, expected_ticket: &str) -> Result<()>
 fn test_host_connect(zuko: &str, xdg: &Path, ticket: &str) -> Result<()> {
     eprintln!("\n=== test: host ↔ connect (by saved name) ===");
 
-    // Seed the saved-hosts file directly so we can exercise `zuko connect`
-    // without going through the OTP handoff (the share/claim test covers
-    // that). Format must stay in sync with `store::write_hosts`:
-    // `<name>\t<ticket>\n`.
+    // Seed saved host + authorised client directly so this path can exercise
+    // `zuko connect` without a second handoff round-trip.
     let zuko_dir = xdg.join("zuko");
     fs::create_dir_all(&zuko_dir).context("mkdir zuko dir")?;
     let seeded = format!("# zuko saved hosts (seeded by e2e test)\ne2e-direct\t{ticket}\n");
     fs::write(zuko_dir.join("hosts"), seeded).context("seed hosts file")?;
+    let client_key = iroh::SecretKey::generate();
+    fs::write(zuko_dir.join("client_key"), client_key.to_bytes()).context("seed client key")?;
+    let endpoint_ticket = ticket
+        .parse::<EndpointTicket>()
+        .context("parse host ticket")?;
+    let addr = endpoint_ticket.into();
+    let token = zuko::client::derive_session_token(&client_key, &addr);
+    let authorized = format!(
+        "# zuko authorised clients (seeded by e2e test)\ne2e-direct\t{}\n",
+        token_hex(&token)
+    );
+    fs::write(zuko_dir.join("authorized_clients"), authorized)
+        .context("seed authorized clients file")?;
 
     // Fork `zuko connect e2e-direct` on a PTY: crossterm's enable_raw_mode on
     // stdin needs a controlling terminal, which the PTY provides. portable-pty

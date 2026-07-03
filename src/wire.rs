@@ -1,7 +1,7 @@
 //! Wire protocol shared by the host and client (and the iOS app).
 //!
-//! ALPN [`ALPN_V1`] uses one bidirectional Iroh stream. ALPN [`ALPN_V2`] keeps
-//! the same frames but permits a second control stream for resize/ping traffic.
+//! ALPN [`ALPN_V2`] uses one data stream and permits a second control stream
+//! for resize/ping traffic.
 //! Every message is length-prefixed so nothing leaks into the terminal as
 //! in-band escape sequences:
 //!
@@ -11,9 +11,10 @@
 //!   0x01 RESIZE  payload = [cols: u16 BE][rows: u16 BE][pixel_width: u16 BE][pixel_height: u16 BE]
 //!                 (client -> host, also first frame). Pixels let a host-side
 //!                 `zuko app` render at the client terminal's real resolution.
-//!   0x04 PING    payload = [nonce: u64 BE]   (optional control/compat)
-//!   0x05 PONG    payload = [nonce: u64 BE]   (optional control/compat)
+//!   0x04 PING    payload = [nonce: u64 BE]   (optional control)
+//!   0x05 PONG    payload = [nonce: u64 BE]   (optional control)
 //!   0x06 ATTACH  payload = [token: 16 bytes][cols: u16 BE][rows: u16 BE][pixel_width: u16 BE][pixel_height: u16 BE]
+//!   0x08 AUTHORIZE payload = [token: 16 bytes][label: UTF-8]
 //! ```
 //!
 //! ## Handshake
@@ -24,32 +25,25 @@
 //! lease and output while detached is discarded; there is no replay buffer.
 //!
 //! Unknown frame types **must be ignored** — the protocol is designed to
-//! gain types over time without breaking old peers. The legacy `HELLO`
-//! (0x02) and `WELCOME` (0x03) frame types used by v0.4–v0.5 are reserved.
+//! gain types over time without breaking old peers.
 
 use anyhow::{Result, anyhow};
 
-/// Original single-stream protocol ALPN.
-pub const ALPN_V1: &[u8] = b"zuko/1";
 /// Protocol v2 ALPN. v2 keeps v1 frame encoding but allows a second bidi
 /// control stream so resize/ping traffic does not queue behind terminal DATA.
 pub const ALPN_V2: &[u8] = b"zuko/2";
-/// Back-compat alias used by older call sites/tests.
-pub const ALPN: &[u8] = ALPN_V1;
 
 pub fn supported_alpns() -> Vec<Vec<u8>> {
-    vec![ALPN_V2.to_vec(), ALPN_V1.to_vec()]
+    vec![ALPN_V2.to_vec()]
 }
 
 pub const TYPE_DATA: u8 = 0x00;
 pub const TYPE_RESIZE: u8 = 0x01;
-// 0x02 (TYPE_HELLO) and 0x03 (TYPE_WELCOME) were used by v0.4–v0.5 for the
-// session-resume handshake. Removed in v0.6 — leave the gap so future
-// frames don't reuse the numbers if any old peer is still in the wild.
 pub const TYPE_PING: u8 = 0x04;
 pub const TYPE_PONG: u8 = 0x05;
 pub const TYPE_ATTACH: u8 = 0x06;
 pub const TYPE_ATTACHED: u8 = 0x07;
+pub const TYPE_AUTHORIZE: u8 = 0x08;
 pub const MAX_PAYLOAD_LEN: usize = u16::MAX as usize;
 pub const SESSION_TOKEN_LEN: usize = 16;
 pub type SessionToken = [u8; SESSION_TOKEN_LEN];
@@ -93,7 +87,8 @@ pub fn resize_frame(cols: u16, rows: u16, pixel_width: u16, pixel_height: u16) -
 }
 
 /// A `0x04 PING` / `0x05 PONG` frame carrying an 8-byte nonce. zuko doesn't
-/// require app-level heartbeats; these stay for cheap peer compatibility.
+/// require app-level heartbeats; peers may still use these as cheap liveness
+/// probes.
 pub fn ping_frame(nonce: u64) -> Vec<u8> {
     frame(TYPE_PING, &nonce.to_be_bytes())
 }
@@ -101,9 +96,9 @@ pub fn pong_frame(nonce: u64) -> Vec<u8> {
     frame(TYPE_PONG, &nonce.to_be_bytes())
 }
 
-/// A `0x06 ATTACH` frame. An all-zero token asks the host for a fresh session;
-/// any other token asks to reattach a still-leased detached PTY. Carries the
-/// client's cell + pixel size like RESIZE.
+/// A `0x06 ATTACH` frame. The non-zero token is both this client's host-side
+/// authorisation token and its stable PTY lease key. Carries the client's cell
+/// + pixel size like RESIZE.
 pub fn attach_frame(
     token: SessionToken,
     cols: u16,
@@ -124,6 +119,20 @@ pub fn attach_frame(
 /// reconnect. If the requested token expired, this will be a new token.
 pub fn attached_frame(token: SessionToken) -> Vec<u8> {
     frame(TYPE_ATTACHED, &token)
+}
+
+/// A `0x08 AUTHORIZE` frame used only during `zuko share` pairing. The claimer
+/// sends the stable token it will use for future ATTACH handshakes plus a local
+/// device label. Older hosts ignore it; newer hosts save it to their
+/// authorised-clients list before handing out the ticket.
+pub fn authorize_frame(token: SessionToken, label: &str) -> Vec<u8> {
+    let label = label.as_bytes();
+    let max_label = MAX_PAYLOAD_LEN.saturating_sub(SESSION_TOKEN_LEN);
+    let label = &label[..label.len().min(max_label)];
+    let mut payload = Vec::with_capacity(SESSION_TOKEN_LEN + label.len());
+    payload.extend_from_slice(&token);
+    payload.extend_from_slice(label);
+    frame(TYPE_AUTHORIZE, &payload)
 }
 
 pub fn parse_attach(payload: &[u8]) -> Option<(SessionToken, u16, u16, u16, u16)> {
@@ -155,6 +164,16 @@ pub fn parse_attached(payload: &[u8]) -> Option<SessionToken> {
     let mut token = [0u8; SESSION_TOKEN_LEN];
     token.copy_from_slice(payload);
     Some(token)
+}
+
+pub fn parse_authorize(payload: &[u8]) -> Option<(SessionToken, String)> {
+    if payload.len() < SESSION_TOKEN_LEN {
+        return None;
+    }
+    let mut token = [0u8; SESSION_TOKEN_LEN];
+    token.copy_from_slice(&payload[..SESSION_TOKEN_LEN]);
+    let label = String::from_utf8_lossy(&payload[SESSION_TOKEN_LEN..]).to_string();
+    Some((token, label))
 }
 
 pub const fn empty_session_token(token: &SessionToken) -> bool {
@@ -272,5 +291,14 @@ mod tests {
         assert_eq!(parse_attached(&f.payload), Some(token));
         assert!(empty_session_token(&[0u8; SESSION_TOKEN_LEN]));
         assert!(!empty_session_token(&token));
+    }
+
+    #[test]
+    fn authorize_round_trip() {
+        let token = [9u8; SESSION_TOKEN_LEN];
+        let mut buf = authorize_frame(token, "phone");
+        let f = try_parse_frame(&mut buf).unwrap();
+        assert_eq!(f.typ, TYPE_AUTHORIZE);
+        assert_eq!(parse_authorize(&f.payload), Some((token, "phone".into())));
     }
 }

@@ -35,6 +35,18 @@ pub fn write_current_ticket(ticket: &str) -> Result<()> {
     write_secret_0600(&current_ticket_path(), ticket.trim().as_bytes())
 }
 
+/// Remove the published ticket if present. Used by `zuko reset` so a stale
+/// pre-reset ticket cannot be shared accidentally before the host restarts with
+/// its new identity.
+pub fn remove_current_ticket() -> Result<bool> {
+    let path = current_ticket_path();
+    match std::fs::remove_file(&path) {
+        Ok(()) => Ok(true),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        Err(e) => Err(e).with_context(|| format!("remove {}", path.display())),
+    }
+}
+
 /// Read and trim the live ticket. Used by `zuko share`.
 pub fn read_current_ticket() -> Result<String> {
     let path = current_ticket_path();

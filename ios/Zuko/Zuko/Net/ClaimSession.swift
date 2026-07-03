@@ -1,7 +1,9 @@
 import Foundation
 import IrohLib
 import Observation
+import UIKit
 import ZukoFFI
+import ZukoWire
 
 /// Errors from the ticket-handoff claim flow. Surfaced to the UI as the
 /// `errorDescription` on each case.
@@ -116,13 +118,6 @@ final class ClaimSession {
         var recv = try await conn.acceptUni()
         let payloadData = try await Self.readToEnd(&recv, max: Self.maxPayload)
 
-        // 6. Close the connection so the host's `serve_handoff` returns and
-        //    `zuko share` can exit. Without this (the bug we fixed in
-        //    `handoff.rs`), the connection lingers via Iroh's keepalive pings
-        //    and `share` hangs for the whole session.
-        try? conn.close(errorCode: 0, reason: Data("claimed".utf8))
-        try? await endpoint.close()
-
         guard let payload = String(data: payloadData, encoding: .utf8) else {
             status = .failed("payload wasn't UTF-8")
             throw ClaimError.handoffFailed("payload wasn't UTF-8")
@@ -133,6 +128,15 @@ final class ClaimSession {
             status = .failed("host sent an empty ticket")
             throw ClaimError.handoffFailed("empty ticket")
         }
+
+        try? await Self.sendAuthorization(conn: conn, label: label, ticket: ticket)
+
+        // 6. Close the connection so the host's `serve_handoff` returns and
+        //    `zuko share` can exit. Without this (the bug we fixed in
+        //    `handoff.rs`), the connection lingers via Iroh's keepalive pings
+        //    and `share` hangs for the whole session.
+        try? conn.close(errorCode: 0, reason: Data("claimed".utf8))
+        try? await endpoint.close()
 
         LogCapture.shared.log(.info, category: "claim", "claimed host: \(label)")
         status = .idle
@@ -158,6 +162,24 @@ final class ClaimSession {
         let ticket = String(payload[payload.index(after: nl)...])
             .trimmingCharacters(in: .whitespacesAndNewlines)
         return (label, ticket)
+    }
+
+    private static func sendAuthorization(
+        conn: IrohLib.Connection,
+        label: String,
+        ticket: String
+    ) async throws {
+        let endpointTicket = try EndpointTicket.fromString(str: ticket)
+        let token = try ClientIdentity.sessionToken(for: endpointTicket)
+        var send = try await conn.openUni()
+        let frame = Wire.encodeAuthorize(token: token, label: clientLabel(fallback: label))
+        try await send.writeAll(buf: frame)
+        try await send.finish()
+    }
+
+    private static func clientLabel(fallback: String) -> String {
+        let name = UIDevice.current.name.trimmingCharacters(in: .whitespacesAndNewlines)
+        return name.isEmpty ? fallback : name.replacingOccurrences(of: " ", with: "-")
     }
 
     func reset() {

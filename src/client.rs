@@ -50,8 +50,8 @@ use tokio::io::AsyncWriteExt as _;
 use tokio::sync::mpsc::{self, error::TrySendError};
 
 use crate::wire::{
-    ALPN_V1, ALPN_V2, SESSION_TOKEN_LEN, SessionToken, TYPE_ATTACHED, TYPE_DATA, TYPE_PING,
-    TYPE_PONG, TYPE_RESIZE, attach_frame, decode_nonce, parse_attached, pong_frame, resize_frame,
+    ALPN_V2, SESSION_TOKEN_LEN, SessionToken, TYPE_ATTACHED, TYPE_DATA, TYPE_PING, TYPE_PONG,
+    TYPE_RESIZE, attach_frame, decode_nonce, parse_attached, pong_frame, resize_frame,
     try_parse_frame,
 };
 
@@ -471,14 +471,11 @@ async fn connect_preferred(
     endpoint: &Endpoint,
     addr: &EndpointAddr,
 ) -> Option<(iroh::endpoint::Connection, &'static [u8])> {
-    if let Ok(conn) = endpoint.connect(addr.clone(), ALPN_V2).await {
-        return Some((conn, ALPN_V2));
-    }
     endpoint
-        .connect(addr.clone(), ALPN_V1)
+        .connect(addr.clone(), ALPN_V2)
         .await
         .ok()
-        .map(|conn| (conn, ALPN_V1))
+        .map(|conn| (conn, ALPN_V2))
 }
 
 fn control_frame_type(frame: &[u8]) -> Option<u8> {
@@ -586,7 +583,7 @@ fn terminal_pixels() -> (u16, u16) {
 /// `~/.config/zuko/client_key` (follows `XDG_CONFIG_HOME`). The client's
 /// persistent identity — distinct from the host's `key` so a machine that is
 /// both host and client keeps the two roles independent.
-fn client_key_path() -> std::path::PathBuf {
+pub fn client_key_path() -> std::path::PathBuf {
     let mut p = crate::config_dir();
     p.push("zuko");
     p.push("client_key");
@@ -602,9 +599,9 @@ fn client_key_path() -> std::path::PathBuf {
 /// even though the stream is already end-to-end encrypted.
 ///
 /// The result is non-zero for any real secret (SHA-256's first 16 bytes being
-/// all zero is a ~2^-128 impossibility), so it's never mistaken for the wire
-/// "fresh session" sentinel.
-fn derive_session_token(secret: &iroh::SecretKey, addr: &EndpointAddr) -> SessionToken {
+/// all zero is a ~2^-128 impossibility), which is required because the host
+/// rejects empty authorisation tokens.
+pub fn derive_session_token(secret: &iroh::SecretKey, addr: &EndpointAddr) -> SessionToken {
     use sha2::{Digest, Sha256};
     let mut hasher = Sha256::new();
     hasher.update(b"zuko-session-token-v1");
@@ -719,7 +716,7 @@ mod tests {
     }
 
     #[test]
-    fn replies_to_ping_for_peer_compatibility() {
+    fn replies_to_ping_control_frame() {
         let reply = control_reply_frame(crate::wire::TYPE_PING, &42u64.to_be_bytes()).unwrap();
         let mut buf = reply;
         let frame = crate::wire::try_parse_frame(&mut buf).unwrap();
@@ -792,9 +789,8 @@ mod tests {
 
     #[tokio::test]
     async fn attached_frame_updates_reattach_token() {
-        // On a fresh connect the client sends a zero token; the host replies
-        // ATTACHED with the real token. The reconnect loop must capture it so
-        // the next dial reattaches the same PTY.
+        // The host replies ATTACHED with the active token. The reconnect loop
+        // must capture it so the next dial reattaches the same PTY.
         let issued = [7u8; SESSION_TOKEN_LEN];
         let mut acc = crate::wire::attached_frame(issued);
         let mut token = [0u8; SESSION_TOKEN_LEN];
@@ -836,7 +832,7 @@ mod tests {
         assert_eq!(t1, t2, "same (client,host) must derive the same token");
         assert!(
             !crate::wire::empty_session_token(&t1),
-            "must never be the all-zero 'fresh session' sentinel"
+            "must never be the all-zero invalid authorisation token"
         );
     }
 

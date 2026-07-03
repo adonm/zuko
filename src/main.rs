@@ -17,13 +17,14 @@
 //! nothing printed by `zuko host`).
 //!
 //! Saved hosts (`zuko ls`/`rm`) live at `~/.config/zuko/hosts`, mirroring the
-//! iOS app's connection list.
+//! iOS app's connection list. Host-side authorised clients share the same
+//! management surface and live at `~/.config/zuko/authorized_clients`.
 //!
 //! The host/client/handoff/protocol logic lives in the library (`src/lib.rs`);
 //! this file is just the CLI dispatcher. The library also builds an optional
 //! FFI surface (`--features ffi`) for mobile clients — see [`zuko::ffi`].
 //!
-//! ## Wire protocol (Iroh streams, ALPN `zuko/2` with `zuko/1` fallback)
+//! ## Wire protocol (Iroh streams, ALPN `zuko/2`)
 //!
 //! Every message is length-prefixed so the frame types share an ordering and
 //! nothing leaks into the terminal as in-band escape sequences:
@@ -32,8 +33,8 @@
 //! [type: u8][len: u16 big-endian][payload: `len` bytes]
 //!   0x00 DATA    payload = raw terminal bytes (keystrokes up, PTY output down)
 //!   0x01 RESIZE  payload = [cols][rows][pixel_width][pixel_height] u16 BE
-//!   0x04 PING    payload = [nonce: u64 BE]   (optional control/compat)
-//!   0x05 PONG    payload = [nonce: u64 BE]   (optional control/compat)
+//!   0x04 PING    payload = [nonce: u64 BE]   (optional control)
+//!   0x05 PONG    payload = [nonce: u64 BE]   (optional control)
 //!   0x06 ATTACH  payload = [token: 16 bytes][cols][rows][pixel_width][pixel_height] u16 BE
 //!   0x07 ATTACHED payload = [token: 16 bytes]
 //! ```
@@ -44,10 +45,11 @@
 
 use anyhow::Result;
 use clap::{Args, Parser, Subcommand};
-use inquire::{InquireError, Select};
+use inquire::{Confirm, InquireError, Select};
 use std::io::IsTerminal;
+use std::path::{Path, PathBuf};
 
-use zuko::{HostArgs, ShareArgs, client, code, handoff, host, service, store};
+use zuko::{HostArgs, ShareArgs, client, code, handoff, host, secret, service, store, ticket_file};
 
 #[derive(Parser)]
 #[command(
@@ -91,11 +93,23 @@ enum Command {
     /// prints the plan without changing anything.
     Upgrade(service::UpgradeArgs),
 
-    /// List saved hosts.
+    /// List saved hosts and authorised clients.
     Ls,
 
-    /// Remove a saved host by name.
+    /// Remove a saved host and/or authorised client by name.
     Rm { name: String },
+
+    /// Forget every authorised client on this host. New connections must pair
+    /// again with `zuko share`.
+    Reset {
+        /// Persistent host key path to reset (default `~/.config/zuko/key`).
+        #[arg(long)]
+        key: Option<PathBuf>,
+
+        /// Skip the interactive confirmation prompt.
+        #[arg(long)]
+        yes: bool,
+    },
 
     /// Hand this host's ticket to a new device via a short, memorable code.
     /// The other device runs `zuko claim <code>` (or bare `zuko <code>`) to
@@ -193,8 +207,17 @@ async fn main() -> Result<()> {
             Ok(())
         }
         Some(Command::Rm { name }) => {
-            store::remove(&name)?;
-            println!("removed {name}");
+            let removed = store::remove_any(&name)?;
+            match (removed.saved_host, removed.authorized_client) {
+                (true, true) => println!("removed saved host and authorised client {name}"),
+                (true, false) => println!("removed saved host {name}"),
+                (false, true) => println!("removed authorised client {name}"),
+                (false, false) => println!("nothing named {name}"),
+            }
+            Ok(())
+        }
+        Some(Command::Reset { key, yes }) => {
+            reset_trust(key.as_deref(), yes)?;
             Ok(())
         }
         Some(Command::Share(args)) => handoff::share(&args).await,
@@ -230,6 +253,49 @@ async fn main() -> Result<()> {
             None => bare_zuko_menu().await,
         },
     }
+}
+
+fn reset_trust(key: Option<&Path>, yes: bool) -> Result<()> {
+    if !yes {
+        let prompt = "Fully reset host trust? This deletes the host identity and forgets every authorised client; restart the host, then pair devices again with `zuko share`.";
+        let confirmed = if std::io::stdin().is_terminal() && std::io::stdout().is_terminal() {
+            Confirm::new(prompt).with_default(false).prompt()?
+        } else {
+            false
+        };
+        if !confirmed {
+            anyhow::bail!(
+                "reset cancelled (rerun with `zuko reset --yes` to confirm non-interactively)"
+            );
+        }
+    }
+    let key_path = key
+        .map(Path::to_path_buf)
+        .unwrap_or_else(default_host_key_path);
+    let removed_key = secret::remove_key(&key_path)?;
+    let removed_ticket = ticket_file::remove_current_ticket()?;
+    store::reset_authorized_clients()?;
+    println!("reset host trust: no authorised clients remain");
+    if removed_key {
+        println!("removed host key: {}", key_path.display());
+    } else {
+        println!("no host key at: {}", key_path.display());
+    }
+    if removed_ticket {
+        println!(
+            "removed published ticket: {}",
+            ticket_file::current_ticket_path().display()
+        );
+    }
+    println!("restart the host, then pair devices again with: zuko share");
+    Ok(())
+}
+
+fn default_host_key_path() -> PathBuf {
+    let mut p = zuko::config_dir();
+    p.push("zuko");
+    p.push("key");
+    p
 }
 
 /// Look up a saved host by name, connect, and on success promote it to the

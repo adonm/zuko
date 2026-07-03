@@ -39,7 +39,6 @@ enum SessionStatus: Equatable {
 @MainActor
 final class IrohSession: ObservableObject {
     private enum ProtocolVersion: String {
-        case v1 = "zuko/1"
         case v2 = "zuko/2"
 
         var alpn: Data { Data(rawValue.utf8) }
@@ -222,20 +221,7 @@ final class IrohSession: ObservableObject {
         let ep: Endpoint
         do {
             endpointTicket = try EndpointTicket.fromString(str: ticket)
-            do {
-                sessionToken = try ClientIdentity.sessionToken(for: endpointTicket)
-            } catch {
-                // Keychain can be unavailable immediately after reboot/lock.
-                // Keep the terminal usable by falling back to the all-zero
-                // "fresh PTY" token; short in-screen reconnects still reuse
-                // the host-issued token once ATTACHED arrives.
-                sessionToken = Data(repeating: 0, count: Wire.sessionTokenLength)
-                LogCapture.shared.log(
-                    .warn,
-                    category: "net",
-                    "client identity unavailable: \(error.localizedDescription)"
-                )
-            }
+            sessionToken = try ClientIdentity.sessionToken(for: endpointTicket)
             ep = try await Endpoint.bind(options: EndpointOptions(preset: presetN0()))
             endpoint = ep
         } catch {
@@ -318,12 +304,12 @@ final class IrohSession: ObservableObject {
             // Stall boundary: the gap between this "dialing" line and the
             // "connected" one below shows where iroh is stuck (relay/NAT).
             LogCapture.shared.log(.info, category: "net", "dialing host")
-            let (conn, protocolVersion) = try await connectPreferred(endpoint: endpoint, addr: addr)
+            let conn = try await connectPreferred(endpoint: endpoint, addr: addr)
             connection = conn
             LogCapture.shared.log(
                 .info,
                 category: "net",
-                "connected via \(protocolVersion.rawValue) — opening stream"
+                "connected via \(ProtocolVersion.v2.rawValue) — opening stream"
             )
             let bi = try await Self.withConnectionTimeout(phase: "open stream") {
                 try await conn.openBi()
@@ -331,8 +317,7 @@ final class IrohSession: ObservableObject {
             let send = bi.send()
             let recv = bi.recv()
             let (controlSend, controlRecv) = await openControlStreamIfAvailable(
-                conn: conn,
-                protocolVersion: protocolVersion
+                conn: conn
             )
             LogCapture.shared.log(.info, category: "net", "stream open — sending attach")
 
@@ -381,30 +366,15 @@ final class IrohSession: ObservableObject {
     private func connectPreferred(
         endpoint: Endpoint,
         addr: EndpointAddr
-    ) async throws -> (IrohLib.Connection, ProtocolVersion) {
-        do {
-            let conn = try await Self.withConnectionTimeout(phase: "dial host zuko/2") {
-                try await endpoint.connect(addr: addr, alpn: ProtocolVersion.v2.alpn)
-            }
-            return (conn, .v2)
-        } catch {
-            LogCapture.shared.log(
-                .info,
-                category: "net",
-                "zuko/2 unavailable; falling back to zuko/1: \(error.localizedDescription)"
-            )
-            let conn = try await Self.withConnectionTimeout(phase: "dial host zuko/1") {
-                try await endpoint.connect(addr: addr, alpn: ProtocolVersion.v1.alpn)
-            }
-            return (conn, .v1)
+    ) async throws -> IrohLib.Connection {
+        try await Self.withConnectionTimeout(phase: "dial host zuko/2") {
+            try await endpoint.connect(addr: addr, alpn: ProtocolVersion.v2.alpn)
         }
     }
 
     private func openControlStreamIfAvailable(
-        conn: IrohLib.Connection,
-        protocolVersion: ProtocolVersion
+        conn: IrohLib.Connection
     ) async -> (SendStream?, RecvStream?) {
-        guard protocolVersion == .v2 else { return (nil, nil) }
         do {
             let controlBi = try await Self.withConnectionTimeout(phase: "open control stream") {
                 try await conn.openBi()
@@ -460,7 +430,7 @@ final class IrohSession: ObservableObject {
                 LogCapture.shared.log(.info, category: "net", "host attached")
             }
         default:
-            break // PONG, legacy HELLO/WELCOME, unknown: ignore
+            break // PONG / unknown: ignore
         }
     }
 

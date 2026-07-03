@@ -76,6 +76,15 @@ pub fn load_or_create_key(path: &Path) -> Result<iroh::SecretKey> {
     Ok(secret)
 }
 
+pub fn remove_key(path: &Path) -> Result<bool> {
+    let _guard = KeyLock::acquire(path)?;
+    match std::fs::remove_file(path) {
+        Ok(()) => Ok(true),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        Err(e) => Err(e).with_context(|| format!("remove key {}", path.display())),
+    }
+}
+
 fn read_key(path: &Path) -> Result<iroh::SecretKey> {
     let bytes = std::fs::read(path).with_context(|| format!("read key {}", path.display()))?;
     if bytes.len() != 32 {

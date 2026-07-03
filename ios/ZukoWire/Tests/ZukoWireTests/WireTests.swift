@@ -48,6 +48,17 @@ final class WireTests: XCTestCase {
         XCTAssertEqual(Wire.parseAttached(Array(token)), token)
     }
 
+    func testAuthorizeRoundTripAndByteLayout() throws {
+        let token = Data((0..<16).map { UInt8($0) })
+        var buffer = Wire.encodeAuthorize(token: token, label: "phone")
+
+        XCTAssertEqual(buffer.first, Wire.authorize)
+        let frame = try XCTUnwrap(Wire.parse(&buffer))
+        XCTAssertEqual(frame.type, Wire.authorize)
+        XCTAssertEqual(Array(frame.payload.prefix(16)), Array(token))
+        XCTAssertEqual(String(decoding: frame.payload.dropFirst(16), as: UTF8.self), "phone")
+    }
+
     // MARK: - Streaming / partial frames
 
     func testParseReturnsNilUntilWholeFrameArrives() {

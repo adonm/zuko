@@ -23,6 +23,10 @@ enum ClientIdentity {
 
     static func sessionToken(for ticket: EndpointTicket) throws -> Data {
         let seed = try loadOrCreateSeed()
+        return sessionToken(for: ticket, seed: seed)
+    }
+
+    static func sessionToken(for ticket: EndpointTicket, seed: Data) -> Data {
         let hostID = ticket.endpointAddr().id().description
         var hasher = SHA256()
         hasher.update(data: Data("zuko-ios-session-token-v1".utf8))

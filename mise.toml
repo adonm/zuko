@@ -85,6 +85,9 @@ run = """
 case "$(uname -s)" in
     Linux)
         if command -v mise >/dev/null 2>&1; then
+            if command -v apt-get >/dev/null 2>&1; then
+                sudo apt-get update
+            fi
             mise bootstrap packages install --yes
         fi
         BREW="$(command -v brew || command -v /home/linuxbrew/.linuxbrew/bin/brew || true)"

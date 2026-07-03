@@ -57,7 +57,7 @@ targets:
         # strictly-increasing build number on every upload. Bump these
         # defaults when you cut a release so a fresh `mise run build-ios`
         # matches the binary version.
-        MARKETING_VERSION: "0.7.2"
+        MARKETING_VERSION: "0.8.0"
         CURRENT_PROJECT_VERSION: "1"
         # Universal iPhone + iPad app. App Store Connect validates the base
         # UISupportedInterfaceOrientations key for iPad multitasking, so both

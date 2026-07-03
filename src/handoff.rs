@@ -41,6 +41,7 @@
 
 use anyhow::{Context, Result, anyhow, bail};
 use iroh::{Endpoint, endpoint::presets};
+use iroh_tickets::endpoint::EndpointTicket;
 use std::io::IsTerminal;
 use std::time::Duration;
 use tracing::{info, warn};
@@ -48,12 +49,17 @@ use tracing::{info, warn};
 use crate::ShareArgs;
 use crate::code::{default_label, derive_key, generate_code, sanitize_label};
 use crate::ticket_file::{read_current_ticket, wait_for_current_ticket};
+use crate::wire::{self, MAX_PAYLOAD_LEN};
 
-/// ALPN for the throwaway handoff endpoint (distinct from the terminal `zuko/1`).
+/// ALPN for the throwaway handoff endpoint (distinct from the terminal `zuko/2`).
 const HANDOFF_ALPN: &[u8] = b"zuko/handoff/1";
 
 /// Cap a handoff payload so a misbehaving peer can't make us allocate forever.
 const MAX_HANDOFF_PAYLOAD: usize = 8 * 1024;
+/// Bound the required client-authorisation frame that a claimer sends after
+/// reading the ticket. A client that doesn't send it can claim the ticket, but
+/// the host will not admit its later shell connection.
+const AUTHORIZE_FRAME_TIMEOUT: Duration = Duration::from_secs(2);
 
 // ────────────────────────── share (host side) ──────────────────────────────
 
@@ -254,6 +260,24 @@ async fn serve_handoff(
     send.finish()?;
     drop(send);
 
+    let authorize = tokio::time::timeout(AUTHORIZE_FRAME_TIMEOUT, conn.accept_uni()).await;
+    match authorize {
+        Ok(Ok(mut recv)) => match read_to_end(&mut recv, MAX_PAYLOAD_LEN).await {
+            Ok(mut bytes) => {
+                if let Some(frame) = wire::try_parse_frame(&mut bytes)
+                    && frame.typ == wire::TYPE_AUTHORIZE
+                    && let Some((token, label)) = wire::parse_authorize(&frame.payload)
+                    && let Err(e) = crate::store::authorize_client(&sanitize_label(&label), &token)
+                {
+                    warn!("could not authorize pairing client: {e:#}");
+                }
+            }
+            Err(e) => warn!("could not read pairing client authorization: {e:#}"),
+        },
+        Ok(Err(e)) => warn!("could not accept pairing client authorization: {e:#}"),
+        Err(_) => {}
+    }
+
     // Hold the connection open briefly so the client has time to read the
     // payload. The client closes the connection as soon as it finishes
     // reading (see `claim`); once it does, this resolves immediately.
@@ -306,21 +330,6 @@ pub async fn claim(
 
     let mut recv = conn.accept_uni().await.context("accept handoff stream")?;
     let payload = read_to_end(&mut recv, MAX_HANDOFF_PAYLOAD).await?;
-    // We have the payload; actively close the handoff connection so the host's
-    // `serve_handoff` returns and `share` can exit (or serve the next claim).
-    // Without this, `conn` is held in scope by `claim` until it returns — and
-    // when connecting that's when the user logs out of the terminal. Iroh's
-    // keepalive pings keep the connection alive in the meantime, so the host
-    // never sees a close and `share` hangs for the whole session. (The e2e
-    // test misses this because it uses `--no-connect`, so `claim` returns
-    // immediately and `conn` drops.)
-    conn.close(0u32.into(), b"claimed");
-    // Close the throwaway endpoint gracefully (see `share`). Do it now, before
-    // parsing the payload and *especially* before the long-lived `connect()`:
-    // otherwise the handoff endpoint is held alive for the entire terminal
-    // session and dropped ungracefully when `claim` finally returns. By this
-    // point the connection is already closing, so this drains quickly.
-    endpoint.close().await;
     let payload = String::from_utf8(payload).context("handoff payload wasn't utf-8")?;
 
     let (label, ticket) = payload
@@ -336,6 +345,30 @@ pub async fn claim(
         bail!("received an empty ticket");
     }
 
+    if let Ok(frame) = authorize_current_client_frame(ticket)
+        && let Ok(mut send) = conn.open_uni().await
+    {
+        let _ = send.write_all(&frame).await;
+        let _ = send.finish();
+        let _ = tokio::time::timeout(Duration::from_secs(2), send.stopped()).await;
+    }
+
+    // We have the payload; actively close the handoff connection so the host's
+    // `serve_handoff` returns and `share` can exit (or serve the next claim).
+    // Without this, `conn` is held in scope by `claim` until it returns — and
+    // when connecting that's when the user logs out of the terminal. Iroh's
+    // keepalive pings keep the connection alive in the meantime, so the host
+    // never sees a close and `share` hangs for the whole session. (The e2e
+    // test misses this because it uses `--no-connect`, so `claim` returns
+    // immediately and `conn` drops.)
+    conn.close(0u32.into(), b"claimed");
+    // Close the throwaway endpoint gracefully (see `share`). Do it now, before
+    // parsing the payload and *especially* before the long-lived `connect()`:
+    // otherwise the handoff endpoint is held alive for the entire terminal
+    // session and dropped ungracefully when `claim` finally returns. By this
+    // point the connection is already closing, so this drains quickly.
+    endpoint.close().await;
+
     eprintln!("claimed host: {label}");
     // Always save — the raw ticket is a long-lived bearer secret and must not
     // be printed to stdout (it would land in scrollback / shell history /
@@ -348,6 +381,18 @@ pub async fn claim(
         crate::client::connect(ticket).await?;
     }
     Ok(())
+}
+
+fn authorize_current_client_frame(ticket: &str) -> Result<Vec<u8>> {
+    let ticket = ticket
+        .parse::<EndpointTicket>()
+        .with_context(|| "that doesn't look like a ticket")?;
+    let addr = ticket.into();
+    let client_key = crate::secret::load_or_create_key(&crate::client::client_key_path())
+        .context("load client identity key")?;
+    let token = crate::client::derive_session_token(&client_key, &addr);
+    let label = sanitize_label(&default_label());
+    Ok(wire::authorize_frame(token, &label))
 }
 
 /// Dial the throwaway host, retrying with constant backoff. The throwaway

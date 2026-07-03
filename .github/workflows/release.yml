@@ -66,6 +66,7 @@ jobs:
       - name: Install cross toolchain (linux aarch64)
         if: ${{ matrix.cross }}
         run: |
+          sudo apt-get update
           mise bootstrap packages install --yes
           echo "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc" >> "$GITHUB_ENV"
 

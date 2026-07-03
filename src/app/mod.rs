@@ -383,6 +383,22 @@ fn resolve_launch(args: &AppArgs, software: bool, no_sandbox: bool) -> Result<La
         }
         if let Some(exec) = entry.exec.as_deref() {
             let mut words = desktop_exec_words(exec)?;
+            // WebAppHub and some hand-written launchers produce local
+            // .desktop files with `Exec=flatpak run <app-id> ...` but without
+            // the exported-Flatpak `X-Flatpak=` key. Treat those as Flatpaks
+            // too so they get zuko's cage-safe Flatpak launch flags/env, while
+            // preserving the profile/url arguments from the desktop file.
+            if let Some((app_id, desktop_args)) = parse_simple_flatpak_run_exec(&words) {
+                let mut merged_args = desktop_args.to_vec();
+                merged_args.extend(child_args.iter().cloned());
+                return Ok(flatpak_launch_chain(
+                    &entry.name,
+                    app_id,
+                    &merged_args,
+                    software,
+                    no_sandbox,
+                ));
+            }
             if !words.is_empty() {
                 let program = words.remove(0);
                 return Ok(command_launch_chain(
@@ -735,6 +751,17 @@ fn desktop_exec_words(exec: &str) -> Result<Vec<String>> {
         .collect())
 }
 
+fn parse_simple_flatpak_run_exec(words: &[String]) -> Option<(&str, &[String])> {
+    if words.len() < 3 {
+        return None;
+    }
+    let program = words[0].rsplit('/').next().unwrap_or(&words[0]);
+    if program != "flatpak" || words[1] != "run" || words[2].starts_with('-') {
+        return None;
+    }
+    Some((&words[2], &words[3..]))
+}
+
 fn normalize_alias(s: &str) -> String {
     s.trim_end_matches(".desktop")
         .chars()
@@ -852,5 +879,25 @@ mod tests {
         let fallback = launch.fallback.as_ref().expect("xwayland fallback");
         assert_eq!(fallback.profile, DisplayProfile::Xwayland);
         assert!(fallback.fallback.is_none());
+    }
+
+    #[test]
+    fn parses_webapphub_flatpak_exec_without_x_flatpak_key() {
+        let words = desktop_exec_words(
+            "flatpak run org.mozilla.firefox --profile=/tmp/teams --no-remote https://teams.microsoft.com/v2/ %u",
+        )
+        .unwrap();
+
+        let (app_id, args) = parse_simple_flatpak_run_exec(&words).expect("flatpak run exec");
+
+        assert_eq!(app_id, "org.mozilla.firefox");
+        assert_eq!(
+            args,
+            &[
+                "--profile=/tmp/teams".to_string(),
+                "--no-remote".to_string(),
+                "https://teams.microsoft.com/v2/".to_string(),
+            ]
+        );
     }
 }

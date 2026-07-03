@@ -1,20 +1,21 @@
 //! Saved hosts for the client — the terminal analogue of the iOS app's
-//! `ConnectionStore`. Persists a tiny, grep-able list at
-//! `~/.config/zuko/hosts`, one host per line:
+//! `ConnectionStore` — plus the host-side list of authorised clients.
+//! Persists tiny, grep-able lists at `~/.config/zuko/hosts` and
+//! `~/.config/zuko/authorized_clients`, one entry per line:
 //!
 //! ```text
-//! name<TAB or space>ticket
+//! name<TAB or space>ticket-or-token
 //! ```
 //!
-//! Tickets contain no whitespace, and names are validated to contain none, so a
-//! plain whitespace split round-trips reliably. Lines starting with `#` are
-//! comments.
+//! Tickets and client tokens contain no whitespace, and names are validated to
+//! contain none, so a plain whitespace split round-trips reliably. Lines
+//! starting with `#` are comments.
 //!
-//! The file holds dialing-secret tickets (each one grants shell access on the
-//! named host), so it's written through the shared atomic `0600` writer — see
-//! [`crate::secret`] — and every `add`/`rm` takes an exclusive `flock` on a
-//! sibling `.lock` file so two concurrent `zuko` processes can't silently
-//! overwrite each other's update.
+//! These files hold shell-access secrets (tickets for saved hosts, reattach
+//! tokens for authorised clients), so they're written through the shared atomic
+//! `0600` writer — see [`crate::secret`] — and every read-modify-write takes an
+//! exclusive `flock` on a sibling `.lock` file so two concurrent `zuko`
+//! processes can't silently overwrite each other's update.
 //!
 //! ## Why tickets never cross the CLI surface
 //!
@@ -29,6 +30,13 @@ use std::fs;
 
 use crate::config_dir;
 use crate::secret::write_secret_0600;
+use crate::wire::{SESSION_TOKEN_LEN, SessionToken, empty_session_token};
+
+#[derive(Debug, Default, Eq, PartialEq)]
+pub struct Removal {
+    pub saved_host: bool,
+    pub authorized_client: bool,
+}
 
 /// Look up a saved host by name, returning its ticket. Bails with a clear
 /// usage hint if the name isn't known — we never fall back to treating the
@@ -75,13 +83,13 @@ pub fn add(name: &str, ticket: &str) -> Result<()> {
 
     // Hold the cross-process lock across read-modify-write so a concurrent
     // `zuko add` / `zuko rm` can't drop our update (or vice versa).
-    let _guard = HostsLock::acquire()?;
-    let mut entries = load();
+    let _guard = StoreLock::acquire(hosts_path())?;
+    let mut entries = load_entries(hosts_path());
     // Drop any existing entry under this name so the re-insert lands at the
     // front (move-to-front on re-claim, not in-place update).
     entries.retain(|(n, _)| n != name);
     entries.insert(0, (name.to_string(), ticket.to_string()));
-    store(&entries)
+    store_hosts(&entries)
 }
 
 /// Promote a saved host to the front of the list (most-recent position).
@@ -92,14 +100,14 @@ pub fn add(name: &str, ticket: &str) -> Result<()> {
 /// never undoes a successful session.
 pub fn touch(name: &str) -> Result<()> {
     let name = name.trim();
-    let _guard = HostsLock::acquire()?;
-    let mut entries = load();
+    let _guard = StoreLock::acquire(hosts_path())?;
+    let mut entries = load_entries(hosts_path());
     if let Some(idx) = entries.iter().position(|(n, _)| n == name)
         && idx != 0
     {
         let entry = entries.remove(idx);
         entries.insert(0, entry);
-        store(&entries)?;
+        store_hosts(&entries)?;
     }
     // If the name isn't found, no-op rather than inserting — `touch` only
     // reorders existing entries; it never adds.
@@ -110,18 +118,56 @@ pub fn touch(name: &str) -> Result<()> {
 /// long-lived bearer secrets, so we deliberately don't echo them — picking a
 /// name to reconnect is the only thing `ls` is for.
 pub fn list() {
-    for (name, _ticket) in load() {
-        println!("{name}");
+    let hosts = saved_names();
+    let clients = authorized_client_names();
+
+    if hosts.is_empty() && clients.is_empty() {
+        return;
+    }
+
+    if !hosts.is_empty() {
+        println!("saved hosts:");
+        for name in &hosts {
+            println!("  {name}");
+        }
+    }
+
+    if !clients.is_empty() {
+        if !hosts.is_empty() {
+            println!();
+        }
+        println!("authorised clients:");
+        for name in &clients {
+            println!("  {name}");
+        }
     }
 }
 
 /// Remove a saved host by name. Succeeds whether or not it existed.
 pub fn remove(name: &str) -> Result<()> {
+    let _ = remove_host(name)?;
+    Ok(())
+}
+
+/// Remove a saved host and/or authorised client by name. Succeeds whether or
+/// not either existed, and reports what was actually removed so the CLI can be
+/// explicit without racing a second lookup.
+pub fn remove_any(name: &str) -> Result<Removal> {
+    Ok(Removal {
+        saved_host: remove_host(name)?,
+        authorized_client: remove_authorized_client(name)?,
+    })
+}
+
+fn remove_host(name: &str) -> Result<bool> {
     // Hold the cross-process lock across read-modify-write.
-    let _guard = HostsLock::acquire()?;
-    let before = load();
+    let _guard = StoreLock::acquire(hosts_path())?;
+    let before = load_entries(hosts_path());
+    let before_len = before.len();
     let after: Vec<_> = before.into_iter().filter(|(n, _)| n != name).collect();
-    store(&after)
+    let removed = after.len() != before_len;
+    store_hosts(&after)?;
+    Ok(removed)
 }
 
 /// Look up a saved host by name, returning its ticket if found. Returns
@@ -130,7 +176,72 @@ pub fn remove(name: &str) -> Result<()> {
 /// failure — see [`lookup_ticket_or_bail`] for the strict variant used by
 /// `zuko connect <name>`.
 pub fn lookup(name: &str) -> Option<String> {
-    load().into_iter().find(|(n, _)| n == name).map(|(_, t)| t)
+    load_entries(hosts_path())
+        .into_iter()
+        .find(|(n, _)| n == name)
+        .map(|(_, t)| t)
+}
+
+/// Register a client token as authorised to open shells on this host. Called by
+/// `zuko share` after a successful pairing handoff.
+pub fn authorize_client(name: &str, token: &SessionToken) -> Result<()> {
+    let name = name.trim();
+    validate_name(name)?;
+    if empty_session_token(token) {
+        bail!("client token is empty");
+    }
+    let token = token_hex(token);
+
+    let _guard = StoreLock::acquire(authorized_clients_path())?;
+    let mut entries = load_entries(authorized_clients_path());
+    entries.retain(|(n, _)| n != name);
+    entries.insert(0, (name.to_string(), token));
+    store_authorized_clients(&entries)
+}
+
+pub fn authorized_client_names() -> Vec<String> {
+    load_entries(authorized_clients_path())
+        .into_iter()
+        .map(|(n, _)| n)
+        .collect()
+}
+
+fn remove_authorized_client(name: &str) -> Result<bool> {
+    let _guard = StoreLock::acquire(authorized_clients_path())?;
+    let before = load_entries(authorized_clients_path());
+    let before_len = before.len();
+    let after: Vec<_> = before.into_iter().filter(|(n, _)| n != name).collect();
+    let removed = after.len() != before_len;
+    store_authorized_clients(&after)?;
+    Ok(removed)
+}
+
+/// Clear host trust and create the authorised-clients file as an empty list.
+/// Empty means fail closed: no client is trusted until it pairs again through
+/// `zuko share`.
+pub fn reset_authorized_clients() -> Result<()> {
+    let _guard = StoreLock::acquire(authorized_clients_path())?;
+    store_authorized_clients(&[])
+}
+
+/// Enforce host-side client authorisation. Missing/empty file means fail closed
+/// unless the token is listed. `zuko reset` writes an empty file to
+/// intentionally trust nothing.
+pub fn ensure_client_authorized(token: &SessionToken) -> Result<()> {
+    let path = authorized_clients_path();
+    if empty_session_token(token) {
+        bail!(unauthorized_message());
+    }
+    let needle = token_hex(token);
+    if load_entries(path).into_iter().any(|(_, t)| t == needle) {
+        Ok(())
+    } else {
+        bail!(unauthorized_message())
+    }
+}
+
+fn unauthorized_message() -> &'static str {
+    "this client is not authorised on this host; pair it with `zuko share` on the host"
 }
 
 fn validate_name(name: &str) -> Result<()> {
@@ -145,7 +256,11 @@ fn validate_name(name: &str) -> Result<()> {
 
 /// Parse the hosts file into `(name, ticket)` pairs, ignoring blanks/comments.
 fn load() -> Vec<(String, String)> {
-    let Ok(text) = fs::read_to_string(hosts_path()) else {
+    load_entries(hosts_path())
+}
+
+fn load_entries(path: std::path::PathBuf) -> Vec<(String, String)> {
+    let Ok(text) = fs::read_to_string(path) else {
         return Vec::new();
     };
     text.lines()
@@ -163,7 +278,7 @@ fn load() -> Vec<(String, String)> {
 /// Write entries back through the shared atomic `0600` writer. The temp +
 /// rename inside [`write_secret_0600`] guarantees a crash can never leave a
 /// truncated hosts file; the `0600` perms keep every saved ticket private.
-fn store(entries: &[(String, String)]) -> Result<()> {
+fn store_hosts(entries: &[(String, String)]) -> Result<()> {
     let path = hosts_path();
     let mut body = String::new();
     body.push_str("# zuko saved hosts — do not edit by hand if a `zuko claim`/`rm` is running\n");
@@ -177,6 +292,22 @@ fn store(entries: &[(String, String)]) -> Result<()> {
     write_secret_0600(&path, body.as_bytes())
 }
 
+fn store_authorized_clients(entries: &[(String, String)]) -> Result<()> {
+    let path = authorized_clients_path();
+    let mut body = String::new();
+    body.push_str(
+        "# zuko authorised clients — do not edit by hand if a `zuko share`/`rm` is running\n",
+    );
+    body.push_str("# format: name<TAB>client-token-hex\n");
+    for (name, token) in entries {
+        body.push_str(name);
+        body.push('\t');
+        body.push_str(token);
+        body.push('\n');
+    }
+    write_secret_0600(&path, body.as_bytes())
+}
+
 fn hosts_path() -> std::path::PathBuf {
     let mut p = config_dir();
     p.push("zuko");
@@ -184,15 +315,31 @@ fn hosts_path() -> std::path::PathBuf {
     p
 }
 
-/// Cross-process advisory lock guarding the read-modify-write transaction in
-/// `add`/`remove`. Lives at `~/.config/zuko/hosts.lock` (a separate path so
-/// the atomic `hosts` rename never orphans the lock inode), held until the
-/// guard is dropped.
-struct HostsLock(std::fs::File);
+fn authorized_clients_path() -> std::path::PathBuf {
+    let mut p = config_dir();
+    p.push("zuko");
+    p.push("authorized_clients");
+    p
+}
 
-impl HostsLock {
-    fn acquire() -> Result<Self> {
-        let lock_path = hosts_path().with_extension("lock");
+fn token_hex(token: &SessionToken) -> String {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let mut out = String::with_capacity(SESSION_TOKEN_LEN * 2);
+    for &b in token {
+        out.push(HEX[(b >> 4) as usize] as char);
+        out.push(HEX[(b & 0x0f) as usize] as char);
+    }
+    out
+}
+
+/// Cross-process advisory lock guarding read-modify-write transactions. Lives
+/// at `<store>.lock` (a separate path so atomic renames never orphan the lock
+/// inode), held until the guard is dropped.
+struct StoreLock(std::fs::File);
+
+impl StoreLock {
+    fn acquire(path: std::path::PathBuf) -> Result<Self> {
+        let lock_path = path.with_extension("lock");
         if let Some(parent) = lock_path.parent() {
             fs::create_dir_all(parent)?;
         }
@@ -211,7 +358,7 @@ impl HostsLock {
     }
 }
 
-impl Drop for HostsLock {
+impl Drop for StoreLock {
     fn drop(&mut self) {
         // Best-effort unlock; the OS releases the lock when the fd closes
         // anyway, but explicit is clearer and frees it immediately.
@@ -262,6 +409,52 @@ mod tests {
         remove("server").unwrap();
         assert!(lookup("server").is_none());
         assert_eq!(lookup("home").as_deref(), Some("endpointaCCCC"));
+    }
+
+    #[test]
+    fn authorized_clients_roundtrip_and_enforcement() {
+        let _g = lock();
+        let _dir = isolated();
+        let token = [7u8; SESSION_TOKEN_LEN];
+        let other = [8u8; SESSION_TOKEN_LEN];
+
+        assert!(ensure_client_authorized(&other).is_err());
+
+        authorize_client("phone", &token).unwrap();
+        assert_eq!(authorized_client_names(), vec!["phone"]);
+        ensure_client_authorized(&token).unwrap();
+        assert!(ensure_client_authorized(&other).is_err());
+
+        let removed = remove_any("phone").unwrap();
+        assert!(!removed.saved_host);
+        assert!(removed.authorized_client);
+        assert!(ensure_client_authorized(&token).is_err());
+    }
+
+    #[test]
+    fn reset_authorized_clients_fails_closed() {
+        let _g = lock();
+        let _dir = isolated();
+        let token = [9u8; SESSION_TOKEN_LEN];
+
+        reset_authorized_clients().unwrap();
+        assert!(authorized_client_names().is_empty());
+        assert!(ensure_client_authorized(&token).is_err());
+    }
+
+    #[test]
+    fn remove_any_reports_both_namespaces() {
+        let _g = lock();
+        let _dir = isolated();
+
+        add("shared", "endpointaAAAA").unwrap();
+        authorize_client("shared", &[5u8; SESSION_TOKEN_LEN]).unwrap();
+
+        let removed = remove_any("shared").unwrap();
+        assert!(removed.saved_host);
+        assert!(removed.authorized_client);
+        assert!(lookup("shared").is_none());
+        assert!(authorized_client_names().is_empty());
     }
 
     #[test]
@@ -374,7 +567,7 @@ mod tests {
 
     // The cross-process lock must be released when add() returns, so a
     // subsequent operation in the same process doesn't deadlock against a
-    // held-open lock. (Tests the HostsLock acquire/drop path end-to-end.)
+    // held-open lock. (Tests the StoreLock acquire/drop path end-to-end.)
     #[test]
     fn lock_is_released_after_add_and_remove() {
         let _g = lock();
