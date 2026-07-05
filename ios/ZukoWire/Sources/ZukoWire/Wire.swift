@@ -11,6 +11,10 @@ import Foundation
 /// - 0x06 ATTACH  — `[token: 16 bytes][cols: u16 BE][rows: u16 BE][pixel_width: u16 BE][pixel_height: u16 BE]`
 /// - 0x07 ATTACHED — `[token: 16 bytes]`
 /// - 0x08 AUTHORIZE — `[token: 16 bytes][label: UTF-8]`, pairing-only
+/// - 0x09 ERROR    — `[code: u8][message: UTF-8]` (host -> client, fatal). The
+///                  client must surface the message and stop reconnecting; the
+///                  host has rejected the connection deliberately (e.g. code
+///                  0x01 = authorisation failure → re-pair with `zuko share`).
 ///
 /// New clients open the stream with ATTACH: a 16-byte session token (zero for
 /// first attach) plus terminal size. The host replies ATTACHED with the token
@@ -28,6 +32,17 @@ public enum Wire {
     public static let attach: UInt8 = 0x06
     public static let attached: UInt8 = 0x07
     public static let authorize: UInt8 = 0x08
+    public static let error: UInt8 = 0x09
+
+    /// `ERROR` frame codes (the first byte of an ERROR payload). Mirror the
+    /// Rust `wire::ERR_*` constants byte-for-byte.
+    public enum ErrorCode {
+        /// Authorisation failure — the client must re-pair via `zuko share`.
+        public static let authorization: UInt8 = 0x01
+        /// Protocol violation from the client's first frame / handshake.
+        public static let proto: UInt8 = 0x02
+    }
+
     public static let maxPayloadLength = Int(UInt16.max)
     public static let sessionTokenLength = 16
 
@@ -105,6 +120,26 @@ public enum Wire {
         payload.append(token)
         payload.append(labelBytes)
         return encode(type: authorize, payload: payload)
+    }
+
+    /// Encode a host→client `ERROR` frame. `code` is one of `ErrorCode.*`;
+    /// `message` is a human-readable string the client surfaces to the user.
+    /// The message truncates to fit the u16 length prefix.
+    public static func encodeError(code: UInt8, message: String) -> Data {
+        let maxMessageBytes = maxPayloadLength - 1
+        let messageBytes = Data(message.utf8).prefix(maxMessageBytes)
+        var payload = Data(capacity: 1 + messageBytes.count)
+        payload.append(code)
+        payload.append(messageBytes)
+        return encode(type: error, payload: payload)
+    }
+
+    /// Parse an `ERROR` payload into `(code, message)`. Returns nil only if the
+    /// payload is too short to carry the code byte; an empty message is valid.
+    public static func parseError(_ payload: [UInt8]) -> (code: UInt8, message: String)? {
+        guard let first = payload.first else { return nil }
+        let message = String(decoding: payload.dropFirst(), as: UTF8.self)
+        return (first, message)
     }
 
     public static func isControlFrame(_ frame: Data) -> Bool {

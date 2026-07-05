@@ -12,6 +12,14 @@ enum SessionStatus: Equatable {
     case failed(String)
 }
 
+/// A permanent, host-deliberate rejection (the host sent an `ERROR` frame).
+/// Distinct from a thrown link error so the reconnect loop can fail fast
+/// instead of redialing a connection the host has already refused — which
+/// would just hammer the host with the same unauthorised token.
+private enum PermanentRejection: Error {
+    case rejected(String)
+}
+
 /// Owns a single Iroh connection to a host and bridges it to GhosttyTerminal's
 /// host-managed I/O backend.
 ///
@@ -203,6 +211,12 @@ final class IrohSession: ObservableObject {
             requestRedraw()
             return
         }
+        // A permanent rejection (host sent ERROR, e.g. not authorised) must
+        // not be retried on every foreground — the host has refused this
+        // client and redialing just hammers it. The user re-pairs to recover.
+        if case .failed = status {
+            return
+        }
         if let ticket = lastTicket {
             connect(ticket: ticket)
         }
@@ -245,6 +259,11 @@ final class IrohSession: ObservableObject {
                 return
             } catch is CancellationError {
                 reportCancellationIfNeeded()
+                return
+            } catch let PermanentRejection.rejected(_) {
+                // Status was already set to `.failed` in `readLoop` with the
+                // host's message + re-pair hint. Do NOT retry: the host has
+                // refused this client and redialing would hammer it forever.
                 return
             } catch {
                 LogCapture.shared.log(
@@ -406,9 +425,26 @@ final class IrohSession: ObservableObject {
     /// link error. The blocking read + framing runs off the main actor (see
     /// `Self.frameStream`); only `handleInboundFrame` — which touches the
     /// libghostty surface and session state — runs here on the main actor.
-    /// Returning/throwing drives the reconnect loop exactly as before.
+    /// Returning/throwing drives the reconnect loop exactly as before, except
+    /// a host-sent `ERROR` frame throws `PermanentRejection` so the outer loop
+    /// stops retrying instead of treating a deliberate refusal like a blip.
     private func readLoop(recv: RecvStream) async throws {
         for try await frame in Self.frameStream(recv: recv) {
+            if frame.type == Wire.error {
+                // The host rejected this connection deliberately (e.g. this
+                // client isn't authorised). Surfacing as `.failed` and
+                // throwing `PermanentRejection` stops the reconnect loop;
+                // redialing would just hit the same rejection every second.
+                let parsed = Wire.parseError(frame.payload)
+                let code = parsed?.code
+                let message = parsed?.message ?? "host rejected the connection"
+                let hint = code == Wire.ErrorCode.authorization
+                    ? " — re-pair this host with `zuko share` on the host"
+                    : ""
+                LogCapture.shared.log(.warn, category: "net", "host rejected: \(message)\(hint)")
+                status = .failed("\(message)\(hint)")
+                throw PermanentRejection.rejected(message)
+            }
             handleInboundFrame(frame)
         }
     }

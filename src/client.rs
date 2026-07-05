@@ -50,9 +50,9 @@ use tokio::io::AsyncWriteExt as _;
 use tokio::sync::mpsc::{self, error::TrySendError};
 
 use crate::wire::{
-    ALPN_V2, SESSION_TOKEN_LEN, SessionToken, TYPE_ATTACHED, TYPE_DATA, TYPE_PING, TYPE_PONG,
-    TYPE_RESIZE, attach_frame, decode_nonce, parse_attached, pong_frame, resize_frame,
-    try_parse_frame,
+    ALPN_V2, SESSION_TOKEN_LEN, SessionToken, TYPE_ATTACHED, TYPE_DATA, TYPE_ERROR, TYPE_PING,
+    TYPE_PONG, TYPE_RESIZE, attach_frame, decode_nonce, parse_attached, parse_error, pong_frame,
+    resize_frame, try_parse_frame,
 };
 
 /// Force-quit escape hatch: in raw mode Ctrl-C (0x03) is forwarded to the
@@ -253,6 +253,15 @@ pub async fn connect(ticket_str: &str) -> Result<()> {
         connected.store(false, Ordering::Release);
         match run_one_connection(&ctx, &mut token, &mut frame_rx, &mut backoff).await {
             Ok(ConnOutcome::ShellExited) => break Ok(()),
+            Ok(ConnOutcome::Rejected(msg)) => {
+                // Permanent rejection (e.g. authorisation failure). Don't
+                // retry — redialing would just hammer the host with the same
+                // unauthorised token. Surface the host's message to the user.
+                break Err(anyhow::anyhow!(
+                    "host rejected the connection: {msg}\n\
+                     re-pair this client with `zuko share` on the host"
+                ));
+            }
             Ok(ConnOutcome::Dropped) => {
                 status_line(&format!(
                     "link lost — reconnecting in {:?} (Ctrl-C 3× to give up)",
@@ -291,6 +300,10 @@ enum ConnOutcome {
     ShellExited,
     /// Transient failure (dial/open/write/read error). Retry with backoff.
     Dropped,
+    /// Host sent an `ERROR` frame — a deliberate, permanent rejection (e.g.
+    /// authorisation failure). Surface the message and stop retrying; redialing
+    /// would just hammer the host with the same unauthorised token.
+    Rejected(String),
 }
 
 /// Bounded exponential backoff between reconnect attempts. Mirrors the iOS
@@ -426,10 +439,13 @@ async fn run_one_connection(
                         match recv.read(&mut tmp).await {
                             Ok(Some(n)) => {
                                 acc.extend_from_slice(&tmp[..n]);
-                                process_buffered_frames(
+                                if let Some(msg) = process_buffered_frames(
                                     &mut acc, token, ctx.stdout_seq, None,
                                 )
-                                .await?;
+                                .await?
+                                {
+                                    return Ok(ConnOutcome::Rejected(msg));
+                                }
                             }
                             Ok(None) => return Ok(ConnOutcome::ShellExited),
                             Err(_) => return Ok(ConnOutcome::Dropped),
@@ -441,7 +457,13 @@ async fn run_one_connection(
             read = recv.read(&mut tmp) => match read {
                 Ok(Some(n)) => {
                     acc.extend_from_slice(&tmp[..n]);
-                    process_buffered_frames(&mut acc, token, ctx.stdout_seq, Some(ctx.frame_tx)).await?;
+                    if let Some(msg) = process_buffered_frames(
+                        &mut acc, token, ctx.stdout_seq, Some(ctx.frame_tx),
+                    )
+                    .await?
+                    {
+                        return Ok(ConnOutcome::Rejected(msg));
+                    }
                 }
                 // Host closed the stream cleanly → remote shell exited.
                 Ok(None) => return Ok(ConnOutcome::ShellExited),
@@ -457,7 +479,13 @@ async fn run_one_connection(
                 Ok(Some(n)) => {
                     if let Some((_, _, control_acc, control_tmp)) = control.as_mut() {
                         control_acc.extend_from_slice(&control_tmp[..n]);
-                        process_buffered_frames(control_acc, token, ctx.stdout_seq, Some(ctx.frame_tx)).await?;
+                        if let Some(msg) = process_buffered_frames(
+                            control_acc, token, ctx.stdout_seq, Some(ctx.frame_tx),
+                        )
+                        .await?
+                        {
+                            return Ok(ConnOutcome::Rejected(msg));
+                        }
                     }
                 }
                 Ok(None) => control = None,
@@ -488,12 +516,16 @@ fn control_frame_type(frame: &[u8]) -> Option<u8> {
 /// token; PING is answered via `frame_tx` when given (omitted during the
 /// post-stdin drain, when no producer remains). Unknown types are ignored —
 /// the wire protocol is designed to gain types without breaking old peers.
+///
+/// Returns `Ok(Some(message))` when the host sent an `ERROR` frame — a
+/// permanent rejection the caller must propagate as `ConnOutcome::Rejected`
+/// (no reconnect). `Ok(None)` means "keep pumping".
 async fn process_buffered_frames(
     acc: &mut Vec<u8>,
     token: &mut SessionToken,
     stdout_seq: &std::sync::atomic::AtomicU64,
     frame_tx: Option<&mpsc::Sender<Vec<u8>>>,
-) -> Result<()> {
+) -> Result<Option<String>> {
     while let Some(f) = try_parse_frame(acc) {
         match f.typ {
             TYPE_DATA => {
@@ -520,10 +552,17 @@ async fn process_buffered_frames(
                     let _ = tx.send(reply).await;
                 }
             }
+            // Host rejected this connection deliberately (authorisation
+            // failure, protocol violation). Surface the message and stop —
+            // the auto-resume loop must not redial a permanent rejection.
+            TYPE_ERROR => {
+                let (_code, msg) = parse_error(&f.payload).unwrap_or_default();
+                return Ok(Some(msg));
+            }
             _ => {}
         }
     }
-    Ok(())
+    Ok(None)
 }
 
 /// Restore cooked terminal mode on scope exit (and on unwind/panic, since the
@@ -795,10 +834,12 @@ mod tests {
         let mut acc = crate::wire::attached_frame(issued);
         let mut token = [0u8; SESSION_TOKEN_LEN];
         let stdout_seq = AtomicU64::new(0);
-        // ATTACHED-only buffer: no DATA, so nothing is written to stdout.
-        process_buffered_frames(&mut acc, &mut token, &stdout_seq, None)
+        // ATTACHED-only buffer: no DATA, so nothing is written to stdout, and
+        // no ERROR frame, so the pump keeps going (None).
+        let rejected = process_buffered_frames(&mut acc, &mut token, &stdout_seq, None)
             .await
             .unwrap();
+        assert!(rejected.is_none(), "ATTACHED must not signal rejection");
         assert_eq!(token, issued, "client must adopt the host-issued token");
         // Buffer fully drained.
         assert!(acc.is_empty());
@@ -812,11 +853,33 @@ mod tests {
         acc.extend(crate::wire::frame(0xEE, b"junk"));
         let mut token = [9u8; SESSION_TOKEN_LEN];
         let stdout_seq = AtomicU64::new(0);
-        process_buffered_frames(&mut acc, &mut token, &stdout_seq, None)
+        let rejected = process_buffered_frames(&mut acc, &mut token, &stdout_seq, None)
             .await
             .unwrap();
+        assert!(rejected.is_none(), "unknown frames must not reject");
         assert_eq!(token, [9u8; SESSION_TOKEN_LEN]);
         assert!(acc.is_empty());
+    }
+
+    #[tokio::test]
+    async fn error_frame_signals_rejection_with_message() {
+        // An ERROR frame from the host (e.g. authorisation failure) must
+        // surface its message so the auto-resume loop stops retrying instead
+        // of hammering the host with the same unauthorised token.
+        let mut acc = crate::wire::error_frame(
+            crate::wire::ERR_AUTHORIZATION,
+            "this client is not authorised on this host",
+        );
+        let mut token = [0u8; SESSION_TOKEN_LEN];
+        let stdout_seq = AtomicU64::new(0);
+        let rejected = process_buffered_frames(&mut acc, &mut token, &stdout_seq, None)
+            .await
+            .unwrap();
+        let msg = rejected.expect("ERROR frame must signal rejection");
+        assert!(
+            msg.contains("not authorised"),
+            "rejection message must carry the host's text, got: {msg:?}"
+        );
     }
 
     // ── stable per-(client,host) reattach token ──

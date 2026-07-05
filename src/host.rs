@@ -32,8 +32,9 @@ use crate::secret;
 use crate::store;
 use crate::ticket_file::write_current_ticket;
 use crate::wire::{
-    self, ALPN_V2, SESSION_TOKEN_LEN, SessionToken, TYPE_ATTACH, TYPE_DATA, TYPE_PING, TYPE_RESIZE,
-    decode_nonce, empty_session_token, parse_attach, supported_alpns, try_parse_frame,
+    self, ALPN_V2, ERR_AUTHORIZATION, SESSION_TOKEN_LEN, SessionToken, TYPE_ATTACH, TYPE_DATA,
+    TYPE_PING, TYPE_RESIZE, decode_nonce, empty_session_token, parse_attach, supported_alpns,
+    try_parse_frame,
 };
 
 /// Per-direction capacity of the bounded channels that connect the network
@@ -340,7 +341,14 @@ async fn serve(
     .await
     .context("timed out waiting for initial frame")??;
     let request = initial_request(first);
-    store::ensure_client_authorized(&request.requested_token)?;
+    if let Err(e) = store::ensure_client_authorized(&request.requested_token) {
+        // Tell the client *why* before tearing down the connection, so it can
+        // fail fast instead of treating this as a transient drop and redialing
+        // forever. Best-effort: a write failure still closes the stream and
+        // the client sees EOF (the historical behaviour).
+        reject_with_error(&mut send, ERR_AUTHORIZATION, &e.to_string()).await;
+        return Err(e);
+    }
     let session = get_or_create_session(
         &sessions,
         request.requested_token,
@@ -526,6 +534,17 @@ async fn write_out_item(send: &mut iroh::endpoint::SendStream, item: OutItem) ->
     send.write_all(&frame)
         .await
         .context("write frame to client")
+}
+
+/// Best-effort: deliver an `ERROR` frame to the client before the host tears
+/// down a rejected connection. Older clients that don't understand `TYPE_ERROR`
+/// still see the abrupt close they always did; newer ones can fail fast with a
+/// real message instead of treating the rejection as a transient drop and
+/// redialing forever. Errors here are ignored — the bail in the caller is the
+/// source of truth for the host-side log.
+async fn reject_with_error(send: &mut iroh::endpoint::SendStream, code: u8, message: &str) {
+    let _ = send.write_all(&wire::error_frame(code, message)).await;
+    let _ = send.finish();
 }
 
 /// Handle one frame from the client. Returns `false` if the session's PTY

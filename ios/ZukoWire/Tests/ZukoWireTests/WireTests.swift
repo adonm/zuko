@@ -59,6 +59,29 @@ final class WireTests: XCTestCase {
         XCTAssertEqual(String(decoding: frame.payload.dropFirst(16), as: UTF8.self), "phone")
     }
 
+    func testErrorRoundTripAndByteLayout() throws {
+        var buffer = Wire.encodeError(code: Wire.ErrorCode.authorization, message: "not authorised")
+
+        XCTAssertEqual(buffer.first, Wire.error)
+        let frame = try XCTUnwrap(Wire.parse(&buffer))
+        XCTAssertEqual(frame.type, Wire.error)
+        XCTAssertEqual(frame.payload.first, Wire.ErrorCode.authorization)
+        XCTAssertEqual(String(decoding: frame.payload.dropFirst(), as: UTF8.self), "not authorised")
+
+        // Mirror the Rust parser: parseError must agree on code + message.
+        let parsed = try XCTUnwrap(Wire.parseError(frame.payload))
+        XCTAssertEqual(parsed.code, Wire.ErrorCode.authorization)
+        XCTAssertEqual(parsed.message, "not authorised")
+
+        // Empty message is still a valid ERROR frame (the code carries the
+        // machine-readable signal).
+        var empty = Wire.encodeError(code: Wire.ErrorCode.proto, message: "")
+        let emptyFrame = try XCTUnwrap(Wire.parse(&empty))
+        let emptyParsed = try XCTUnwrap(Wire.parseError(emptyFrame.payload))
+        XCTAssertEqual(emptyParsed.code, Wire.ErrorCode.proto)
+        XCTAssertEqual(emptyParsed.message, "")
+    }
+
     // MARK: - Streaming / partial frames
 
     func testParseReturnsNilUntilWholeFrameArrives() {

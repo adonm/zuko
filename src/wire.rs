@@ -15,6 +15,9 @@
 //!   0x05 PONG    payload = [nonce: u64 BE]   (optional control)
 //!   0x06 ATTACH  payload = [token: 16 bytes][cols: u16 BE][rows: u16 BE][pixel_width: u16 BE][pixel_height: u16 BE]
 //!   0x08 AUTHORIZE payload = [token: 16 bytes][label: UTF-8]
+//!   0x09 ERROR    payload = [code: u8][message: UTF-8]   (host -> client, fatal)
+//!                 code 0x01 = authorisation failure — re-pair with `zuko share`.
+//!                 code 0x02 = protocol violation.
 //! ```
 //!
 //! ## Handshake
@@ -44,6 +47,10 @@ pub const TYPE_PONG: u8 = 0x05;
 pub const TYPE_ATTACH: u8 = 0x06;
 pub const TYPE_ATTACHED: u8 = 0x07;
 pub const TYPE_AUTHORIZE: u8 = 0x08;
+pub const TYPE_ERROR: u8 = 0x09;
+/// `ERROR` frame codes (the first byte of an ERROR payload).
+pub const ERR_AUTHORIZATION: u8 = 0x01;
+pub const ERR_PROTOCOL: u8 = 0x02;
 pub const MAX_PAYLOAD_LEN: usize = u16::MAX as usize;
 pub const SESSION_TOKEN_LEN: usize = 16;
 pub type SessionToken = [u8; SESSION_TOKEN_LEN];
@@ -176,6 +183,32 @@ pub fn parse_authorize(payload: &[u8]) -> Option<(SessionToken, String)> {
     Some((token, label))
 }
 
+/// A `0x09 ERROR` frame (`host -> client`). Carries a 1-byte error code (see
+/// `ERR_*`) and a UTF-8 human message. Receiving one is fatal: the client
+/// must surface the message and stop reconnecting — the host has rejected the
+/// connection deliberately (e.g. authorisation failure), so retrying would
+/// just hammer the host. Older peers without `TYPE_ERROR` handling still see
+/// the abrupt close they always did.
+pub fn error_frame(code: u8, message: &str) -> Vec<u8> {
+    let message = message.as_bytes();
+    // Cap at MAX_PAYLOAD_LEN-1 so the [code, message] payload always fits the
+    // u16 length prefix. A long message truncates; the code carries the
+    // machine-readable signal clients act on.
+    let max_msg = MAX_PAYLOAD_LEN.saturating_sub(1);
+    let message = &message[..message.len().min(max_msg)];
+    let mut payload = Vec::with_capacity(1 + message.len());
+    payload.push(code);
+    payload.extend_from_slice(message);
+    frame(TYPE_ERROR, &payload)
+}
+
+/// Parse an `ERROR` payload into `(code, message)`. Returns `None` only for a
+/// payload too short to carry the code byte; an empty message is valid.
+pub fn parse_error(payload: &[u8]) -> Option<(u8, String)> {
+    let (&code, rest) = payload.split_first()?;
+    Some((code, String::from_utf8_lossy(rest).into_owned()))
+}
+
 pub const fn empty_session_token(token: &SessionToken) -> bool {
     let mut i = 0;
     while i < SESSION_TOKEN_LEN {
@@ -300,5 +333,21 @@ mod tests {
         let f = try_parse_frame(&mut buf).unwrap();
         assert_eq!(f.typ, TYPE_AUTHORIZE);
         assert_eq!(parse_authorize(&f.payload), Some((token, "phone".into())));
+    }
+
+    #[test]
+    fn error_round_trip() {
+        let mut buf = error_frame(ERR_AUTHORIZATION, "not authorised; re-pair");
+        let f = try_parse_frame(&mut buf).unwrap();
+        assert_eq!(f.typ, TYPE_ERROR);
+        assert_eq!(
+            parse_error(&f.payload),
+            Some((ERR_AUTHORIZATION, "not authorised; re-pair".into()))
+        );
+        // Empty message is still a valid ERROR frame (the code carries the
+        // machine-readable signal).
+        let mut buf = error_frame(ERR_PROTOCOL, "");
+        let f = try_parse_frame(&mut buf).unwrap();
+        assert_eq!(parse_error(&f.payload), Some((ERR_PROTOCOL, String::new())));
     }
 }
