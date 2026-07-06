@@ -19,6 +19,8 @@ swiftlint = "latest"
 # Mermaid diagrams render client-side in theme/head.hbs (CDN + our own JS),
 # so no mdbook preprocessor dependency.
 mdbook = "latest"
+# Deno drives the static browser client build; Vite still bundles npm deps.
+deno = "latest"
 # Link/URL checker for markdown (the sensible md lint for this repo — no
 # node/ruby style linter, on purpose). Prebuilt binary via aqua.
 lychee = "latest"
@@ -38,6 +40,8 @@ actionlint = "latest"
 # cross-compiler here (used by the release workflow).
 [bootstrap.packages]
 "apt:gcc-aarch64-linux-gnu" = "latest" # cross linker for aarch64-unknown-linux-gnu
+# ring's wasm32 build (pulled by browser Iroh's tls-ring feature) needs clang.
+"apt:clang" = "latest"
 # Swiftly (and the Swift toolchain it installs) needs libcurl at runtime on
 # ubuntu-latest; Swiftly prints this as the fix hint when it's missing and
 # aborts the install. Lives in bootstrap (not [tools]) so only iOS work pulls it.
@@ -244,9 +248,17 @@ run = "sh scripts/release.sh ${@}"
 description = "Build the mdBook docs site into target/book/ (config in book.toml, source in docs/)."
 run = "mdbook build"
 
+[tasks.build-web]
+description = "Build the static browser client into target/book/web/ (Iroh WASM + wterm Ghostty)."
+run = "scripts/build-web.sh"
+
 [tasks.serve-docs]
 description = "Build + serve the mdBook docs site on http://localhost:3000 with live reload. Open in a browser."
 run = "mdbook serve --open"
+
+[tasks.serve-web]
+description = "Run the static browser client dev server (web/)."
+run = "deno task --cwd web dev"
 
 [tasks.lint-md]
 description = "Lint markdown links with lychee (config in .lychee.toml). Checks all repo .md except generated/build dirs. Network-enabled for external URLs."

@@ -7,6 +7,10 @@ VPN/bastion plumbing. Iroh handles dial-by-key reachability, relay fallback, NAT
 traversal, and transport encryption. zuko stays narrow: a host PTY, explicit
 pairing, an authorised-client list, and a small framed protocol.
 
+Experimental browser client: [open zuko web](https://adonm.github.io/zuko/web/).
+It is a static Pages app using Iroh WASM and a Ghostty-derived terminal core;
+claimed host tickets are stored locally in browser IndexedDB.
+
 ## Fast path
 
 ```sh
@@ -33,6 +37,7 @@ zuko app --doctor
 - [`zuko app`](app.md)
 - [Wire protocol](protocol.md)
 - [Client notes](clients.md)
+- [Browser target notes](targets.md#browser-client)
 - [Releasing](releasing.md)
 - [Security](security.md)
 

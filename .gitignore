@@ -32,6 +32,10 @@ ios/ZukoFFI/Generated/
 target/
 **/*.rs.bk
 
+# Browser client dependencies/generated WASM.
+web/node_modules/
+web/src/wasm/
+
 # lychee link-checker cache (mise run lint-md)
 .lycheecache
 

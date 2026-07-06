@@ -104,10 +104,15 @@ See [`docs/app.md`](docs/app.md).
 |--------|--------|--------|
 | CLI | shipped | `src/client.rs` |
 | iOS/iPadOS | shipped | `ios/Zuko/` |
+| Web | experimental | [`adonm.github.io/zuko/web/`](https://adonm.github.io/zuko/web/) / `web/` |
 | Android | planned | — |
 
 Protocol: [`docs/protocol.md`](docs/protocol.md). Client notes:
 [`docs/clients.md`](docs/clients.md).
+
+The web client is a static Pages app using Iroh WASM (relay-only, still E2E
+encrypted) and a Ghostty-derived terminal core via wterm. It stores claimed host
+tickets in browser IndexedDB, so treat that browser profile/origin as sensitive.
 
 ## Build/test
 

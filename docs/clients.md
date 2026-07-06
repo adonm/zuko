@@ -6,7 +6,12 @@ Reference clients:
 |--------|--------|--------|
 | Rust CLI | shipped | `src/client.rs` |
 | iOS/iPadOS | shipped | `ios/Zuko/` |
+| Web | experimental | [`/web/`](https://adonm.github.io/zuko/web/) / `web/` |
 | Android | planned | — |
+
+The web client is published with the docs. It uses browser Iroh over relays and
+stores claimed host tickets in IndexedDB. See [Targets](targets.md#browser-client)
+for its security boundary and known gaps.
 
 ## Implementing a client
 

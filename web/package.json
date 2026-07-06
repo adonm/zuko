@@ -1,0 +1,22 @@
+{
+  "name": "zuko-web",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "../scripts/build-web.sh",
+    "build:app": "deno task build:app",
+    "dev": "deno task dev",
+    "preview": "deno task preview"
+  },
+  "dependencies": {
+    "@fontsource/dejavu-mono": "^5.2.5",
+    "@wterm/dom": "latest",
+    "@wterm/ghostty": "latest",
+    "bootstrap": "^5.3.8"
+  },
+  "devDependencies": {
+    "typescript": "latest",
+    "vite": "latest"
+  }
+}

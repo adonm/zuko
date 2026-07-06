@@ -15,6 +15,8 @@ on:
       - "docs/**"
       - "book.toml"
       - "mise.toml"
+      - "scripts/build-web.sh"
+      - "web/**"
       - ".github/workflows/docs.yml"
   workflow_dispatch:
 
@@ -48,8 +50,14 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: mise run lint-md
 
+      - name: Install web build system deps
+        run: sudo apt-get update && sudo apt-get install -y clang
+
       - name: Build site
         run: mise run build-docs
+
+      - name: Build web client
+        run: mise run build-web
 
       - name: Setup Pages
         uses: actions/configure-pages@983d7736d9b0ae728b81ab479565c72886d7745b # v5.0.0

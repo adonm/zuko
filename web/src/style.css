@@ -1,0 +1,107 @@
+@font-face {
+  font-family: "DejaVu Mono";
+  font-display: block;
+  font-style: normal;
+  font-weight: 400;
+  src: url("@fontsource/dejavu-mono/files/dejavu-mono-latin-400-normal.woff2") format("woff2");
+}
+
+@font-face {
+  font-family: "DejaVu Mono";
+  font-display: block;
+  font-style: italic;
+  font-weight: 400;
+  src: url("@fontsource/dejavu-mono/files/dejavu-mono-latin-400-italic.woff2") format("woff2");
+}
+
+@font-face {
+  font-family: "DejaVu Mono";
+  font-display: block;
+  font-style: normal;
+  font-weight: 700;
+  src: url("@fontsource/dejavu-mono/files/dejavu-mono-latin-700-normal.woff2") format("woff2");
+}
+
+@font-face {
+  font-family: "DejaVu Mono";
+  font-display: block;
+  font-style: italic;
+  font-weight: 700;
+  src: url("@fontsource/dejavu-mono/files/dejavu-mono-latin-700-italic.woff2") format("woff2");
+}
+
+body { min-height: 100vh; }
+
+.app-grid { min-height: calc(100vh - 57px); }
+.sidebar { overflow: auto; }
+.host-name { text-decoration: none; }
+.terminal-shell { min-width: 0; min-height: 0; }
+
+.icon-button {
+  align-items: center;
+  display: inline-flex;
+  justify-content: center;
+  min-height: 2rem;
+  min-width: 2rem;
+  padding: 0.25rem;
+}
+
+.icon-button svg {
+  display: block;
+  height: 1rem;
+  width: 1rem;
+}
+
+#terminal {
+  --term-font-family: "DejaVu Mono", "Noto Sans Mono", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+  --term-font-size: 14px;
+  --term-line-height: 18px;
+  --term-row-height: 18px;
+  height: 100%;
+  overflow: auto;
+  padding: 0.75rem;
+  background: var(--term-bg, #050505);
+  color-scheme: dark;
+}
+
+#terminal.wterm,
+#terminal .term-grid,
+#terminal .term-row,
+#terminal .term-row > span {
+  font-family: var(--term-font-family);
+  font-size: var(--term-font-size);
+  font-kerning: none;
+  font-synthesis: none;
+  font-variant-ligatures: none;
+  font-feature-settings: "calt" 0, "liga" 0;
+  letter-spacing: 0;
+  text-rendering: geometricPrecision;
+}
+
+#terminal.wterm {
+  border-radius: 0;
+  box-shadow: none;
+}
+
+#terminal .term-row,
+#terminal .term-row > span {
+  line-height: var(--term-row-height);
+}
+
+#terminal .term-block {
+  min-width: 1ch;
+}
+
+.term-measure-probe {
+  left: -9999px;
+  pointer-events: none;
+  position: absolute;
+  top: 0;
+  visibility: hidden;
+  white-space: pre;
+}
+
+@media (max-width: 991.98px) {
+  .app-grid { min-height: auto; }
+  #terminal { height: 70vh; }
+}

@@ -1,0 +1,8 @@
+{
+  "nodeModulesDir": "auto",
+  "tasks": {
+    "build:app": "deno run -A npm:typescript@latest/tsc --noEmit && deno run -A npm:vite@latest build",
+    "dev": "deno run -A npm:vite@latest --host 127.0.0.1",
+    "preview": "deno run -A npm:vite@latest preview --host 127.0.0.1"
+  }
+}

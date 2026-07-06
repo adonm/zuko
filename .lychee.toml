@@ -35,4 +35,5 @@ exclude_path = [
   "ios/ZukoFFI/ZukoRust.xcframework/",
   "ios/ZukoFFI/Generated/",
   "ios/Zuko/Zuko.xcodeproj/",
+  "web/node_modules/",
 ]

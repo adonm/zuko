@@ -15,6 +15,7 @@
 # For maintainers
 
 - [Design notes](design.md)
+- [Targets](targets.md)
 - [Releasing](releasing.md)
 
 # Policy
