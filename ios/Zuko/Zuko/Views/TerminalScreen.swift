@@ -151,8 +151,15 @@ struct TerminalScreen: View {
             // Returning from the background: the QUIC link is usually dead
             // after iOS suspends us, so recover immediately instead of waiting
             // out the reconnect backoff. See IrohSession.foregrounded().
-            if phase == .active {
+            switch phase {
+            case .active:
                 session.foregrounded()
+            case .background:
+                session.backgrounded()
+            case .inactive:
+                break
+            @unknown default:
+                break
             }
         }
         .onDisappear {

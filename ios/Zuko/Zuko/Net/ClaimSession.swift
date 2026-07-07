@@ -171,7 +171,7 @@ final class ClaimSession {
     ) async throws {
         let endpointTicket = try EndpointTicket.fromString(str: ticket)
         let token = try ClientIdentity.sessionToken(for: endpointTicket)
-        var send = try await conn.openUni()
+        let send = try await conn.openUni()
         let frame = Wire.encodeAuthorize(token: token, label: clientLabel(fallback: label))
         try await send.writeAll(buf: frame)
         try await send.finish()

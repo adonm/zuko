@@ -53,7 +53,7 @@ let package = Package(
         // libghostty XCFramework binary target). We use its host-managed I/O
         // backend (`InMemoryTerminalSession`) so the app stays sandbox-safe —
         // no PTY spawn, all bytes flow through `IrohSession`.
-        .package(url: "https://github.com/Lakr233/libghostty-spm.git", from: "1.0.1775374806"),
+        .package(url: "https://github.com/Lakr233/libghostty-spm.git", from: "1.2.9"),
         .package(url: "https://github.com/n0-computer/iroh-ffi.git", from: "1.0.0"),
         // Local wrapper around the Rust staticlib. Built by
         // `scripts/build-ffi.sh` (cargo build --lib --release for each iOS

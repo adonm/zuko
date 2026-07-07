@@ -97,6 +97,19 @@ jobs:
         with:
           key: ios-release
 
+      - name: Cache SwiftPM packages
+        # Reuses resolved package checkouts for the signed XcodeGen/Fastlane
+        # archive path. Do not cache ~/.swiftpm here: Linux xtool installs the
+        # large Darwin SDK under that tree and release-ios does not need it.
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        with:
+          path: |
+            ~/Library/Caches/org.swift.swiftpm
+            ios/.build
+          key: ${{ runner.os }}-swiftpm-${{ hashFiles('ios/Package.swift', 'ios/ZukoFFI/Package.swift', 'ios/ZukoWire/Package.swift') }}
+          restore-keys: |
+            ${{ runner.os }}-swiftpm-
+
       - name: Install signed-release tooling (xcodegen via brew; fastlane via bundler)
         run: mise run setup-ios-release
 

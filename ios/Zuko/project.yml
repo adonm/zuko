@@ -22,7 +22,7 @@ settings:
 packages:
   libghostty-spm:
     url: https://github.com/Lakr233/libghostty-spm.git
-    from: "1.0.1775374806"
+    from: "1.2.9"
   iroh-ffi:
     url: https://github.com/n0-computer/iroh-ffi.git
     from: "1.0.0"
@@ -57,7 +57,7 @@ targets:
         # strictly-increasing build number on every upload. Bump these
         # defaults when you cut a release so a fresh `mise run build-ios`
         # matches the binary version.
-        MARKETING_VERSION: "0.8.1"
+        MARKETING_VERSION: "0.8.4"
         CURRENT_PROJECT_VERSION: "1"
         # Universal iPhone + iPad app. App Store Connect validates the base
         # UISupportedInterfaceOrientations key for iPad multitasking, so both

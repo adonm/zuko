@@ -43,6 +43,22 @@ jobs:
         with:
           cache: true
 
+      - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+        with:
+          key: web-wasm
+          workspaces: |
+            web/wasm -> ../../target/web-wasm
+
+      - name: Cache Deno/npm packages
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        with:
+          path: |
+            ~/.cache/deno
+            web/node_modules
+          key: ${{ runner.os }}-deno-${{ hashFiles('web/deno.json', 'web/deno.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-deno-
+
       - name: Lint markdown links
         # Gate the deploy on link health (config in .lychee.toml). GITHUB_TOKEN
         # lifts GitHub rate limits.

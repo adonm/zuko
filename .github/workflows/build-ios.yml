@@ -71,6 +71,20 @@ jobs:
         with:
           key: ios-xtool
 
+      - name: Cache SwiftPM packages
+        # Speeds up `swift test --package-path ios/ZukoWire` and the later
+        # `swift package resolve`/xtool app build without caching the Darwin
+        # SDK itself (that has its own large, tag-keyed cache below).
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        with:
+          path: |
+            ~/.cache/org.swift.swiftpm
+            ios/.build
+            ios/ZukoWire/.build
+          key: ${{ runner.os }}-swiftpm-${{ hashFiles('ios/Package.swift', 'ios/ZukoFFI/Package.swift', 'ios/ZukoWire/Package.swift') }}
+          restore-keys: |
+            ${{ runner.os }}-swiftpm-
+
       - name: Install local iOS tooling (Swift + xtool)
         run: mise run setup-ios
 

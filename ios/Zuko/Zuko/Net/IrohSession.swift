@@ -20,6 +20,48 @@ private enum PermanentRejection: Error {
     case rejected(String)
 }
 
+/// A local, intentional reconnect request (for example, foregrounding after a
+/// long iOS suspension). Kept separate from transport errors so the outer loop
+/// can redial immediately without consuming a backoff attempt.
+private struct RequestedReconnect: LocalizedError {
+    let reason: String
+
+    var errorDescription: String? { reason }
+}
+
+private struct ReconnectBackoff {
+    struct Step {
+        let attempt: Int
+        let delayNanoseconds: UInt64
+
+        var delaySeconds: Int {
+            max(1, Int(delayNanoseconds / 1_000_000_000))
+        }
+    }
+
+    private static let baseDelay: UInt64 = 1_000_000_000
+    private static let maxDelay: UInt64 = 15_000_000_000
+
+    private(set) var attempt = 0
+
+    mutating func recordFailure() -> Step {
+        attempt += 1
+        return Step(
+            attempt: attempt,
+            delayNanoseconds: Self.delay(forAttempt: attempt)
+        )
+    }
+
+    mutating func reset() {
+        attempt = 0
+    }
+
+    private static func delay(forAttempt attempt: Int) -> UInt64 {
+        let shift = UInt64(min(max(attempt - 1, 0), 4))
+        return min(baseDelay << shift, maxDelay)
+    }
+}
+
 /// Owns a single Iroh connection to a host and bridges it to GhosttyTerminal's
 /// host-managed I/O backend.
 ///
@@ -58,8 +100,7 @@ final class IrohSession: ObservableObject {
     /// head of any in-flight input and drops new keystrokes under pressure
     /// rather than blocking the main actor.
     static let outboundFrameCap = 256
-    private static let reconnectBaseDelay: UInt64 = 1_000_000_000
-    private static let reconnectMaxDelay: UInt64 = 15_000_000_000
+    private static let staleBackgroundReconnectInterval: TimeInterval = 5
 
     @Published private(set) var status: SessionStatus = .idle
 
@@ -108,6 +149,10 @@ final class IrohSession: ObservableObject {
     private var runTask: Task<Void, Never>?
     var controlReadTask: Task<Void, Never>?
     var writeContinuation: AsyncStream<Data>.Continuation?
+    private var reconnectBackoff = ReconnectBackoff()
+    private var reconnectSleepTask: Task<Bool, Never>?
+    private var reconnectRequestReason: String?
+    private var backgroundedAt: Date?
 
     /// Tracks whether `disconnect()` was called, so the task's cancellation
     /// handler can tell an intentional disconnect (we set this, then cancel)
@@ -137,6 +182,11 @@ final class IrohSession: ObservableObject {
     func connect(ticket: String) {
         guard !isRunning else { return }
         disconnectRequested = false
+        reconnectBackoff.reset()
+        reconnectSleepTask?.cancel()
+        reconnectSleepTask = nil
+        reconnectRequestReason = nil
+        backgroundedAt = nil
         status = .connecting
         runTask?.cancel()
         let cleaned = ticket.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -153,16 +203,23 @@ final class IrohSession: ObservableObject {
         // the cancellation as a failure.
         disconnectRequested = true
         LogCapture.shared.log(.info, category: "net", "disconnect requested")
+        reconnectSleepTask?.cancel()
+        reconnectSleepTask = nil
+        reconnectRequestReason = nil
+        backgroundedAt = nil
         runTask?.cancel()
         controlReadTask?.cancel()
         controlReadTask = nil
         writeContinuation?.finish()
         writeContinuation = nil
         let ep = endpoint
+        let conn = connection
         connection = nil
         endpoint = nil
         status = .disconnected("disconnected")
-        // Best-effort graceful close off the hot path.
+        // Best-effort graceful close off the hot path. Closing the connection
+        // as well as the endpoint wakes any suspended read/write pumps quickly.
+        try? conn?.close(errorCode: 0, reason: Data("disconnected".utf8))
         Task { try? await ep?.close() }
     }
 
@@ -191,35 +248,82 @@ final class IrohSession: ObservableObject {
         enqueueResize(cols: cols, rows: rows)
     }
 
+    func backgrounded() {
+        backgroundedAt = Date()
+        LogCapture.shared.log(.info, category: "net", "app backgrounded")
+    }
+
     /// Recover when the app returns to the foreground. iOS freezes our tasks
     /// while suspended and the OS usually tears down the QUIC link, so a
     /// session that still *looks* connected is often talking to a dead path.
     ///
-    /// - `.connected`: nudge a repaint. The RESIZE rides the write pump; if the
-    ///   link is dead the pump's `writeAll` fails and the (now-resumed) read
-    ///   loop errors, so the run loop redials. If the link is fine, the host
-    ///   just re-emits the current screen — cheap and idempotent.
-    /// - `.idle`/`.disconnected`/`.failed`: redial now via `connect` (a no-op
-    ///   guard while already `.connecting`/`.reconnecting`, where the existing
-    ///   backoff loop is already retrying).
+    /// - `.reconnecting`: skip the stale sleep and retry immediately.
+    /// - `.connected` after a real background stay: close the old QUIC path so
+    ///   the run loop redials inside the host's detached-PTY lease.
+    /// - `.connected` after a short inactive blip: nudge a repaint. The RESIZE
+    ///   is cheap and idempotent when the path is still alive.
+    /// - `.idle`/`.disconnected`: redial now via `connect` (a no-op guard while
+    ///   already `.connecting`). `.failed` remains terminal until the user
+    ///   re-pairs, because the host deliberately rejected this client.
     ///
     /// Only calls already-safe, guarded entry points so there's no new
     /// concurrency to reason about on the lifecycle path.
     func foregrounded() {
         LogCapture.shared.log(.info, category: "net", "app foregrounded")
-        if case .connected = status {
-            requestRedraw()
-            return
-        }
+        let suspendedFor = backgroundedAt.map { Date().timeIntervalSince($0) }
+        backgroundedAt = nil
+
         // A permanent rejection (host sent ERROR, e.g. not authorised) must
         // not be retried on every foreground — the host has refused this
         // client and redialing just hammers it. The user re-pairs to recover.
         if case .failed = status {
             return
         }
+
+        if case .reconnecting = status {
+            reconnectBackoff.reset()
+            reconnectSleepTask?.cancel()
+            reconnectSleepTask = nil
+            status = .connecting
+            LogCapture.shared.log(.info, category: "net", "foreground skipped reconnect delay")
+            return
+        }
+
+        if case .connected = status {
+            if let suspendedFor,
+               suspendedFor >= Self.staleBackgroundReconnectInterval {
+                reconnectBackoff.reset()
+                let seconds = Int(suspendedFor.rounded())
+                requestReconnect(reason: "app foregrounded after \(seconds)s in background")
+            } else {
+                requestRedraw()
+            }
+            return
+        }
+
         if let ticket = lastTicket {
             connect(ticket: ticket)
         }
+    }
+
+    private func requestReconnect(reason: String) {
+        reconnectRequestReason = reason
+        LogCapture.shared.log(.info, category: "net", "requesting reconnect: \(reason)")
+        if case .connected = status {
+            status = .connecting
+        }
+        writeContinuation?.finish()
+        writeContinuation = nil
+        controlReadTask?.cancel()
+        controlReadTask = nil
+        if let connection {
+            try? connection.close(errorCode: 1, reason: Data(reason.utf8))
+        }
+    }
+
+    private func consumeReconnectRequest() -> String? {
+        defer { reconnectRequestReason = nil }
+        return reconnectRequestReason
     }
 
     // MARK: - Connection
@@ -245,10 +349,9 @@ final class IrohSession: ObservableObject {
         }
         defer { closeEndpoint(ep) }
 
-        var attempt = 0
         while !Task.isCancelled, !disconnectRequested {
             do {
-                if attempt == 0 {
+                if reconnectBackoff.attempt == 0 {
                     status = .connecting
                 }
                 try await runOneConnection(
@@ -260,19 +363,25 @@ final class IrohSession: ObservableObject {
             } catch is CancellationError {
                 reportCancellationIfNeeded()
                 return
-            } catch let PermanentRejection.rejected(_) {
+            } catch PermanentRejection.rejected(_) {
                 // Status was already set to `.failed` in `readLoop` with the
                 // host's message + re-pair hint. Do NOT retry: the host has
                 // refused this client and redialing would hammer it forever.
                 return
+            } catch let requested as RequestedReconnect {
+                reconnectBackoff.reset()
+                status = .connecting
+                LogCapture.shared.log(.info, category: "net", "reconnecting now: \(requested.reason)")
+                continue
             } catch {
+                let wasConnected = status == .connected
                 LogCapture.shared.log(
                     .warn,
                     category: "net",
-                    "connection \(attempt == 0 ? "failed" : "dropped"): \(error.localizedDescription)"
+                    "connection \(wasConnected ? "dropped" : "failed"): \(error.localizedDescription)"
                 )
-                attempt += 1
-                if await waitBeforeReconnect(after: error, attempt: attempt) == false {
+                let step = reconnectBackoff.recordFailure()
+                if await waitBeforeReconnect(after: error, step: step) == false {
                     return
                 }
             }
@@ -281,29 +390,48 @@ final class IrohSession: ObservableObject {
         reportCancellationIfNeeded()
     }
 
-    private func waitBeforeReconnect(after error: Error, attempt: Int) async -> Bool {
+    private func waitBeforeReconnect(after error: Error, step: ReconnectBackoff.Step) async -> Bool {
         connection = nil
         if disconnectRequested {
             status = .disconnected("disconnected")
             return false
         }
 
-        let delay = reconnectDelay(forAttempt: attempt)
-        let seconds = max(1, Int(delay / 1_000_000_000))
         status = .reconnecting(
-            attempt: attempt,
-            delaySeconds: seconds,
+            attempt: step.attempt,
+            delaySeconds: step.delaySeconds,
             reason: error.localizedDescription
         )
-        LogCapture.shared.log(.warn, category: "net", "reconnect attempt \(attempt) in \(seconds)s")
+        LogCapture.shared.log(
+            .warn,
+            category: "net",
+            "reconnect attempt \(step.attempt) in \(step.delaySeconds)s"
+        )
 
-        do {
-            try await Task.sleep(nanoseconds: delay)
-            return true
-        } catch {
+        let sleeper = Task { () -> Bool in
+            do {
+                try await Task.sleep(nanoseconds: step.delayNanoseconds)
+                return true
+            } catch {
+                return false
+            }
+        }
+        reconnectSleepTask = sleeper
+        let slept = await sleeper.value
+        reconnectSleepTask = nil
+
+        if disconnectRequested {
+            status = .disconnected("disconnected")
+            return false
+        }
+        if Task.isCancelled {
             reportCancellationIfNeeded()
             return false
         }
+        if !slept {
+            LogCapture.shared.log(.info, category: "net", "reconnect delay skipped")
+        }
+        return true
     }
 
     private func reportCancellationIfNeeded() {
@@ -358,7 +486,7 @@ final class IrohSession: ObservableObject {
 
             // Start the write pump (detached, owns `send` and, for v2, the
             // optional `controlSend` — see its docs).
-            startWritePump(send: send, controlSend: controlSend)
+            startWritePump(send: send, controlSend: controlSend, connection: conn)
 
             status = .connected
 
@@ -367,17 +495,25 @@ final class IrohSession: ObservableObject {
             // outer loop redials stream errors.
             try await readLoop(recv: recv)
 
+            if let reason = consumeReconnectRequest() {
+                throw RequestedReconnect(reason: reason)
+            }
+
             writeContinuation?.finish()
             writeContinuation = nil
             controlReadTask?.cancel()
             controlReadTask = nil
             connection = nil
         } catch {
+            let requestedReconnect = consumeReconnectRequest()
             writeContinuation?.finish()
             writeContinuation = nil
             controlReadTask?.cancel()
             controlReadTask = nil
             connection = nil
+            if let requestedReconnect {
+                throw RequestedReconnect(reason: requestedReconnect)
+            }
             throw error
         }
     }
@@ -413,12 +549,6 @@ final class IrohSession: ObservableObject {
     private func closeEndpoint(_ ep: Endpoint) {
         endpoint = nil
         Task { try? await ep.close() }
-    }
-
-    private func reconnectDelay(forAttempt attempt: Int) -> UInt64 {
-        let shift = UInt64(min(max(attempt - 1, 0), 4))
-        let delay = Self.reconnectBaseDelay << shift
-        return min(delay, Self.reconnectMaxDelay)
     }
 
     /// Consume the primary stream until EOF (host closed → shell exited) or a
@@ -463,6 +593,7 @@ final class IrohSession: ObservableObject {
         case Wire.attached:
             if let token = Wire.parseAttached(frame.payload) {
                 sessionToken = token
+                reconnectBackoff.reset()
                 LogCapture.shared.log(.info, category: "net", "host attached")
             }
         default:

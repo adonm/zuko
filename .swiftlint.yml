@@ -22,6 +22,9 @@ disabled_rules:
   - trailing_comma
   # Nesting is intentional for private implementation types.
   - nesting
+  # Wire parsers mirror Rust's from_utf8_lossy behavior via String(decoding:as:);
+  # the failable Data initializer would reject deliberately-lossy diagnostics.
+  - optional_data_string_conversion
 
 # Opt into a few beyond SwiftLint's defaults that catch real bugs in
 # asynchronous terminal code (force unwraps crash, force casts crash, etc.).
@@ -43,9 +46,13 @@ type_body_length:
   warning: 500
   error: 800
 
-# Cohesive session/state classes (e.g. IrohSession) run ~400+ lines; the
+function_body_length:
+  warning: 75
+  error: 120
+
+# Cohesive session/state classes (e.g. IrohSession) run ~600 lines; the
 # limit matches type_body_length so a well-factored single-responsibility
 # class isn't forced into an arbitrary split. Mirrors the relaxed style above.
 file_length:
-  warning: 500
-  error: 800
+  warning: 650
+  error: 900

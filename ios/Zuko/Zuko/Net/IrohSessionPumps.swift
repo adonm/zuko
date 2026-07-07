@@ -51,7 +51,13 @@ extension IrohSession {
     /// protocol v2, RESIZE/PING/PONG use the optional control stream; DATA stays
     /// on the primary stream. If the control stream disappears during teardown,
     /// control frames fall back to the primary stream until reconnect takes over.
-    func startWritePump(send: SendStream, controlSend: SendStream?) {
+    /// A primary-stream write failure closes the connection so a dead path does
+    /// not sit in `.connected` until the read side notices naturally.
+    func startWritePump(
+        send: SendStream,
+        controlSend: SendStream?,
+        connection: IrohLib.Connection
+    ) {
         let (stream, continuation) = AsyncStream.makeStream(
             of: Data.self,
             bufferingPolicy: .bufferingOldest(Self.outboundFrameCap)
@@ -60,6 +66,7 @@ extension IrohSession {
 
         Task.detached(priority: .userInitiated) {
             var activeControlSend = controlSend
+            var writeFailure: String?
             for await frame in stream {
                 if Task.isCancelled { break }
                 do {
@@ -73,6 +80,7 @@ extension IrohSession {
                     }
                     try await send.writeAll(buf: frame)
                 } catch {
+                    writeFailure = error.localizedDescription
                     break
                 }
             }
@@ -80,6 +88,9 @@ extension IrohSession {
                 do { try await activeControlSend.finish() } catch {}
             }
             do { try await send.finish() } catch {}
+            if let writeFailure {
+                try? connection.close(errorCode: 1, reason: Data(writeFailure.utf8))
+            }
         }
     }
 
