@@ -4,7 +4,7 @@ import XCTest
 
 /// Mirrors the Rust `src/wire.rs` tests so the two protocol implementations
 /// can't drift. The byte-layout assertions double as the on-the-wire spec
-/// (see `docs/PROTOCOL.md`).
+/// (see `docs/protocol.md`).
 final class WireTests: XCTestCase {
     // MARK: - Round trips
 

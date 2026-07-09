@@ -1,8 +1,8 @@
 //! Atomic, restrictive-permission writes for files that carry secrets.
 //!
-//! Every zuko-controlled file that grants shell access — the host's persistent
-//! `key`, the live `current_ticket`, and the saved `hosts` list — is written
-//! here through one tested implementation:
+//! Every zuko-controlled file carrying identity keys, authorization tokens, or
+//! sensitive dial information is written here through one tested
+//! implementation:
 //!
 //! 1. Create the parent dir if missing.
 //! 2. Write to `<path>.tmp` with `0600` perms on Unix.
@@ -50,12 +50,12 @@ pub fn write_secret_0600(path: &Path, bytes: &[u8]) -> Result<()> {
 /// Race-safe create-or-read for a persistent [`iroh::SecretKey`].
 ///
 /// Both the host (`~/.config/zuko/key`) and the client
-/// (`~/.config/zuko/client_key`) need a stable identity: the host so its node
-/// id — and thus every saved connection — survives restarts, the client so it
-/// always derives the same reattach token for a given host (and so its own
-/// node id is stable). Two processes starting at once on a fresh install would
-/// otherwise each generate a different key and the second write would clobber
-/// the first, silently flipping the identity under existing state.
+/// (`~/.config/zuko/client_key`) need stable key material: the host so its node
+/// id — and thus every saved connection — survives restarts, and the client so
+/// it always derives the same reattach token for a given host. Two processes
+/// starting at once on a fresh install would otherwise each generate a
+/// different key and the second write would clobber the first, silently
+/// flipping the identity under existing state.
 ///
 /// We hold an exclusive flock on a sibling `.lock` file across the
 /// check-create-write transaction. The lock is on a separate inode so the

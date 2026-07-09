@@ -1,6 +1,6 @@
 [package]
 name = "zuko"
-version = "0.8.4"
+version = "0.8.5"
 edition = "2024"
 license = "Apache-2.0"
 description = "Remote terminals over Iroh: the host daemon and reference CLI client."
@@ -28,7 +28,7 @@ crate-type = ["rlib", "staticlib"]
 [dependencies]
 # iroh is intentionally NOT here — see the target-cfg'd block below for why.
 # Memory-hard KDF for deriving the throwaway handoff key from a memorable code
-# (`zuko share`/`claim`). Replaces a single unsalted SHA-256 so the ~52-bit
+# (`zuko share`/`claim`). Replaces a single unsalted SHA-256 so the ~28-bit
 # code resists offline brute-force if the ephemeral NodeId leaks.
 argon2 = "0.5"
 anyhow = "1"

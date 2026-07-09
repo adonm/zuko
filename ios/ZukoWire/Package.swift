@@ -10,7 +10,7 @@
 //     client we can unit-test exactly like the Rust core tests `src/wire.rs`.
 //   - It pins the framing contract in one tested place, mirroring the Rust
 //     `wire.rs`, so the two implementations can't drift silently (the
-//     byte-layout tests double as the protocol spec — see `docs/PROTOCOL.md`).
+//     byte-layout tests double as the protocol spec — see `docs/protocol.md`).
 //
 // The app's `ios/Package.swift` references this by relative path and the
 // `Zuko` target depends on the `ZukoWire` product.

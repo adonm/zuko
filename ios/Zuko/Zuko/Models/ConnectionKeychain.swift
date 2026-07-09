@@ -2,10 +2,11 @@ import Foundation
 
 /// Stores the user's saved connections in the iOS Keychain (via [`Keychain`]).
 ///
-/// Every `Connection.ticket` is a bearer token that grants shell access on its
-/// host, so the whole collection is persisted as a single Keychain item rather
-/// than in `UserDefaults` — which lives in an on-disk plist decrypted after
-/// first unlock and is included in unencrypted backups. The Keychain uses
+/// A `Connection.ticket` contains sensitive host dial information. Shell access
+/// also requires this install's authorized client token, but connection state
+/// still belongs in a single Keychain item rather than in `UserDefaults` —
+/// which lives in an on-disk plist decrypted after first unlock and is included
+/// in unencrypted backups. The Keychain uses
 /// hardware-backed key protection (Secure Enclave on supported devices) and is
 /// excluded from unencrypted backups by default.
 ///

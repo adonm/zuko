@@ -11,22 +11,24 @@
 //! contain none, so a plain whitespace split round-trips reliably. Lines
 //! starting with `#` are comments.
 //!
-//! These files hold shell-access secrets (tickets for saved hosts, reattach
-//! tokens for authorised clients), so they're written through the shared atomic
-//! `0600` writer — see [`crate::secret`] — and every read-modify-write takes an
-//! exclusive `flock` on a sibling `.lock` file so two concurrent `zuko`
-//! processes can't silently overwrite each other's update.
+//! These files hold sensitive dial information and shell-access tokens, so
+//! they're written through the shared atomic `0600` writer — see
+//! [`crate::secret`] — and every read-modify-write takes an exclusive `flock`
+//! on a sibling `.lock` file so two concurrent `zuko` processes can't silently
+//! overwrite each other's update.
 //!
 //! ## Why tickets never cross the CLI surface
 //!
-//! The CLI never accepts a raw ticket as an argument or via stdin — that path
-//! is the one way long-lived bearer secrets leak (shell history, scrollback,
-//! copy/paste into chat). New hosts land in this file **only** via
-//! `zuko claim <code>` (the OTP-style pairing in [`crate::handoff`]); from then
-//! on, `zuko connect <name>` / bare `zuko <name>` look the ticket up here.
+//! Client connection commands never accept a raw ticket as an argument or via
+//! stdin — that path is an easy way sensitive connection information leaks
+//! (shell history, scrollback, copy/paste into chat). New hosts land in this
+//! file **only** via `zuko claim <code>` (the OTP-style pairing in
+//! [`crate::handoff`]); from then on, `zuko connect <name>` / bare
+//! `zuko <name>` look the ticket up here.
 
-use anyhow::{Result, bail};
+use anyhow::{Context, Result, bail};
 use std::fs;
+use std::path::Path;
 
 use crate::config_dir;
 use crate::secret::write_secret_0600;
@@ -114,8 +116,8 @@ pub fn touch(name: &str) -> Result<()> {
     Ok(())
 }
 
-/// Print saved hosts' **names only** to stdout (`zuko ls`). Tickets are
-/// long-lived bearer secrets, so we deliberately don't echo them — picking a
+/// Print saved hosts' **names only** to stdout (`zuko ls`). Tickets contain
+/// sensitive dial information, so we deliberately don't echo them — picking a
 /// name to reconnect is the only thing `ls` is for.
 pub fn list() {
     let hosts = saved_names();
@@ -206,6 +208,15 @@ pub fn authorized_client_names() -> Vec<String> {
         .collect()
 }
 
+/// Strict state-file counts for `zuko doctor`. Normal interactive lookups stay
+/// tolerant of absent files, but diagnostics must surface unreadable or
+/// malformed state instead of reporting a misleading empty/healthy store.
+pub fn diagnostic_counts() -> Result<(usize, usize)> {
+    let hosts = load_entries_checked(&hosts_path())?;
+    let clients = load_entries_checked(&authorized_clients_path())?;
+    Ok((hosts.len(), clients.len()))
+}
+
 fn remove_authorized_client(name: &str) -> Result<bool> {
     let _guard = StoreLock::acquire(authorized_clients_path())?;
     let before = load_entries(authorized_clients_path());
@@ -273,6 +284,35 @@ fn load_entries(path: std::path::PathBuf) -> Vec<(String, String)> {
             Some((name, ticket))
         })
         .collect()
+}
+
+fn load_entries_checked(path: &Path) -> Result<Vec<(String, String)>> {
+    let text = match fs::read_to_string(path) {
+        Ok(text) => text,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(error) => return Err(error).with_context(|| format!("read {}", path.display())),
+    };
+    let mut entries = Vec::new();
+    for (index, raw) in text.lines().enumerate() {
+        let line = raw.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        let mut fields = line.split_whitespace();
+        let name = fields.next();
+        let value = fields.next();
+        if name.is_none() || value.is_none() || fields.next().is_some() {
+            bail!(
+                "{}:{} is malformed; expected `name<TAB>value`",
+                path.display(),
+                index + 1
+            );
+        }
+        let name = name.expect("checked above");
+        validate_name(name).with_context(|| format!("{}:{}", path.display(), index + 1))?;
+        entries.push((name.to_string(), value.expect("checked above").to_string()));
+    }
+    Ok(entries)
 }
 
 /// Write entries back through the shared atomic `0600` writer. The temp +
@@ -543,6 +583,17 @@ mod tests {
         drop(f);
         assert_eq!(lookup("home").as_deref(), Some("endpointaAAAA"));
         assert_eq!(lookup("server").as_deref(), Some("endpointaBBBB"));
+    }
+
+    #[test]
+    fn diagnostic_counts_reject_malformed_state() {
+        let _g = lock();
+        let _dir = isolated();
+        let path = hosts_path();
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, "missing-value\n").unwrap();
+        let error = diagnostic_counts().unwrap_err();
+        assert!(format!("{error:#}").contains("is malformed"));
     }
 
     // The hosts file is a dialing-secret (one ticket per line = one shell each),

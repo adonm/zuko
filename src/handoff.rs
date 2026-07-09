@@ -5,7 +5,7 @@
 //! device runs `zuko claim <code>` to fetch the real ticket over an
 //! end-to-end encrypted Iroh connection — then saves it and connects, all in
 //! one command. There is no `zuko add <name> <ticket>` any more, because that
-//! path is exactly how long-lived bearer secrets leak (shell history,
+//! path is exactly how sensitive connection information leaks (shell history,
 //! scrollback, copy/paste into chat).
 //!
 //! ## How it stays safe
@@ -25,7 +25,7 @@
 //! Whoever has the code can claim — that's the point. The code has ~28 bits of
 //! entropy, memory-hardened through Argon2id (see [`crate::code`]), which is
 //! far beyond reach for online guessing during the minutes-long window before
-//! `zuko share` exits after the first claim.
+//! `zuko share` exits after its configured claim count (one by default).
 //!
 //! ## Wire (ALPN `zuko/handoff/1`, one uni stream host -> client)
 //!
@@ -370,9 +370,9 @@ pub async fn claim(
     endpoint.close().await;
 
     eprintln!("claimed host: {label}");
-    // Always save — the raw ticket is a long-lived bearer secret and must not
-    // be printed to stdout (it would land in scrollback / shell history /
-    // piped files).
+    // Always save — the raw ticket contains sensitive dial information and
+    // must not be printed to stdout (it would land in scrollback / shell
+    // history / piped files).
     let save_name = name.unwrap_or(label);
     crate::store::add(&save_name, ticket)?;
     eprintln!("saved as {save_name}  (run `zuko {save_name}` to reconnect)");

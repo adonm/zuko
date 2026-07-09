@@ -1,8 +1,0 @@
-<!-- mermaid: load the runtime from the jsdelivr CDN (we don't vendor the big
-     library), then run our own small init in theme/mermaid.js (emitted by
-     `additional-js` in book.toml) that swaps mdBook's `<code
-     class="language-mermaid">` blocks into the `<pre class="mermaid">` shape
-     mermaid expects and renders them. The `additional-js` script tag is
-     auto-injected by mdBook after this head partial, so we only load the CDN
-     runtime here. -->
-<script src="https://cdn.jsdelivr.net/npm/mermaid@10.9.3/dist/mermaid.min.js"></script>

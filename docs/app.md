@@ -1,6 +1,10 @@
-# `zuko app`
+# `zuko app` (Labs)
 
 Linux-only GUI app streaming. Run inside an existing `zuko <host>` shell.
+
+This is an opt-in experiment, not part of the supported remote-shell core or a
+promise to become a full remote desktop. Expect terminal-compatibility,
+performance, and runtime-dependency gaps. See the [roadmap](roadmap.md).
 
 Implementation: host spawns headless cage/wlroots, captures frames, writes Kitty
 graphics to stdout, and injects keyboard/mouse input back into cage.

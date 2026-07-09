@@ -9,7 +9,7 @@
 //!
 //! The CLI mirrors the iOS client's reconnect policy: on a transient drop
 //! (network error, host unreachable, relay churn) it redials with bounded
-//! exponential backoff and resends the host-issued session token so the host
+//! exponential backoff and resends its authorized session token so the host
 //! reattaches the same PTY while its detached lease is alive. Clean shell exit
 //! (host sends EOF) is **not** retried — the client exits normally. The 3×
 //! Ctrl-C force-quit hatch remains the escape from a wedged-but-not-dead link.
@@ -28,8 +28,7 @@
 //! same PTY** for a given client+host — across auto-resumes *and* across fresh
 //! `zuko <host>` invocations. Two terminals sharing the identity take over one
 //! PTY (last attach wins; the previous one sees EOF and exits); use `tmux`/
-//! `zellij` for independent shells. Legacy clients (no persistent key, iOS for
-//! now) keep getting fresh PTYs per connect — unchanged behaviour.
+//! `zellij` for independent shells.
 //!
 //! ## Force-quit
 //!
@@ -67,8 +66,8 @@ use crate::wire::{
 const FORCE_QUIT_PRESSES: u32 = 3;
 const FORCE_QUIT_WINDOW: std::time::Duration = std::time::Duration::from_secs(1);
 
-/// Connect to a host once and bridge the local terminal to its shell until the
-/// remote shell exits or the link drops.
+/// Connect to a host and bridge the local terminal to its shell, reconnecting
+/// transient link drops until the remote shell exits or the host rejects it.
 pub async fn connect(ticket_str: &str) -> Result<()> {
     // Foreground iroh + zuko logs on stderr. Defaults mirror `zuko host`
     // (`zuko=info,iroh=warn`): warn keeps a healthy session quiet so raw-mode
@@ -90,12 +89,11 @@ pub async fn connect(ticket_str: &str) -> Result<()> {
         .with_context(|| "that doesn't look like a ticket")?;
     let addr: EndpointAddr = ticket.into();
 
-    // Persistent client identity (`~/.config/zuko/client_key`). A stable key
-    // does two things: it gives the client a stable Iroh node id, and — more
-    // importantly — it lets us derive a deterministic reattach token for this
-    // (client, host) pair. Sending that token on the first ATTACH means the
-    // host reuses the same PTY across reconnects *and* across fresh `zuko
-    // <host>` invocations, instead of minting a new shell each time.
+    // Persistent client identity (`~/.config/zuko/client_key`) used to derive a
+    // deterministic authorization/reattach token for this (client, host) pair.
+    // Sending that token on the first ATTACH means the host reuses the same PTY
+    // across reconnects *and* across fresh `zuko <host>` invocations, instead
+    // of minting a new shell each time.
     let client_key = crate::secret::load_or_create_key(&client_key_path())
         .context("load client identity key")?;
     let initial_token = derive_session_token(&client_key, &addr);
@@ -234,9 +232,9 @@ pub async fn connect(ticket_str: &str) -> Result<()> {
     // Auto-resume loop: keep redialing transient drops until the remote shell
     // exits cleanly. The first attempt sends the client's stable derived token
     // (so the host creates-or-reattaches the same PTY for this client); the
-    // host replies ATTACHED with the real token, which we resend on every
-    // reconnect so the host reattaches the same PTY while its detached lease
-    // is alive. Connect/open/ATTACH/write errors are treated as transient
+    // host confirms it with ATTACHED, and we resend it on every reconnect so
+    // the host reattaches the same PTY while its detached lease is alive.
+    // Connect/open/ATTACH/write errors are treated as transient
     // (Dropped) and retried with backoff; only a clean recv EOF (shell exit)
     // ends the session. This mirrors the iOS client's reconnect policy.
     let mut token: SessionToken = initial_token;
@@ -389,9 +387,8 @@ async fn run_one_connection(
         None
     };
 
-    // Initial ATTACH — the current token (zero on first attach, the host's
-    // issued token on reconnect). Sent on `send` before the pump starts so
-    // it's guaranteed first on the wire.
+    // Initial ATTACH — the client's non-zero, host-authorized token. Sent on
+    // `send` before the pump starts so it's guaranteed first on the wire.
     let (c, r) = unpack_size(ctx.size.load(Ordering::Relaxed));
     let (pw, ph) = terminal_pixels();
     if send
@@ -537,9 +534,9 @@ async fn process_buffered_frames(
                 // the Ctrl-C burst (a responsive remote isn't "wedged").
                 stdout_seq.fetch_add(1, Ordering::Relaxed);
             }
-            // Host's reply to ATTACH: the token to resend on reconnect. On a
-            // fresh attach this is a new token; on a reattach within the lease
-            // it's the same one; if the lease expired, a new token (fresh PTY).
+            // Host's reply to ATTACH confirms the token to resend on reconnect.
+            // The token stays stable even if an expired lease requires a fresh
+            // PTY.
             TYPE_ATTACHED => {
                 if let Some(t) = parse_attached(&f.payload) {
                     *token = t;
@@ -830,8 +827,8 @@ mod tests {
     async fn attached_frame_updates_reattach_token() {
         // The host replies ATTACHED with the active token. The reconnect loop
         // must capture it so the next dial reattaches the same PTY.
-        let issued = [7u8; SESSION_TOKEN_LEN];
-        let mut acc = crate::wire::attached_frame(issued);
+        let confirmed = [7u8; SESSION_TOKEN_LEN];
+        let mut acc = crate::wire::attached_frame(confirmed);
         let mut token = [0u8; SESSION_TOKEN_LEN];
         let stdout_seq = AtomicU64::new(0);
         // ATTACHED-only buffer: no DATA, so nothing is written to stdout, and
@@ -840,7 +837,7 @@ mod tests {
             .await
             .unwrap();
         assert!(rejected.is_none(), "ATTACHED must not signal rejection");
-        assert_eq!(token, issued, "client must adopt the host-issued token");
+        assert_eq!(token, confirmed, "client must retain the confirmed token");
         // Buffer fully drained.
         assert!(acc.is_empty());
     }

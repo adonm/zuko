@@ -7,8 +7,8 @@
 //!
 //! # The FFI surface
 //!
-//! The crate also builds as a `staticlib` with [uniffi] bindings that mobile
-//! clients (the iOS app, future Android) consume via an XCFramework. This lets
+//! The crate also builds as a `staticlib` with [uniffi] bindings that the iOS
+//! app consumes via an XCFramework. This lets
 //! the mobile app reuse the **exact same** key-derivation code
 //! (`code::derive_key`) as the CLI — no second Argon2id implementation to
 //! drift. Built with the same `uniffi` version (0.31) as `iroh-ffi`, so both
@@ -69,8 +69,8 @@ pub fn config_dir() -> PathBuf {
 #[derive(clap::Args, Clone)]
 pub struct ShareArgs {
     /// Use this ticket instead of reading `~/.config/zuko/current_ticket`
-    /// (which `zuko host` maintains). Handy for handing off a ticket captured
-    /// elsewhere without the daemon running.
+    /// (which `zuko host` maintains). Advanced escape hatch: command-line
+    /// arguments may be visible in process listings and shell history.
     #[arg(long)]
     pub ticket: Option<String>,
 

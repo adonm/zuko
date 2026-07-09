@@ -10,6 +10,7 @@ zuko host              # foreground host
 zuko install           # install/start user service
 zuko uninstall         # remove service; keep user state
 zuko upgrade           # mise-managed binary upgrade
+zuko doctor            # service, ticket, state, network diagnostics
 
 zuko share             # authorise a client with a one-time code
 zuko <code>            # claim, save, connect
@@ -55,7 +56,7 @@ sudo loginctl enable-linger "$USER"   # servers that must run without login
 macOS:
 
 ```sh
-tail -f ~/.config/zuko/zuko-host.out.log
+tail -f ~/.config/zuko/zuko-host.err.log
 ```
 
 Install flags:
@@ -121,13 +122,14 @@ Force-exit a stuck CLI: Ctrl-C three times within ~1s with no remote output.
 `share` derives a throwaway Iroh key from the code, serves
 `<label>\n<ticket>` over ALPN `zuko/handoff/1`, then receives the client's
 `AUTHORIZE` frame. `claim` retries the handoff dial for `--timeout` seconds
-(default 60). `share` reads `current_ticket`; stale/missing files fail.
+(default 60). `share` reads `current_ticket`; interactively it offers to start
+the service when that file is unavailable, while non-interactive use fails.
 
 `zuko share` flags:
 
 | Flag | Default | Notes |
 |------|---------|-------|
-| `--ticket` | `current_ticket` | override ticket source |
+| `--ticket` | `current_ticket` | advanced override; argv may expose the ticket, so prefer the file |
 | `--label` | hostname | default save name on client |
 | `--count` | `1` | accepted claims before exit |
 | `--timeout` | `300` | seconds; `0` waits forever |
@@ -151,7 +153,45 @@ RUST_LOG=iroh=debug zuko home
 ```
 
 Host logs are stderr in foreground, systemd journal on Linux, and
-`~/.config/zuko/zuko-host.out.log` on macOS.
+`~/.config/zuko/zuko-host.err.log` on macOS.
+
+## Troubleshooting
+
+Start with the read-only diagnostic report:
+
+```sh
+zuko doctor
+```
+
+It checks whether the platform user service is installed and active, validates
+the host key and fresh ticket without printing either, summarizes saved hosts
+and authorized clients, and performs a 10-second Iroh relay-registration probe.
+Warnings include the next command to run; a client-only installation may
+legitimately warn that no local host is installed. Pass `--key <path>` if the
+host service was installed with a non-default key path.
+
+### `zuko share` reports a missing or stale ticket
+
+The host service must be running and refreshing `current_ticket`. Check its log,
+then restart it with the platform service manager or run `zuko host` in the
+foreground. Do not copy a raw ticket around as a workaround.
+
+### The host rejects authorization
+
+The client's token is no longer in `authorized_clients`, usually after
+`zuko rm` or `zuko reset`. Run `zuko share` on the host and claim the new code
+from that client. Repeated dialing cannot repair an authorization failure.
+
+### A reconnect opens a fresh shell
+
+The detached lease lasts 5 minutes and exists only in the host process. Expired
+leases, host restarts, and upgrades create a fresh PTY. Use a terminal
+multiplexer for durable work.
+
+### A connected full-screen app looks stale
+
+Resize the local terminal to trigger a repaint. On iOS, use the Refresh action.
+If the link is wedged, use the CLI force-exit sequence and reconnect.
 
 ## Build/test
 

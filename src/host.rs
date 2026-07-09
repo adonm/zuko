@@ -14,7 +14,7 @@
 //! discarded. There is no replay buffer or cross-restart persistence. Users who
 //! want robust resumability still run `tmux`/`zellij`/`screen` inside zuko.
 
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, bail};
 use iroh::{Endpoint, SecretKey, endpoint::presets};
 use iroh_tickets::endpoint::EndpointTicket;
 use portable_pty::{CommandBuilder, PtySize, native_pty_system};
@@ -32,9 +32,9 @@ use crate::secret;
 use crate::store;
 use crate::ticket_file::write_current_ticket;
 use crate::wire::{
-    self, ALPN_V2, ERR_AUTHORIZATION, SESSION_TOKEN_LEN, SessionToken, TYPE_ATTACH, TYPE_DATA,
-    TYPE_PING, TYPE_RESIZE, decode_nonce, empty_session_token, parse_attach, supported_alpns,
-    try_parse_frame,
+    self, ALPN_V2, ERR_AUTHORIZATION, ERR_PROTOCOL, SESSION_TOKEN_LEN, SessionToken, TYPE_ATTACH,
+    TYPE_DATA, TYPE_PING, TYPE_RESIZE, decode_nonce, empty_session_token, parse_attach,
+    supported_alpns, try_parse_frame,
 };
 
 /// Per-direction capacity of the bounded channels that connect the network
@@ -207,14 +207,12 @@ impl Session {
     }
 }
 
-const DEFAULT_COLS: u16 = 80;
-const DEFAULT_ROWS: u16 = 24;
-
-/// Run the host: bind, print a ticket, accept connections forever.
+/// Run the host: bind, publish dial information for `zuko share`, and accept
+/// connections forever.
 pub async fn run(args: HostArgs) -> Result<()> {
     // The host logs to stderr only. stdout stays empty so a future caller
-    // that captures it never gets a long-lived bearer secret mixed in with
-    // status output — the ticket is read out of band (via the
+    // that captures it never gets sensitive dial information mixed in with
+    // status output. The ticket is read out of band (via the
     // `~/.config/zuko/current_ticket` file) by `zuko share`.
     tracing_subscriber::fmt()
         .with_writer(std::io::stderr)
@@ -245,12 +243,12 @@ pub async fn run(args: HostArgs) -> Result<()> {
         .context("bind endpoint")?;
     endpoint.online().await;
 
-    // Stable node id (derived from the persisted key) + a copy-pasteable
-    // ticket. The ticket is a long-lived bearer secret (anyone holding it gets
-    // a shell), so it is **never** printed — not to stdout, not to stderr.
-    // The host operator pairs other devices with `zuko share` (an OTP-style
-    // code that expires in minutes); there is no other CLI path that exposes
-    // the raw ticket, by design.
+    // Stable node id (derived from the persisted key) + sensitive dial
+    // information. A ticket alone is not enough for a shell — ATTACH also
+    // requires an authorized client token — but it exposes host reachability,
+    // so it is **never** printed. The operator pairs devices with `zuko share`
+    // (an OTP-style code that expires in minutes); there is no other CLI path
+    // that exposes the raw ticket, by design.
     let node_id = endpoint.id();
     let ticket_str = EndpointTicket::new(endpoint.addr()).to_string();
 
@@ -286,9 +284,9 @@ pub async fn run(args: HostArgs) -> Result<()> {
         }
     });
 
-    // Accept connections forever. Each first connection creates a PTY-backed
-    // session token; short client drops can reattach to that token within the
-    // detached lease window.
+    // Accept connections forever. Each authorized client token keys a
+    // PTY-backed session; short client drops can reattach within the detached
+    // lease window.
     let sessions: SessionRegistry = Arc::new(tokio::sync::Mutex::new(HashMap::new()));
     loop {
         if let Some(incoming) = endpoint.accept().await {
@@ -309,8 +307,9 @@ pub async fn run(args: HostArgs) -> Result<()> {
     Ok(())
 }
 
-/// Serve one connection: read the first frame for initial size, spawn a PTY,
-/// pump bytes both ways until either side ends, then kill the PTY.
+/// Serve one connection: require ATTACH, create or reattach its token's PTY,
+/// and pump bytes both ways. Shell exit ends the session; a link drop detaches
+/// it for the short lease window.
 async fn serve(
     incoming: iroh::endpoint::Incoming,
     shell: String,
@@ -340,7 +339,13 @@ async fn serve(
     )
     .await
     .context("timed out waiting for initial frame")??;
-    let request = initial_request(first);
+    let request = match initial_request(first) {
+        Ok(request) => request,
+        Err(error) => {
+            reject_with_error(&mut send, ERR_PROTOCOL, &error.to_string()).await;
+            return Err(error);
+        }
+    };
     if let Err(e) = store::ensure_client_authorized(&request.requested_token) {
         // Tell the client *why* before tearing down the connection, so it can
         // fail fast instead of treating this as a transient drop and redialing
@@ -438,11 +443,6 @@ async fn serve(
     // for inbound PINGs are routed back via `pong_tx`.
     let session_for_input = session.clone();
     let mut net_to_pty: tokio::task::JoinHandle<()> = tokio::spawn(async move {
-        if let Some(frame) = request.pending_first
-            && !handle_client_frame(&frame, &session_for_input, attach_id, &pong_tx).await
-        {
-            return;
-        }
         loop {
             // Parse any bytes already in `acc` first (from the handshake
             // read), then top up from the stream.
@@ -543,8 +543,18 @@ async fn write_out_item(send: &mut iroh::endpoint::SendStream, item: OutItem) ->
 /// redialing forever. Errors here are ignored — the bail in the caller is the
 /// source of truth for the host-side log.
 async fn reject_with_error(send: &mut iroh::endpoint::SendStream, code: u8, message: &str) {
-    let _ = send.write_all(&wire::error_frame(code, message)).await;
-    let _ = send.finish();
+    if send
+        .write_all(&wire::error_frame(code, message))
+        .await
+        .is_ok()
+        && send.finish().is_ok()
+    {
+        // Keep the connection alive briefly so QUIC can deliver the fatal
+        // frame before `serve` drops its last connection handle. Without this,
+        // a revoked client can see only an abrupt close, classify it as a link
+        // failure, and reconnect instead of surfacing the authorization error.
+        let _ = tokio::time::timeout(std::time::Duration::from_secs(2), send.stopped()).await;
+    }
 }
 
 /// Handle one frame from the client. Returns `false` if the session's PTY
@@ -604,38 +614,21 @@ struct InitialRequest {
     rows: u16,
     pixel_width: u16,
     pixel_height: u16,
-    pending_first: Option<wire::ParsedFrame>,
 }
 
-fn initial_request(first: wire::ParsedFrame) -> InitialRequest {
-    match first.typ {
-        TYPE_ATTACH => {
-            if let Some((token, cols, rows, pw, ph)) = parse_attach(&first.payload) {
-                InitialRequest {
-                    requested_token: token,
-                    cols: cols.max(1),
-                    rows: rows.max(1),
-                    pixel_width: pw,
-                    pixel_height: ph,
-                    pending_first: None,
-                }
-            } else {
-                default_initial_request(Some(first))
-            }
-        }
-        _ => default_initial_request(Some(first)),
+fn initial_request(first: wire::ParsedFrame) -> Result<InitialRequest> {
+    if first.typ != TYPE_ATTACH {
+        bail!("first frame must be ATTACH");
     }
-}
-
-fn default_initial_request(pending_first: Option<wire::ParsedFrame>) -> InitialRequest {
-    InitialRequest {
-        requested_token: [0u8; SESSION_TOKEN_LEN],
-        cols: DEFAULT_COLS,
-        rows: DEFAULT_ROWS,
-        pixel_width: 0,
-        pixel_height: 0,
-        pending_first,
-    }
+    let (token, cols, rows, pixel_width, pixel_height) =
+        parse_attach(&first.payload).context("malformed ATTACH payload")?;
+    Ok(InitialRequest {
+        requested_token: token,
+        cols: cols.max(1),
+        rows: rows.max(1),
+        pixel_width,
+        pixel_height,
+    })
 }
 
 async fn get_or_create_session(
@@ -918,27 +911,32 @@ mod tests {
             typ: TYPE_RESIZE,
             payload: vec![0, 0, 0, 0, 0, 0, 0, 0],
         };
-        let req = initial_request(frame);
-        assert_eq!((req.cols, req.rows), (DEFAULT_COLS, DEFAULT_ROWS));
-        assert_eq!((req.pixel_width, req.pixel_height), (0, 0));
-        assert!(empty_session_token(&req.requested_token));
-        assert!(req.pending_first.is_some());
+        let error = initial_request(frame)
+            .err()
+            .expect("RESIZE must be rejected");
+        assert!(error.to_string().contains("first frame must be ATTACH"));
     }
 
     #[test]
-    fn non_resize_first_frame_is_preserved() {
+    fn data_first_frame_is_rejected() {
         let frame = wire::ParsedFrame {
             typ: TYPE_DATA,
             payload: b"x".to_vec(),
         };
-        let req = initial_request(frame);
-        assert_eq!((req.cols, req.rows), (DEFAULT_COLS, DEFAULT_ROWS));
-        assert!(empty_session_token(&req.requested_token));
-        let pending = req
-            .pending_first
-            .expect("DATA first frame must be replayed");
-        assert_eq!(pending.typ, TYPE_DATA);
-        assert_eq!(pending.payload, b"x");
+        let error = initial_request(frame).err().expect("DATA must be rejected");
+        assert!(error.to_string().contains("first frame must be ATTACH"));
+    }
+
+    #[test]
+    fn malformed_attach_is_rejected() {
+        let frame = wire::ParsedFrame {
+            typ: TYPE_ATTACH,
+            payload: vec![1, 2, 3],
+        };
+        let error = initial_request(frame)
+            .err()
+            .expect("malformed ATTACH must be rejected");
+        assert!(error.to_string().contains("malformed ATTACH payload"));
     }
 
     #[test]
@@ -946,11 +944,10 @@ mod tests {
         let token = [9u8; SESSION_TOKEN_LEN];
         let mut buf = wire::attach_frame(token, 120, 33, 1024, 600);
         let frame = wire::try_parse_frame(&mut buf).unwrap();
-        let req = initial_request(frame);
+        let req = initial_request(frame).unwrap();
         assert_eq!(req.requested_token, token);
         assert_eq!((req.cols, req.rows), (120, 33));
         assert_eq!((req.pixel_width, req.pixel_height), (1024, 600));
-        assert!(req.pending_first.is_none());
     }
 
     // The reattach redraw nudge must always differ from the real width (so the

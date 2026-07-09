@@ -1,9 +1,14 @@
-# Targets
+# Labs targets
+
+Labs code is useful for validating demand and protocol portability, but is not
+part of the Core support promise. Promotion criteria are tracked in the
+[roadmap](roadmap.md).
 
 ## Browser client
 
-Goal: a static web client published with the docs at `/web/` that can claim and
-connect to zuko hosts from the browser.
+Goal: test whether a zero-install browser can be a useful zuko client without
+weakening the Core host/CLI design. The static app at `/web/` can claim and
+connect to a host today.
 
 Open it from the published docs: [zuko web](https://adonm.github.io/zuko/web/).
 
@@ -20,15 +25,15 @@ Chosen stack:
 - **Build:** Deno runs TypeScript/Vite tasks and consumes npm packages through
   `package.json` + `deno.lock`.
 - **Storage:** IndexedDB under the Pages origin. It stores the browser client key
-  and claimed host tickets locally.
+  and claimed host connection information locally.
 
 Security boundaries:
 
-- Host tickets are bearer secrets. The browser client never sends them to a zuko
-  server other than the claimed host, but any script that runs in the same origin
-  can read the IndexedDB state.
+- Shell access requires the stored host connection information and the browser's
+  authorized client key. Any script running on the same origin can read both
+  from IndexedDB and impersonate that browser client.
 - Keep the web app dependency-free at runtime except bundled assets, use a strict
-  CSP, and avoid third-party scripts on the `/web/` page.
+  CSP, and do not load third-party scripts anywhere on the shared origin.
 - Browser Iroh traffic is relay-only. Relays can see metadata and volume, not
   decrypted zuko frames.
 
@@ -50,3 +55,6 @@ Known gaps:
   renderer is verified against zuko's graphics stream.
 - Pages security headers are limited compared with a dedicated app origin; move
   to a hardened subdomain if this becomes a daily-use client.
+
+Promotion requires reconnect/backoff, browser-level tests, and isolation on a
+dedicated hardened origin. Until then, use the Core CLI for routine access.

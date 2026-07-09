@@ -47,8 +47,11 @@
 
 use anyhow::{Context, Result, bail};
 use clap::Args;
+use iroh::{Endpoint, endpoint::presets};
+use iroh_tickets::endpoint::EndpointTicket;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::time::Duration;
 
 use crate::config_dir;
 
@@ -160,7 +163,7 @@ pub fn install(args: &InstallArgs) -> Result<()> {
             eprintln!("pair a device with:  zuko share   (after starting)");
         }
         Service::Launchd if !args.no_start => {
-            eprintln!("  logs:     tail -f ~/.config/zuko/zuko-host.out.log");
+            eprintln!("  logs:     tail -f ~/.config/zuko/zuko-host.err.log");
             eprintln!();
             eprintln!("pair a device with:  zuko share");
         }
@@ -188,6 +191,159 @@ pub fn uninstall() -> Result<()> {
     eprintln!("zuko host service removed.");
     eprintln!("  (key + saved hosts kept at ~/.config/zuko — delete by hand to forget this host)");
     Ok(())
+}
+
+// ─────────────────────────────────── doctor ─────────────────────────────────
+
+const DOCTOR_NETWORK_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// Print a read-only operator health report. Missing host state is a warning,
+/// not a command failure, because running zuko as a client without installing a
+/// local host is valid. Every warning includes the next useful command.
+pub async fn doctor(key: Option<&Path>) -> Result<()> {
+    println!("zuko doctor");
+    println!("  version:  {}", env!("CARGO_PKG_VERSION"));
+    println!(
+        "  platform: {}/{}",
+        std::env::consts::OS,
+        std::env::consts::ARCH
+    );
+    println!("  config:   {}", config_dir().join("zuko").display());
+    println!();
+
+    let mut warnings = 0usize;
+    print_doctor_check("host service", doctor_service(), &mut warnings);
+    print_doctor_check(
+        "host key",
+        doctor_host_key(key.unwrap_or(&default_key_path())),
+        &mut warnings,
+    );
+    print_doctor_check("live ticket", doctor_ticket(), &mut warnings);
+
+    print_doctor_check(
+        "local state",
+        crate::store::diagnostic_counts().map(|(saved_hosts, authorized_clients)| {
+            format!("{saved_hosts} saved host(s), {authorized_clients} authorised client(s)")
+        }),
+        &mut warnings,
+    );
+
+    print_doctor_check("Iroh network", doctor_network().await, &mut warnings);
+
+    println!();
+    if warnings == 0 {
+        println!("ready: host service, ticket, and Iroh relay connectivity look healthy");
+    } else {
+        println!("completed with {warnings} warning(s); follow the actions above as needed");
+    }
+    Ok(())
+}
+
+fn print_doctor_check(label: &str, check: Result<String>, warnings: &mut usize) {
+    match check {
+        Ok(detail) => println!("  ok   {label}: {detail}"),
+        Err(error) => {
+            *warnings += 1;
+            println!("  warn {label}: {error:#}");
+        }
+    }
+}
+
+fn doctor_service() -> Result<String> {
+    let service = detect_service()?;
+    let installed = match service {
+        Service::Systemd => systemd_unit_path().exists(),
+        Service::Launchd => launchd_plist_path().exists(),
+    };
+    if !installed {
+        bail!("not installed; run `zuko install`, or use `zuko host` in the foreground");
+    }
+
+    let active = match service {
+        Service::Systemd => Command::new("systemctl")
+            .args(["--user", "is-active", "--quiet", SYSTEMD_UNIT_NAME])
+            .status()
+            .context("run systemctl --user is-active")?
+            .success(),
+        Service::Launchd => launchd_service_running()?,
+    };
+    if !active {
+        let action = match service {
+            Service::Systemd => {
+                "run `systemctl --user restart zuko-host` and check `journalctl --user -u zuko-host`"
+            }
+            Service::Launchd => {
+                "run `launchctl load ~/Library/LaunchAgents/dev.adonm.zuko.host.plist` and check `~/.config/zuko/zuko-host.err.log`"
+            }
+        };
+        bail!("{service} user service is installed but inactive; {action}");
+    }
+    Ok(format!("{service} user service is installed and active"))
+}
+
+fn doctor_host_key(path: &Path) -> Result<String> {
+    let metadata = std::fs::metadata(path).with_context(|| {
+        format!(
+            "missing {}; start the host with `zuko install` or `zuko host`",
+            path.display()
+        )
+    })?;
+    if metadata.len() != 32 {
+        bail!(
+            "{} has unexpected size {} (expected 32 bytes); run `zuko reset` only if you intend to re-pair every client",
+            path.display(),
+            metadata.len()
+        );
+    }
+    Ok(format!("present at {}", path.display()))
+}
+
+fn doctor_ticket() -> Result<String> {
+    let ticket = crate::ticket_file::read_current_ticket()?;
+    let _: EndpointTicket = ticket
+        .parse()
+        .context("current_ticket is fresh but malformed; restart the host and check its logs")?;
+    Ok(format!(
+        "fresh and parseable at {}",
+        crate::ticket_file::current_ticket_path().display()
+    ))
+}
+
+async fn doctor_network() -> Result<String> {
+    let endpoint = Endpoint::builder(presets::N0)
+        .bind()
+        .await
+        .context("bind an ephemeral Iroh endpoint")?;
+    let online = tokio::time::timeout(DOCTOR_NETWORK_TIMEOUT, endpoint.online()).await;
+    endpoint.close().await;
+    online.with_context(|| {
+        format!(
+            "did not register with an Iroh relay within {DOCTOR_NETWORK_TIMEOUT:?}; check DNS and outbound HTTPS/QUIC"
+        )
+    })?;
+    Ok("relay registration succeeded".to_string())
+}
+
+#[cfg(target_os = "macos")]
+fn launchd_service_running() -> Result<bool> {
+    // `launchctl list <label>` succeeds for loaded jobs even when no process is
+    // running. `print gui/<uid>/<label>` includes the current state, so require
+    // `state = running` before doctor calls the host active.
+    let target = format!("gui/{}/{LAUNCHD_LABEL}", unsafe { libc::getuid() });
+    let output = Command::new("launchctl")
+        .args(["print", &target])
+        .output()
+        .context("run launchctl print")?;
+    if !output.status.success() {
+        return Ok(false);
+    }
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    Ok(stdout.lines().any(|line| line.trim() == "state = running"))
+}
+
+#[cfg(not(target_os = "macos"))]
+const fn launchd_service_running() -> Result<bool> {
+    Ok(false)
 }
 
 // ─────────────────────────────────── upgrade ────────────────────────────────
@@ -235,12 +391,11 @@ pub struct UpgradeArgs {
 /// ## Interruption
 ///
 /// Restarting the host kills its in-memory PTYs — there is no live handoff yet.
-/// Clients auto-reconnect (the iOS app redials; the CLI is restarted by the
-/// user), but land in **fresh** shells, not the ones they had. For work that
+/// CLI and iOS clients auto-reconnect, but land in **fresh** shells, not the
+/// ones they had. For work that
 /// must survive a host upgrade, run `tmux`/`zellij`/`screen` inside the zuko
-/// session. A zero-downtime upgrade (live PTY handoff to a new host process) is
-/// a post-1.0 goal, contingent on the wire protocol stabilising — at which
-/// point this same command gets you there without the drop.
+/// session. Live PTY handoff to a replacement host process is deliberately
+/// outside the current roadmap.
 pub fn upgrade(args: &UpgradeArgs) -> Result<()> {
     // `zuko upgrade` is a mise-specific convenience. We refuse to run it against
     // a non-mise install (cargo, hand-built, distro package) so we never
@@ -278,7 +433,7 @@ pub fn upgrade(args: &UpgradeArgs) -> Result<()> {
             Some(s) => {
                 eprintln!("    host service:     {s} unit installed -> would restart");
                 eprintln!(
-                    "                      (restart drops active sessions; clients auto-reconnect)"
+                    "                      (restart drops active sessions; CLI/iOS clients reconnect)"
                 );
             }
             None => eprintln!("    host service:     not installed (binary-only upgrade)"),
@@ -325,13 +480,13 @@ pub fn upgrade(args: &UpgradeArgs) -> Result<()> {
         }
         Some(Service::Systemd) => {
             eprintln!("==> restarting systemd user service `{SYSTEMD_UNIT_NAME}`");
-            eprintln!("    (active sessions drop; clients auto-reconnect to fresh shells)");
+            eprintln!("    (active sessions drop; CLI/iOS clients reconnect to fresh shells)");
             run("systemctl", &["--user", "restart", SYSTEMD_UNIT_NAME])?;
         }
         Some(Service::Launchd) => {
             let plist = launchd_plist_path();
             eprintln!("==> restarting launchd agent `{LAUNCHD_LABEL}`");
-            eprintln!("    (active sessions drop; clients auto-reconnect to fresh shells)");
+            eprintln!("    (active sessions drop; CLI/iOS clients reconnect to fresh shells)");
             let _ = Command::new("launchctl")
                 .args(["unload", &plist.to_string_lossy()])
                 .status();

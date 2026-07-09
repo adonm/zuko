@@ -1,11 +1,12 @@
 # Summary
 
 - [Introduction](README.md)
+- [Direction and roadmap](roadmap.md)
 
 # Using zuko
 
 - [Host & CLI](host.md)
-- [`zuko app` (GUI streaming)](app.md)
+- [`zuko app` (Labs)](app.md)
 
 # For client authors
 

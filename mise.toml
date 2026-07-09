@@ -16,8 +16,6 @@ rust = { version = "latest", components = "clippy,rustfmt" }
 swiftlint = "latest"
 # mdBook for the docs site (published to GitHub Pages via docs.yml). Prebuilt
 # binary via mise's aqua backend — no compile. `mise run build-docs` builds.
-# Mermaid diagrams render client-side in theme/head.hbs (CDN + our own JS),
-# so no mdbook preprocessor dependency.
 mdbook = "latest"
 # Deno drives the static browser client build; Vite still bundles npm deps.
 deno = "latest"

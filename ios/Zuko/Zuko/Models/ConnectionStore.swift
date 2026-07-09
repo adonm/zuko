@@ -62,7 +62,7 @@ final class ConnectionStore {
 
         var errorDescription: String? {
             switch self {
-            case .empty: return "Paste the ticket your host printed."
+            case .empty: return "The host returned empty connection information. Pair again."
             case .invalid(let message): return message
             }
         }

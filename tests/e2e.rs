@@ -1,6 +1,7 @@
 //! End-to-end smoke tests for `zuko`, run against the real Iroh network.
 //!
-//! Two flows are exercised, mirroring the former `scripts/e2e_test.py`:
+//! Three flows are exercised, mirroring and extending the former
+//! `scripts/e2e_test.py`:
 //!
 //! 1. **host ↔ connect (by saved name)** — spawn `zuko host`, read its ticket
 //!    out of the on-disk `current_ticket` file (the daemon keeps the
@@ -16,6 +17,11 @@
 //!    a few seconds of `claim` returning — this catches the regression where
 //!    `share` hung after a claim because the client never closed the handoff
 //!    connection (see `src/handoff.rs::claim`).
+//!
+//! 3. **revocation ↔ rejection** — remove the seeded client authorization,
+//!    reconnect with the same saved host/client key, and confirm the host's
+//!    fatal authorization error exits promptly instead of entering the
+//!    transient reconnect loop.
 //!
 //! All zuko state (key, current_ticket, saved hosts) is isolated under a temp
 //! `XDG_CONFIG_HOME` so the test never touches the operator's real config.
@@ -69,7 +75,7 @@ const CLAIM_TIMEOUT: Duration = Duration::from_secs(90);
 const SHARE_EXIT_TIMEOUT: Duration = Duration::from_secs(20);
 
 #[test]
-#[ignore = "requires live Iroh network + `zuko` binary on PATH; runs manually, not in CI"]
+#[ignore = "requires live Iroh network + `zuko` binary on PATH; run manually or in the Ubuntu CI job"]
 fn e2e() -> Result<()> {
     let zuko = zuko_bin()?;
 
@@ -98,6 +104,9 @@ fn e2e() -> Result<()> {
     }
     if let Err(e) = test_host_connect(&zuko, xdg.path(), &ticket) {
         failures.push(("host/connect", e));
+    }
+    if let Err(e) = test_revoked_connect(&zuko, xdg.path()) {
+        failures.push(("revocation/rejection", e));
     }
 
     if failures.is_empty() {
@@ -330,6 +339,26 @@ fn test_share_claim(zuko: &str, xdg: &Path, expected_ticket: &str) -> Result<()>
         .with_context(|| format!("read {}", hosts_path.display()))?;
     eprintln!("---- saved hosts file ----\n{hosts}---------------------------");
 
+    let authorized_path = xdg.join("zuko/authorized_clients");
+    let authorized = fs::read_to_string(&authorized_path)
+        .with_context(|| format!("read {}", authorized_path.display()))?;
+    let registered = authorized.lines().any(|line| {
+        let mut parts = line.split_whitespace();
+        let Some(name) = parts.next() else {
+            return false;
+        };
+        let Some(token) = parts.next() else {
+            return false;
+        };
+        !name.starts_with('#')
+            && token.len() == SESSION_TOKEN_LEN * 2
+            && token.bytes().all(|byte| byte.is_ascii_hexdigit())
+    });
+    if !registered {
+        bail!("claim did not register a valid token in authorized_clients");
+    }
+    eprintln!("OK: claim registered the client token on the host");
+
     for line in hosts.lines() {
         let parts: Vec<&str> = line.split_whitespace().collect();
         if parts.len() == 2 && parts[0] == "e2e-claimed" {
@@ -386,7 +415,7 @@ fn test_host_connect(zuko: &str, xdg: &Path, ticket: &str) -> Result<()> {
     let addr = endpoint_ticket.into();
     let token = zuko::client::derive_session_token(&client_key, &addr);
     let authorized = format!(
-        "# zuko authorised clients (seeded by e2e test)\ne2e-direct\t{}\n",
+        "# zuko authorised clients (seeded by e2e test)\ne2e-client\t{}\n",
         token_hex(&token)
     );
     fs::write(zuko_dir.join("authorized_clients"), authorized)
@@ -514,5 +543,104 @@ fn test_host_connect(zuko: &str, xdg: &Path, ticket: &str) -> Result<()> {
         bail!("token {TOKEN:?} not seen in client output");
     }
     eprintln!("OK: client saw the shell's echo output");
+    Ok(())
+}
+
+// ───────────────────────── revocation ↔ rejection ────────────────────────
+
+fn test_revoked_connect(zuko: &str, xdg: &Path) -> Result<()> {
+    eprintln!("\n=== test: revocation ↔ permanent rejection ===");
+
+    let remove = zuko_cmd(zuko, xdg)
+        .args(["rm", "e2e-client"])
+        .output()
+        .context("revoke e2e client")?;
+    if !remove.status.success() {
+        bail!(
+            "`zuko rm e2e-client` failed: {}",
+            String::from_utf8_lossy(&remove.stderr)
+        );
+    }
+    let remove_output = String::from_utf8_lossy(&remove.stdout);
+    if !remove_output.contains("removed authorised client e2e-client") {
+        bail!("revocation did not remove the seeded client: {remove_output}");
+    }
+
+    // The client still has its saved host and stable key, but its derived token
+    // is no longer allowed. Run under a PTY so the real raw-terminal path is
+    // exercised, just like the successful connection above.
+    let pty = native_pty_system();
+    let pair = pty
+        .openpty(PtySize {
+            rows: 24,
+            cols: 80,
+            pixel_width: 0,
+            pixel_height: 0,
+        })
+        .context("open revocation pty")?;
+    let reader = pair
+        .master
+        .try_clone_reader()
+        .context("clone revocation pty reader")?;
+    let writer = pair
+        .master
+        .take_writer()
+        .context("take revocation pty writer")?;
+
+    let mut cmd = PtyCommand::new(zuko);
+    cmd.args(["connect", "e2e-direct"]);
+    cmd.env("XDG_CONFIG_HOME", xdg.as_os_str());
+    cmd.env("RUST_LOG", "");
+    let mut child = pair
+        .slave
+        .spawn_command(cmd)
+        .context("spawn revoked zuko client")?;
+    drop(pair.slave);
+
+    let reader_handle = thread::spawn(move || {
+        let mut reader = reader;
+        let mut output = Vec::new();
+        let mut buf = [0u8; 4096];
+        loop {
+            match reader.read(&mut buf) {
+                Ok(0) | Err(_) => break,
+                Ok(n) => output.extend_from_slice(&buf[..n]),
+            }
+        }
+        output
+    });
+
+    let deadline = Instant::now() + Duration::from_secs(15);
+    let status = loop {
+        if let Some(status) = child.try_wait().context("poll revoked client")? {
+            break status;
+        }
+        if Instant::now() >= deadline {
+            let _ = child.kill();
+            let _ = child.wait();
+            bail!("revoked client did not exit promptly; it may be reconnecting");
+        }
+        thread::sleep(Duration::from_millis(100));
+    };
+
+    drop(writer);
+    let output = reader_handle.join().unwrap_or_default();
+    let output = String::from_utf8_lossy(&output);
+    eprintln!("---- revoked client output ----\n{output}-------------------------------");
+
+    if status.success() {
+        bail!("revoked client exited successfully; expected authorization failure");
+    }
+    if !output.contains("host rejected the connection") || !output.contains("re-pair") {
+        bail!("revoked client did not show the actionable authorization error");
+    }
+    if output.contains("link lost — reconnecting") {
+        bail!("revoked client treated permanent rejection as a transient link loss");
+    }
+
+    eprintln!(
+        "OK: revoked client exited {} with a permanent, actionable rejection",
+        status.exit_code()
+    );
     Ok(())
 }

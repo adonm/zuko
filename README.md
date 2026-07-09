@@ -6,20 +6,27 @@
 [![release](https://github.com/adonm/zuko/actions/workflows/release.yml/badge.svg)](https://github.com/adonm/zuko/releases/latest)
 [![license](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 
-Remote PTYs over [Iroh](https://www.iroh.computer/). No open ports. Linux/macOS
-host daemon, Rust CLI client, and iOS/iPadOS client.
+**Private remote shells for machines you own—without opening inbound ports or
+operating a VPN.** Pair once with a short code, then reconnect by name from a
+terminal.
 
-zuko targets machines you own and prefer to keep off public SSH/VPN/bastion/DNS
-plumbing. Iroh gives dial-by-key reachability, relay fallback, NAT traversal,
-and end-to-end encryption; zuko keeps the payload simple: a real host PTY plus a
-small framed protocol. It is terminal-first, with GUI app streaming as an
-extension of the same shell session.
+zuko runs a real PTY over [Iroh](https://www.iroh.computer/), which provides
+dial-by-key reachability, NAT traversal, relay fallback, and end-to-end
+encryption. The supported core is deliberately small: a Linux/macOS host, the
+Rust CLI, explicit device authorization, and short reconnects.
 
-## Install a host
+## Quick start
+
+Install the zuko binary on the host and client:
 
 ```sh
 curl https://mise.run | sh
 mise use --global github:adonm/zuko
+```
+
+On the host, install and start the user service:
+
+```sh
 zuko install
 ```
 
@@ -29,26 +36,49 @@ Linux service logs:
 journalctl --user -u zuko-host -f
 ```
 
-Manual foreground host:
+Or run the host in the foreground:
 
 ```sh
 zuko host
 ```
 
-## Pair and connect
+Pair one client:
 
 ```sh
-# host
+# host: prints a one-time two-word code
 zuko share
 # iridescent-hilton
 
-# client
+# client: claims, saves, and connects
 zuko iridescent-hilton
 
-# later
+# future connections
 zuko ls
 zuko home
 ```
+
+Pairing needs a running host; interactively, `zuko share` offers to install and
+start one if needed. Pairing registers that client in the host allow-list; the
+saved name is used for later connections. See
+[`docs/host.md`](docs/host.md) for service setup, macOS logs, trust management,
+and troubleshooting.
+
+## Product scope
+
+| Tier | Surface | Commitment |
+|------|---------|------------|
+| **Core** | Linux/macOS host and Rust CLI | Primary supported workflow |
+| **Beta** | iOS/iPadOS client | Built and tested; distribution and OS support are still limited |
+| **Labs** | Browser client and Linux `zuko app` | Useful experiments; expect gaps and change |
+
+The current priority is to make pairing, connecting, reconnecting, diagnostics,
+and trust management boringly reliable. New platforms and richer streaming do
+not take priority over the core shell path. See the [roadmap](docs/roadmap.md)
+for promotion criteria and explicitly deferred work.
+
+zuko is not a durable session manager, full remote desktop, or centralized
+fleet-access system. Use `tmux`, `zellij`, or `screen` for work that must survive
+disconnects and host restarts.
 
 State:
 
@@ -75,6 +105,7 @@ zuko <name>              # connect
 zuko                     # TTY picker / non-TTY list
 zuko share               # authorise a new client
 zuko claim <code> --as x # explicit claim form
+zuko doctor              # check service, ticket, state, and network
 zuko upgrade --check     # mise-managed upgrade plan
 ```
 
@@ -85,10 +116,11 @@ Session notes:
 - Use `tmux`, `zellij`, or `screen` for durable work.
 - CLI force-exit: Ctrl-C three times within ~1s with no remote output.
 
-## `zuko app` (Linux)
+## Labs: `zuko app` (Linux)
 
 Run a GUI app inside an existing zuko shell. Output is Kitty graphics over the
-same PTY/Iroh connection.
+same PTY/Iroh connection. This is an optional Labs feature, not a remote-desktop
+goal.
 
 ```sh
 zuko app --list
@@ -102,17 +134,17 @@ See [`docs/app.md`](docs/app.md).
 
 | Client | Status | Source |
 |--------|--------|--------|
-| CLI | shipped | `src/client.rs` |
-| iOS/iPadOS | shipped | `ios/Zuko/` |
-| Web | experimental | [`adonm.github.io/zuko/web/`](https://adonm.github.io/zuko/web/) / `web/` |
-| Android | planned | — |
+| Rust CLI | Core | Linux/macOS release binaries; `src/client.rs` |
+| iOS/iPadOS | Beta | iOS/iPadOS 26.5; source and TestFlight pipeline in `ios/` |
+| Web | Labs | [Open web client](https://adonm.github.io/zuko/web/); relay-only |
 
 Protocol: [`docs/protocol.md`](docs/protocol.md). Client notes:
 [`docs/clients.md`](docs/clients.md).
 
 The web client is a static Pages app using Iroh WASM (relay-only, still E2E
-encrypted) and a Ghostty-derived terminal core via wterm. It stores claimed host
-tickets in browser IndexedDB, so treat that browser profile/origin as sensitive.
+encrypted) and a Ghostty-derived terminal core via wterm. It does not yet
+reconnect and stores sensitive connection state (host ticket and client key) in
+browser IndexedDB, so treat that browser profile and origin as sensitive.
 
 ## Build/test
 
@@ -144,8 +176,10 @@ swift test --package-path ios/ZukoWire
 
 ## Security
 
-The host ticket (`endpointa…`) is a bearer secret. It is handed out only via
-`zuko share`/`claim`; clients must also be listed in `authorized_clients`.
+Shell access requires both host connection information and an authorized client
+token. `zuko share` transfers the former and registers the latter over an
+end-to-end-encrypted handoff. Keep both private and revoke lost clients with
+`zuko rm <name>`.
 
 Report vulnerabilities via GitHub Security Advisory. Details:
 [`docs/security.md`](docs/security.md).

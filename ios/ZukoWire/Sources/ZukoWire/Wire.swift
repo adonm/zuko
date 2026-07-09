@@ -16,14 +16,14 @@ import Foundation
 ///                  host has rejected the connection deliberately (e.g. code
 ///                  0x01 = authorisation failure → re-pair with `zuko share`).
 ///
-/// New clients open the stream with ATTACH: a 16-byte session token (zero for
-/// first attach) plus terminal size. The host replies ATTACHED with the token
-/// to reuse on short reconnects. Pixel dimensions are zero on iOS today because
+/// Clients open the stream with ATTACH: a non-zero, authorized 16-byte session
+/// token plus terminal size. The host replies ATTACHED to confirm the token for
+/// short reconnects. Pixel dimensions are zero on iOS today because
 /// GhosttyTerminal owns the surface; the fields still stay present so host-side
 /// `zuko app` / PTY sizing stays protocol-compatible with the Rust CLI.
 ///
 /// This mirrors the Rust `src/wire.rs` byte-for-byte; the package's tests pin
-/// the layout so the two implementations can't drift (see `docs/PROTOCOL.md`).
+/// the layout so the two implementations can't drift (see `docs/protocol.md`).
 public enum Wire {
     public static let data: UInt8 = 0x00
     public static let resize: UInt8 = 0x01

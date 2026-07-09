@@ -12,17 +12,18 @@
 //!   Bare `zuko` is a shortcut — and it also accepts a pairing code, so the
 //!   very first connection is `zuko <code>`.
 //!
-//! New hosts are added only through the OTP-style pairing (`share`/`claim`):
-//! the host's full ticket stays off the CLI surface (no arguments, no stdin,
-//! nothing printed by `zuko host`).
+//! New hosts are added only through OTP-style pairing (`share`/`claim`): client
+//! connection commands never accept or print the full ticket. The host-side
+//! `share --ticket` escape hatch is an explicit advanced override; normal use
+//! reads `current_ticket` instead.
 //!
 //! Saved hosts (`zuko ls`/`rm`) live at `~/.config/zuko/hosts`, mirroring the
 //! iOS app's connection list. Host-side authorised clients share the same
 //! management surface and live at `~/.config/zuko/authorized_clients`.
 //!
 //! The host/client/handoff/protocol logic lives in the library (`src/lib.rs`);
-//! this file is just the CLI dispatcher. The library also builds an optional
-//! FFI surface (`--features ffi`) for mobile clients — see [`zuko::ffi`].
+//! this file is just the CLI dispatcher. The library also builds a small FFI
+//! surface for the iOS client — see [`zuko::ffi`].
 //!
 //! ## Wire protocol (Iroh streams, ALPN `zuko/2`)
 //!
@@ -37,6 +38,8 @@
 //!   0x05 PONG    payload = [nonce: u64 BE]   (optional control)
 //!   0x06 ATTACH  payload = [token: 16 bytes][cols][rows][pixel_width][pixel_height] u16 BE
 //!   0x07 ATTACHED payload = [token: 16 bytes]
+//!   0x08 AUTHORIZE payload = [token: 16 bytes][label: UTF-8]
+//!   0x09 ERROR    payload = [code: u8][message: UTF-8]
 //! ```
 //!
 //! zuko keeps only short in-memory PTY leases for reconnects — no replay buffer
@@ -86,6 +89,13 @@ enum Command {
     /// Stop and remove the host service. Leaves the key + saved hosts in
     /// `~/.config/zuko` so a later `zuko install` or `zuko host` resumes.
     Uninstall,
+
+    /// Check host service, local state, live ticket, and Iroh connectivity.
+    Doctor {
+        /// Host key path when the service was installed with `--key`.
+        #[arg(long)]
+        key: Option<PathBuf>,
+    },
 
     /// Self-upgrade the zuko binary via mise, then restart the host service if
     /// installed so it picks up the new build. `--no-restart` defers the
@@ -198,6 +208,7 @@ async fn main() -> Result<()> {
             service::uninstall()?;
             Ok(())
         }
+        Some(Command::Doctor { key }) => service::doctor(key.as_deref()).await,
         Some(Command::Upgrade(args)) => {
             service::upgrade(&args)?;
             Ok(())

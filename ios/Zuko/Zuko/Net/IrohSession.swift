@@ -81,9 +81,9 @@ private struct ReconnectBackoff {
 ///
 /// The iOS client keeps redialing transient Iroh/link failures while the
 /// terminal screen is open, with bounded exponential backoff. A stable
-/// host-scoped token lets fresh launches land on the same live PTY; once the
-/// host replies with ATTACHED, that host-issued token is reused for short drops
-/// while the detached lease is alive. Clean EOF (remote shell exited) is not
+/// host-scoped token lets fresh launches land on the same live PTY; ATTACHED
+/// confirms that token for short drops while the detached lease is alive.
+/// Clean EOF (remote shell exited) is not
 /// retried. Users running long-lived work should still do so inside `tmux`/
 /// `zellij`/`screen` on the host for long disconnects/host restarts.
 @MainActor
@@ -169,11 +169,9 @@ final class IrohSession: ObservableObject {
     /// cols<<16 | rows.
     private var packedSize: UInt32 = (80 << 16) | 24
 
-    /// 16-byte session token. Starts as a stable token derived from this app
-    /// install + host id (or zero if Keychain is unavailable), then is updated
-    /// from ATTACHED. Zero means "start a fresh PTY"; non-zero asks the host to
-    /// create-or-reattach that token's PTY. The host may reply with a different
-    /// token if the lease expired, which we accept.
+    /// Non-zero 16-byte token derived from this app install + host id during
+    /// connection setup. Pairing authorizes the same token on the host;
+    /// ATTACHED confirms it for reconnects.
     private var sessionToken = Data(repeating: 0, count: Wire.sessionTokenLength)
 
     /// Connect to a host and keep reconnecting transient link failures until
@@ -332,8 +330,8 @@ final class IrohSession: ObservableObject {
     /// screen, derive this install's stable host-scoped reattach token, then
     /// redial transient failures with bounded exponential backoff.
     /// Reusing the endpoint keeps relay/NAT state warm across attempts and
-    /// avoids churning local identities; each successful stream still creates a
-    /// fresh host PTY.
+    /// avoids churning local identities. Each successful stream reattaches the
+    /// token's live PTY or creates a fresh one after its lease expires.
     private func runConnectionLoop(ticket: String) async {
         let endpointTicket: EndpointTicket
         let ep: Endpoint
@@ -468,11 +466,11 @@ final class IrohSession: ObservableObject {
             )
             LogCapture.shared.log(.info, category: "net", "stream open — sending attach")
 
-            // Initial ATTACH — tells the host the grid size and the last
-            // session token we saw. Zero token starts a fresh PTY; non-zero
-            // reattaches a still-leased PTY after a short mobile link drop.
-            // Sent directly before the write pump touches the stream, so it's
-            // guaranteed first on the wire.
+            // Initial ATTACH — sends the host-authorized token and grid size.
+            // The token reattaches a still-leased PTY after a short mobile link
+            // drop, or keys a fresh PTY after expiry. Sent directly before the
+            // write pump touches the stream, so it's guaranteed first on the
+            // wire.
             let (cols, rows) = unpackSize(packedSize)
             let attach = Wire.encodeAttach(token: sessionToken, cols: cols, rows: rows)
             try await Self.withConnectionTimeout(phase: "send attach") {

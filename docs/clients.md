@@ -1,17 +1,25 @@
 # Clients
 
-Reference clients:
+Client tiers follow the [roadmap](roadmap.md):
 
 | Client | Status | Source |
 |--------|--------|--------|
-| Rust CLI | shipped | `src/client.rs` |
-| iOS/iPadOS | shipped | `ios/Zuko/` |
-| Web | experimental | [`/web/`](https://adonm.github.io/zuko/web/) / `web/` |
-| Android | planned | — |
+| Rust CLI | Core | Linux/macOS release binary; `src/client.rs` |
+| iOS/iPadOS | Beta | iOS/iPadOS 26.5; `ios/Zuko/` |
+| Web | Labs | [Open client](https://adonm.github.io/zuko/web/); `web/` |
 
-The web client is published with the docs. It uses browser Iroh over relays and
-stores claimed host tickets in IndexedDB. See [Targets](targets.md#browser-client)
-for its security boundary and known gaps.
+**Core** is release-gated and supported. **Beta** is intended for use but still
+has availability or compatibility constraints. **Labs** is opt-in and may have
+known reliability or security-boundary gaps.
+
+The iOS/iPadOS app is built in CI and has a signed/TestFlight release pipeline,
+but this repository does not currently document a public TestFlight or App
+Store install path. Build instructions are in [`ios/Zuko/README.md`](../ios/Zuko/README.md).
+
+The web client is published with the docs. It uses browser Iroh over relays,
+lacks automatic reconnect, and stores connection state in IndexedDB. See
+[Targets](targets.md#browser-client) for its promotion criteria, security
+boundary, and known gaps.
 
 ## Implementing a client
 
@@ -32,6 +40,7 @@ Read [`protocol.md`](protocol.md). Checklist:
    - size changes → `RESIZE`;
    - optional control stream for `RESIZE`/`PING`/`PONG`.
 6. Store `ATTACHED` token. Reuse it for short reconnects.
+7. Surface `ERROR` as fatal; do not retry an authorization or protocol failure.
 
 Operational details:
 
@@ -42,6 +51,7 @@ Operational details:
 - Forward terminal bytes verbatim. Local Ctrl-C handling should be an explicit
   escape hatch only.
 - Clean EOF means shell exit. Redial transient link errors.
+- Apply bounded backoff and stop reconnecting when the user leaves the session.
 
 Mobile clients should call the Rust FFI `derive_handoff_key(code)` instead of
 reimplementing Argon2id. See `src/ffi.rs` and `ios/Zuko/`.
@@ -50,3 +60,4 @@ Reference code:
 
 - Rust framing/session: `src/wire.rs`, `src/client.rs`, `src/handoff.rs`
 - Swift framing/session: `ios/ZukoWire/`, `ios/Zuko/Zuko/Net/`
+- Browser framing/session: `web/wasm/src/lib.rs`, `web/src/`

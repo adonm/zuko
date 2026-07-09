@@ -40,14 +40,13 @@ jobs:
       - name: Build (release)
         run: mise run build
 
-      - name: End-to-end (host<->connect, share<->claim)
+      - name: End-to-end (connect, pairing, revocation)
         if: ${{ matrix.os == 'ubuntu-latest' }}
         # Runs the #[ignore] e2e integration test in tests/e2e.rs: spawns
-        # `zuko host`, drives `zuko connect` under a PTY, and exercises
-        # `zuko share`/`zuko claim` against the real Iroh network (needs
-        # network access to Iroh's public relays). The Rust harness replaces
-        # the former Python script — same coverage, plus a regression guard
-        # that `share` exits on its own after a claim.
+        # `zuko host`, drives `zuko connect` under a PTY, exercises
+        # `zuko share`/`zuko claim`, then proves a revoked client gets one fatal
+        # authorization error rather than a reconnect loop. Needs access to
+        # Iroh's public relays.
         run: mise run test-e2e
 
       - name: Lint markdown links

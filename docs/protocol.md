@@ -27,8 +27,13 @@ accumulate and parse greedily; frames can split/coalesce across QUIC reads.
 | `0x06` | `ATTACH` | client → host | `token:16 bytes` + resize payload |
 | `0x07` | `ATTACHED` | host → client | `token:16 bytes` |
 | `0x08` | `AUTHORIZE` | client → handoff host | `token:16 bytes` + UTF-8 label |
+| `0x09` | `ERROR` | host → client | `code:u8` + UTF-8 message |
 
 Unknown types are ignored.
+
+`ERROR` is fatal. A client must show the message and stop reconnecting. Defined
+codes are `0x01` (authorization failure; pair again) and `0x02` (protocol
+violation).
 
 ## Session handshake
 
@@ -39,6 +44,9 @@ Unknown types are ignored.
 4. Host checks `authorized_clients` for the token.
 5. Host creates or reattaches the PTY keyed by that token.
 6. Host sends `ATTACHED(token)`.
+
+The token identifies both an authorized client and that client's in-memory PTY
+lease. A second connection with the same token takes over the same PTY.
 
 `RESIZE` is valid only after `ATTACH`. Cell dimensions are clamped to at least
 `1x1`. Pixel dimensions may be zero.
@@ -53,10 +61,27 @@ Unknown types are ignored.
 Shell EOF closes the stream and kills the PTY. Network/client drop detaches the
 PTY for 5 minutes; output while detached is discarded.
 
+## Compatibility
+
+- The ALPN is the incompatible-version boundary. Current peers support only
+  `zuko/2`; there is no version negotiation or v1 fallback.
+- New optional frame types may be added to `zuko/2`; receivers ignore unknown
+  types.
+- Existing frame meanings and required handshake order must not change within
+  `zuko/2`.
+- A deliberate host rejection uses `ERROR` and must not enter a retry loop.
+- Malformed required frames or an unexpected stream close are fatal to that
+  connection.
+
 ## Ticket handoff
 
 Purpose: let a client learn the host ticket and register its future `ATTACH`
 token without putting the ticket on argv/stdin/stdout.
+
+Possession of the short code while `zuko share` is active grants enrollment. A
+share accepts one claim by default; `--count` can explicitly allow more. Treat
+the code as temporary sensitive data and do not leave an unlimited share
+(`--timeout 0`) unattended.
 
 Host (`zuko share`):
 
@@ -89,6 +114,8 @@ Rust CLI:
 SHA256("zuko-session-token-v1" || client_key_bytes || host_id_bytes)[0..16]
 ```
 
+The browser client uses the same derivation with its IndexedDB client key.
+
 iOS:
 
 ```text
@@ -99,11 +126,13 @@ Tokens must be non-zero.
 
 ## Security notes
 
-- Host ticket is a bearer secret.
+- A shell connection requires host dial information plus a token in the host's
+  authorized-client list.
 - Host key stays on host at `~/.config/zuko/key`.
 - Host admits only authorised client tokens.
 - Iroh provides transport encryption; relays see encrypted traffic.
 - Rotate host trust with `zuko reset`, restart, then re-pair clients.
 
 Reference implementations: `src/wire.rs`, `src/client.rs`, `src/host.rs`,
-`src/handoff.rs`, `ios/ZukoWire/`.
+`src/handoff.rs`, `ios/ZukoWire/`, `ios/Zuko/Zuko/Net/`, and
+`web/wasm/src/lib.rs`.

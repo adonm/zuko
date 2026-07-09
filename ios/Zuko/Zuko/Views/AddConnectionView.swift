@@ -3,7 +3,8 @@ import SwiftUI
 /// Sheet for pairing with a host via a `zuko share` code.
 ///
 /// Replaces the old paste-a-raw-ticket flow (which violated the project's
-/// security model — long-lived bearer secrets don't belong on the clipboard).
+/// security model — sensitive connection information doesn't belong on the
+/// clipboard).
 /// The code is a *one-time* symmetric secret: the iOS app derives the same
 /// throwaway Iroh key as the CLI's `zuko share`, dials the derived NodeId,
 /// and reads the real ticket off an end-to-end-encrypted uni stream. The
@@ -21,7 +22,7 @@ struct AddConnectionView: View {
     @State private var error: String?
     @FocusState private var codeFieldFocused: Bool
 
-    private let codePlaceholder = "wowu-hiva-fiki-rufu"
+    private let codePlaceholder = "iridescent-hilton"
 
     /// Is a claim in flight? Drives the button → spinner swap + disables input.
     private var isClaiming: Bool {

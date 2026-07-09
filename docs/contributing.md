@@ -26,6 +26,24 @@ Before PR:
 - Keep commits terse and imperative.
 - Update `docs/protocol.md` for wire changes.
 - Update `docs/host.md` for CLI/state changes.
+- Update `docs/roadmap.md` when a support tier, priority, or product boundary
+  changes.
+- Run `zuko doctor` after service/ticket changes; it must remain read-only and
+  avoid printing keys, tickets, or client tokens.
+
+## Scope new work
+
+Read the [roadmap](roadmap.md) and [design principles](design.md) first. Core
+reliability, recovery, diagnostics, and trust management take priority over new
+clients and streaming modes.
+
+For a new platform, protocol, or background service, describe:
+
+- the Core user problem it solves;
+- its intended product tier;
+- its trust and resource boundaries;
+- how failure and recovery work;
+- the tests and ongoing maintenance it requires.
 
 Client authors: start with [`protocol.md`](protocol.md), then
 [`clients.md`](clients.md).

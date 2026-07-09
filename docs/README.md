@@ -1,15 +1,11 @@
 # zuko docs
 
-Remote PTYs over Iroh. Operator/developer reference.
+Private remote shells for machines you own—without inbound ports or a VPN.
 
-zuko is for hosts you own and prefer to keep off public network surfaces and
-VPN/bastion plumbing. Iroh handles dial-by-key reachability, relay fallback, NAT
-traversal, and transport encryption. zuko stays narrow: a host PTY, explicit
-pairing, an authorised-client list, and a small framed protocol.
-
-Experimental browser client: [open zuko web](https://adonm.github.io/zuko/web/).
-It is a static Pages app using Iroh WASM and a Ghostty-derived terminal core;
-claimed host tickets are stored locally in browser IndexedDB.
+zuko's supported core is a Linux/macOS host and Rust CLI. Iroh handles
+dial-by-key reachability, relay fallback, NAT traversal, and encrypted
+transport; zuko handles a real PTY, one-time-code pairing, client authorization,
+and short reconnects.
 
 ## Fast path
 
@@ -21,24 +17,33 @@ zuko share        # on host
 zuko <code>       # on client
 ```
 
+Use `tmux`, `zellij`, or `screen` for durable work. zuko deliberately does not
+store detached output or promise that PTYs survive a host restart.
+
 Useful commands:
 
 ```sh
 zuko ls
 zuko rm <name>
 zuko reset
+zuko doctor
 zuko upgrade --check
 zuko app --doctor
 ```
 
 ## Read next
 
+- [Direction and roadmap](roadmap.md)
 - [Host & CLI](host.md)
-- [`zuko app`](app.md)
+- [`zuko app` (Labs)](app.md)
 - [Wire protocol](protocol.md)
 - [Client notes](clients.md)
 - [Browser target notes](targets.md#browser-client)
 - [Releasing](releasing.md)
 - [Security](security.md)
+
+The iOS/iPadOS client is Beta. The [browser client](https://adonm.github.io/zuko/web/)
+and `zuko app` are Labs surfaces with narrower support; see the
+[roadmap](roadmap.md) before depending on them.
 
 Source: [github.com/adonm/zuko](https://github.com/adonm/zuko).

@@ -9,11 +9,12 @@
 //! [type: u8][len: u16 big-endian][payload: `len` bytes]
 //!   0x00 DATA    payload = raw terminal bytes (keystrokes up, PTY output down)
 //!   0x01 RESIZE  payload = [cols: u16 BE][rows: u16 BE][pixel_width: u16 BE][pixel_height: u16 BE]
-//!                 (client -> host, also first frame). Pixels let a host-side
+//!                 (client -> host, after ATTACH). Pixels let a host-side
 //!                 `zuko app` render at the client terminal's real resolution.
 //!   0x04 PING    payload = [nonce: u64 BE]   (optional control)
 //!   0x05 PONG    payload = [nonce: u64 BE]   (optional control)
 //!   0x06 ATTACH  payload = [token: 16 bytes][cols: u16 BE][rows: u16 BE][pixel_width: u16 BE][pixel_height: u16 BE]
+//!   0x07 ATTACHED payload = [token: 16 bytes]
 //!   0x08 AUTHORIZE payload = [token: 16 bytes][label: UTF-8]
 //!   0x09 ERROR    payload = [code: u8][message: UTF-8]   (host -> client, fatal)
 //!                 code 0x01 = authorisation failure — re-pair with `zuko share`.
@@ -22,8 +23,8 @@
 //!
 //! ## Handshake
 //!
-//! The client opens the stream with `ATTACH`: a 16-byte session token (zero for
-//! first attach) plus terminal size. The host replies `ATTACHED` with the token
+//! The client opens the stream with `ATTACH`: a non-zero, authorized 16-byte
+//! session token plus terminal size. The host replies `ATTACHED` with the token
 //! to reuse on short reconnects. Detached PTYs live only for a short in-memory
 //! lease and output while detached is discarded; there is no replay buffer.
 //!
@@ -78,7 +79,7 @@ pub fn data_frame(bytes: &[u8]) -> Vec<u8> {
     frame(TYPE_DATA, bytes)
 }
 
-/// A `0x01 RESIZE` frame (`client -> host`). Carries cell size AND pixel size;
+/// A `0x01 RESIZE` frame (`client -> host`, after ATTACH). Carries cell size AND pixel size;
 /// pixels let a host-side `zuko app` render at the client terminal's real
 /// resolution over the relay (the host sets them on the PTY winsize, which
 /// `TIOCGWINSZ` reads back on the host side).
@@ -122,8 +123,8 @@ pub fn attach_frame(
     frame(TYPE_ATTACH, &payload)
 }
 
-/// A `0x07 ATTACHED` frame carrying the token the client should use on the next
-/// reconnect. If the requested token expired, this will be a new token.
+/// A `0x07 ATTACHED` frame confirming the token the client should use on the
+/// next reconnect.
 pub fn attached_frame(token: SessionToken) -> Vec<u8> {
     frame(TYPE_ATTACHED, &token)
 }
