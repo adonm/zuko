@@ -42,8 +42,9 @@ zuko app --doctor
 - [Releasing](releasing.md)
 - [Security](security.md)
 
-The iOS/iPadOS client is Beta. The [browser client](https://adonm.github.io/zuko/web/)
-and `zuko app` are Labs surfaces with narrower support; see the
+The iOS/iPadOS client is Beta. The Android client,
+[browser client](https://zuko.adonm.dev/web/), and `zuko app` are Labs surfaces
+with narrower support; see the
 [roadmap](roadmap.md) before depending on them.
 
 Source: [github.com/adonm/zuko](https://github.com/adonm/zuko).

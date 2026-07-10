@@ -57,7 +57,7 @@ targets:
         # strictly-increasing build number on every upload. Bump these
         # defaults when you cut a release so a fresh `mise run build-ios`
         # matches the binary version.
-        MARKETING_VERSION: "0.8.5"
+        MARKETING_VERSION: "0.9.0"
         CURRENT_PROJECT_VERSION: "1"
         # Universal iPhone + iPad app. App Store Connect validates the base
         # UISupportedInterfaceOrientations key for iPad multitasking, so both
@@ -84,6 +84,7 @@ targets:
         INFOPLIST_KEY_CFBundleDisplayName: Zuko
         INFOPLIST_KEY_LSApplicationCategoryType: public.app-category.utilities
         INFOPLIST_KEY_NSLocalNetworkUsageDescription: "Zuko connects to your own hosts over the local network when they're nearby. No data leaves your devices except the terminal session to your host."
+        INFOPLIST_KEY_NSCameraUsageDescription: "Zuko uses the camera only to scan a one-time pairing code shown by your host."
         INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents: YES
         # Export compliance: only standard exempt crypto (iroh QUIC/TLS +
         # Argon2id). Stops App Store Connect prompting for encryption docs on

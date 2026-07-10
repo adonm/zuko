@@ -29,7 +29,7 @@
 
 use anyhow::Result;
 use argon2::{Algorithm, Argon2, Params, Version};
-#[cfg(not(target_os = "ios"))]
+#[cfg(not(any(target_os = "ios", target_os = "android")))]
 use iroh::SecretKey;
 
 /// Fixed, non-secret Argon2 salt. Tied to the protocol version so a future
@@ -99,7 +99,7 @@ pub fn derive_seed(code: &str) -> Result<[u8; 32]> {
 /// side constructs the SecretKey via `IrohLib.SecretKey.fromBytes(seed)`.
 /// Keeping `iroh` out of the iOS staticlib in turn keeps `ring` (C/asm)
 /// out — that's the cross-compile blocker on Linux CI.
-#[cfg(not(target_os = "ios"))]
+#[cfg(not(any(target_os = "ios", target_os = "android")))]
 pub fn derive_key(code: &str) -> Result<SecretKey> {
     let seed = derive_seed(code)?;
     Ok(SecretKey::from_bytes(&seed))
@@ -111,7 +111,7 @@ pub fn derive_key(code: &str) -> Result<SecretKey> {
 ///
 /// Desktop-only (the iOS app never generates codes — it only claims with
 /// `derive_handoff_key`).
-#[cfg(not(target_os = "ios"))]
+#[cfg(not(any(target_os = "ios", target_os = "android")))]
 pub fn generate_code() -> String {
     let pn = petname::Petnames::large();
     let mut buf = String::new();
@@ -126,7 +126,7 @@ pub fn generate_code() -> String {
 /// saved-host names effectively never match.
 ///
 /// Desktop-only (the iOS app has a dedicated code-entry field).
-#[cfg(not(target_os = "ios"))]
+#[cfg(not(any(target_os = "ios", target_os = "android")))]
 pub fn looks_like_code(s: &str) -> bool {
     let pn = petname::Petnames::large();
     let Some((adj, noun)) = s.trim().split_once('-') else {
@@ -218,7 +218,7 @@ mod tests {
     }
 
     // --- generate_code / looks_like_code tests (desktop only) ---
-    #[cfg(not(target_os = "ios"))]
+    #[cfg(not(any(target_os = "ios", target_os = "android")))]
     #[test]
     fn generate_code_is_well_formed() {
         for _ in 0..32 {
@@ -234,7 +234,7 @@ mod tests {
         let _ = derive_key(&generate_code()).unwrap().public();
     }
 
-    #[cfg(not(target_os = "ios"))]
+    #[cfg(not(any(target_os = "ios", target_os = "android")))]
     #[test]
     fn looks_like_code_accepts_real_codes() {
         // Known adjective-noun combos from petname's large wordlists.
@@ -243,7 +243,7 @@ mod tests {
         assert!(looks_like_code("LANGUOROUS-DAVIS")); // case-insensitive
     }
 
-    #[cfg(not(target_os = "ios"))]
+    #[cfg(not(any(target_os = "ios", target_os = "android")))]
     #[test]
     fn looks_like_code_rejects_non_codes() {
         // Single word, three words, empty.
@@ -256,7 +256,7 @@ mod tests {
         assert!(!looks_like_code("foo-bar"));
     }
 
-    #[cfg(not(target_os = "ios"))]
+    #[cfg(not(any(target_os = "ios", target_os = "android")))]
     #[test]
     fn generated_codes_are_detected_as_codes() {
         // Round-trip: a freshly-generated code must look like one.

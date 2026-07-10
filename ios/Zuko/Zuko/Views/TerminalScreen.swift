@@ -1,6 +1,7 @@
 import GhosttyTerminal
 import GhosttyTheme
 import SwiftUI
+import UIKit
 
 /// The live terminal. Owns the Iroh session and embeds GhosttyTerminal's
 /// native SwiftUI `TerminalSurfaceView`, wired to the session's
@@ -34,31 +35,35 @@ struct TerminalScreen: View {
 
     @State private var showingThemeBrowser = false
     @State private var showingLogs = false
+    @State private var showingRePair = false
     @State private var accessoryKeysVisible = false
     @State private var inputMode: TerminalInputMode = .keyboard
+    @State private var showingInputHint = false
+    @State private var storeError: String?
+    @AppStorage("hasShownTerminalInputHint") private var hasShownInputHint = false
     @FocusState private var terminalFocused: Bool
 
     var body: some View {
         ZStack(alignment: .top) {
             terminalContent
             if let banner = statusMessage {
-                statusBar(banner)
+                statusOverlay(banner)
+            }
+            if showingInputHint {
+                inputHint
+                    .frame(maxHeight: .infinity, alignment: .bottom)
             }
         }
         .background(Color.black)
         .navigationTitle(connection.label)
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
-            // Refresh stays as a top-level icon — it's the one users reach
-            // for mid-session (after a garbled reconnect, etc.). Input-mode
-            // toggles are also top-level because they affect every tap/key.
-            // Font and theme are set-once-and-forget, so they fold into a
-            // single overflow Menu with Disconnect (destructive, lives behind
-            // a tap to avoid accidental hits).
+            // Refresh stays top-level for mid-session redraws. The two input
+            // toggles share one labelled menu so the compact iPhone toolbar
+            // doesn't rely on two unfamiliar stateful glyphs.
             ToolbarItemGroup(placement: .topBarTrailing) {
                 refreshButton
-                accessoryKeysButton
-                inputModeButton
+                inputMenu
                 Menu {
                     Menu("Font size") {
                         Button("A−  smaller") {
@@ -123,6 +128,12 @@ struct TerminalScreen: View {
         .sheet(isPresented: $showingLogs) {
             LogsView()
         }
+        .sheet(isPresented: $showingRePair) {
+            AddConnectionView(expectedHostNodeID: hostNodeID(forTicket: connection.ticket)) { repairedConnection in
+                session.disconnect()
+                session.connect(ticket: repairedConnection.ticket)
+            }
+        }
         .task {
             // Apply persisted appearance prefs before connect so the first
             // frame already has them. Each setter is a no-op when the value
@@ -147,6 +158,9 @@ struct TerminalScreen: View {
             // Live font size change from the toolbar stepper.
             applyFontSize(themeStore.fontSize)
         }
+        .onChange(of: session.status) { _, status in
+            handleStatusChange(status)
+        }
         .onChange(of: scenePhase) { _, phase in
             // Returning from the background: the QUIC link is usually dead
             // after iOS suspends us, so recover immediately instead of waiting
@@ -164,6 +178,17 @@ struct TerminalScreen: View {
         }
         .onDisappear {
             session.disconnect()
+        }
+        .alert(
+            "Couldn't update host",
+            isPresented: Binding(
+                get: { storeError != nil },
+                set: { if !$0 { storeError = nil } }
+            )
+        ) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text(storeError ?? "Unknown error")
         }
     }
 
@@ -191,7 +216,7 @@ struct TerminalScreen: View {
         }
     }
 
-    private enum TerminalInputMode {
+    private enum TerminalInputMode: Equatable {
         case keyboard
         case tap
     }
@@ -222,38 +247,53 @@ struct TerminalScreen: View {
         .accessibilityLabel("Refresh terminal")
     }
 
-    /// Show/hide libghostty's iOS shortcut-key accessory row. The default is
-    /// hidden so first tap gives the plain software keyboard only.
-    private var accessoryKeysButton: some View {
-        Button {
-            accessoryKeysVisible.toggle()
-            if inputMode == .keyboard {
-                terminalFocused = true
+    private var inputMenu: some View {
+        Menu {
+            Section("Input mode") {
+                Button {
+                    setInputMode(.keyboard)
+                } label: {
+                    Label("Keyboard", systemImage: inputMode == .keyboard ? "checkmark" : "keyboard")
+                }
+                Button {
+                    setInputMode(.tap)
+                } label: {
+                    Label("Tap and scroll", systemImage: inputMode == .tap ? "checkmark" : "hand.tap")
+                }
+            }
+            Section("Keyboard") {
+                Button(action: toggleAccessoryKeys) {
+                    Label(
+                        accessoryKeysVisible ? "Hide shortcut keys" : "Show shortcut keys",
+                        systemImage: "command"
+                    )
+                }
+            }
+            Divider()
+            Button {
+                withAnimation { showingInputHint = true }
+            } label: {
+                Label("Input help", systemImage: "questionmark.circle")
             }
         } label: {
-            Image(systemName: accessoryKeysVisible ? "command.circle.fill" : "command.circle")
+            Label("Input", systemImage: inputMode == .tap ? "hand.tap.fill" : "keyboard")
         }
-        .accessibilityLabel(accessoryKeysVisible ? "Hide accessory keys" : "Show accessory keys")
+        .accessibilityLabel("Terminal input")
+        .accessibilityValue(inputMode == .tap ? "Tap and scroll" : "Keyboard")
+        .accessibilityHint("Choose keyboard or touch input and show shortcut keys.")
     }
 
-    /// Switch between normal keyboard input and tap/cursor input. Tap mode
-    /// intentionally drops first-responder focus so the software keyboard stays
-    /// hidden while taps are delivered to mouse-aware terminal apps.
-    private var inputModeButton: some View {
-        Button {
-            switch inputMode {
-            case .keyboard:
-                inputMode = .tap
-                terminalFocused = false
-            case .tap:
-                inputMode = .keyboard
-                terminalFocused = true
-            }
-        } label: {
-            Image(systemName: inputMode == .tap ? "hand.tap.fill" : "hand.tap")
-        }
-        .accessibilityLabel(inputMode == .keyboard ? "Enable tap mode" : "Disable tap mode")
-        .accessibilityHint("Tap mode hides the keyboard and sends taps to mouse-aware terminal apps.")
+    private func setInputMode(_ mode: TerminalInputMode) {
+        guard inputMode != mode else { return }
+        inputMode = mode
+        terminalFocused = mode == .keyboard
+        UISelectionFeedbackGenerator().selectionChanged()
+    }
+
+    private func toggleAccessoryKeys() {
+        accessoryKeysVisible.toggle()
+        if inputMode == .keyboard { terminalFocused = true }
+        UISelectionFeedbackGenerator().selectionChanged()
     }
 
     private var statusMessage: String? {
@@ -263,22 +303,134 @@ struct TerminalScreen: View {
         case .reconnecting(let attempt, let delay, let reason):
             return "Connection lost: \(reason). Reconnecting in \(delay)s (try \(attempt)); reattaches if the host lease is alive…"
         case .disconnected(let reason):
-            return reason == "disconnected" ? nil : reason
-        case .failed(let reason):
-            return "Failed: \(reason)"
+            if reason == "disconnected" { return nil }
+            return reason == "session ended" ? "The remote shell exited." : reason
+        case .failed(let reason, _):
+            return reason
         case .connected, .idle:
             return nil
         }
     }
 
-    private func statusBar(_ text: String) -> some View {
-        Text(text)
-            .font(.footnote.weight(.medium))
-            .foregroundStyle(.white)
-            .padding(.horizontal, 12)
-            .padding(.vertical, 6)
-            .background(.ultraThinMaterial, in: Capsule())
-            .padding(.top, 8)
-            .transition(.opacity)
+    @ViewBuilder
+    private func statusOverlay(_ text: String) -> some View {
+        switch session.status {
+        case .connecting:
+            statusCard(title: "Connecting", detail: text, showsProgress: true) {
+                Button("Logs") { showingLogs = true }
+            }
+        case .reconnecting(_, let delay, let reason):
+            statusCard(
+                title: "Reconnecting in \(delay)s",
+                detail: reason,
+                showsProgress: true
+            ) {
+                Button("Retry now") { session.retryNow() }
+                Button("Logs") { showingLogs = true }
+            }
+        case .disconnected:
+            statusCard(title: "Session ended", detail: text) {
+                Button("Reconnect") { session.retryNow() }
+                Button("Logs") { showingLogs = true }
+            }
+        case .failed(_, let recovery):
+            statusCard(title: "Connection failed", detail: text) {
+                switch recovery {
+                case .retry:
+                    Button("Retry") { session.retryNow() }
+                case .rePair:
+                    Button("Pair again") { showingRePair = true }
+                case .none:
+                    EmptyView()
+                }
+                Button("Logs") { showingLogs = true }
+            }
+        case .idle, .connected:
+            EmptyView()
+        }
+    }
+
+    private func statusCard<Actions: View>(
+        title: String,
+        detail: String?,
+        showsProgress: Bool = false,
+        @ViewBuilder actions: () -> Actions
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 8) {
+                if showsProgress { ProgressView().controlSize(.small) }
+                Text(title).font(.footnote.weight(.semibold))
+            }
+            if let detail, !detail.isEmpty, detail != title {
+                Text(detail)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(3)
+            }
+            HStack(spacing: 8) { actions() }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+        }
+        .padding(12)
+        .frame(maxWidth: 520, alignment: .leading)
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 14))
+        .padding(.horizontal)
+        .padding(.top, 8)
+        .accessibilityElement(children: .contain)
+        .accessibilityAddTraits(.updatesFrequently)
+        .transition(.move(edge: .top).combined(with: .opacity))
+    }
+
+    private var inputHint: some View {
+        HStack(alignment: .top, spacing: 10) {
+            Image(systemName: "keyboard")
+                .foregroundStyle(.tint)
+            Text("Use **Input** to switch between typing and touch navigation. Tap mode hides the keyboard; taps click and swipes scroll mouse-aware terminal apps.")
+                .font(.footnote)
+            Button {
+                withAnimation { showingInputHint = false }
+            } label: {
+                Image(systemName: "xmark.circle.fill")
+            }
+            .accessibilityLabel("Dismiss input help")
+        }
+        .padding(12)
+        .frame(maxWidth: 520)
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 14))
+        .padding()
+        .accessibilityElement(children: .contain)
+    }
+
+    private func handleStatusChange(_ status: SessionStatus) {
+        switch status {
+        case .connected:
+            do {
+                try store.markConnected(connection.id)
+            } catch {
+                storeError = error.localizedDescription
+            }
+            UIAccessibility.post(notification: .announcement, argument: "Connected to \(connection.label)")
+            if !hasShownInputHint {
+                hasShownInputHint = true
+                withAnimation { showingInputHint = true }
+                Task {
+                    try? await Task.sleep(for: .seconds(10))
+                    if !Task.isCancelled {
+                        withAnimation { showingInputHint = false }
+                    }
+                }
+            }
+        case .reconnecting(_, let delay, _):
+            UIAccessibility.post(
+                notification: .announcement,
+                argument: "Connection lost. Reconnecting in \(delay) seconds."
+            )
+        case .failed(let reason, _):
+            UIAccessibility.post(notification: .announcement, argument: "Connection failed. \(reason)")
+        case .disconnected(let reason) where reason != "disconnected":
+            UIAccessibility.post(notification: .announcement, argument: "Session ended. \(reason)")
+        case .idle, .connecting, .disconnected:
+            break
+        }
     }
 }

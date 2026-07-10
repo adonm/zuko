@@ -158,6 +158,11 @@ pub async fn share(args: &ShareArgs) -> Result<()> {
     eprintln!();
     eprintln!("share this code (serves {n}, then exits):", n = args.count);
     println!("{code}");
+    if std::io::stderr().is_terminal() {
+        eprintln!();
+        eprintln!("scan with the Zuko iOS app:");
+        eprintln!("{}", pairing_qr(&code)?);
+    }
     eprintln!("  on the other machine:");
     eprintln!("    zuko claim {code}");
     let timeout_hint = if args.timeout > 0 {
@@ -204,6 +209,11 @@ pub async fn share(args: &ShareArgs) -> Result<()> {
     // `serve_handoff` waits on `conn.closed()`), so this returns quickly.
     endpoint.close().await;
     Ok(())
+}
+
+fn pairing_qr(code: &str) -> Result<String> {
+    let qr = qrcode::QrCode::new(code.as_bytes()).context("encode pairing QR")?;
+    Ok(qr.render::<qrcode::render::unicode::Dense1x2>().build())
 }
 
 enum AcceptOutcome {
@@ -465,5 +475,16 @@ async fn read_to_end(recv: &mut iroh::endpoint::RecvStream, max: usize) -> Resul
             Ok(None) => return Ok(buf),
             Err(e) => return Err(e).context("read handoff payload"),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn pairing_qr_contains_a_scannable_one_time_code() {
+        let code = "iridescent-hilton";
+        assert!(!pairing_qr(code).unwrap().trim().is_empty());
     }
 }

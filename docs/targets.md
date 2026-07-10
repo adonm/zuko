@@ -10,7 +10,7 @@ Goal: test whether a zero-install browser can be a useful zuko client without
 weakening the Core host/CLI design. The static app at `/web/` can claim and
 connect to a host today.
 
-Open it from the published docs: [zuko web](https://adonm.github.io/zuko/web/).
+Open it from the published docs: [zuko web](https://zuko.adonm.dev/web/).
 
 Chosen stack:
 
@@ -58,3 +58,27 @@ Known gaps:
 
 Promotion requires reconnect/backoff, browser-level tests, and isolation on a
 dedicated hardened origin. Until then, use the Core CLI for routine access.
+
+## Android client
+
+The API 29+ Android Labs client lives in `android/`. It uses native Jetpack
+Compose, Iroh's Kotlin bindings, Android Keystore-backed encrypted persistence,
+and a pinned `libghostty-vt` core behind a narrow JNI bridge. Its pure Kotlin
+protocol module mirrors the Rust and Swift framing fixtures.
+
+Current checks include JVM protocol tests, debug/release APK and AAB builds,
+lint, and an x86_64 emulator smoke test that feeds VT data through the real
+Ghostty library. Tagged releases attach checksummed Android packages. Release
+publication fails closed unless all four `ANDROID_KEYSTORE_*` repository secrets
+are configured; unsigned packages remain CI-only build artifacts.
+
+Known gaps:
+
+- the first renderer draws visible grapheme text but not the full Ghostty style,
+  cursor, selection, or Kitty graphics model;
+- pairing is manual/deep-link only; QR scanning is not implemented;
+- lifecycle reconnect, mouse-aware TUIs, logs, themes, and tablet details need
+  broader device-level coverage.
+
+Promotion requires closing those interaction gaps, signed distribution, and
+successful pairing/reconnect tests on physical Android devices.

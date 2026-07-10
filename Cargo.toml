@@ -1,6 +1,6 @@
 [package]
 name = "zuko"
-version = "0.8.5"
+version = "0.9.2"
 edition = "2024"
 license = "Apache-2.0"
 description = "Remote terminals over Iroh: the host daemon and reference CLI client."
@@ -21,9 +21,10 @@ path = "uniffi-bindgen.rs"
 
 [lib]
 name = "zuko"
-# `rlib` for the binary + tests; `staticlib` so the iOS app can wrap the
-# FFI surface (src/ffi.rs) into an XCFramework.
-crate-type = ["rlib", "staticlib"]
+# `rlib` for the binary + tests; `staticlib` for the iOS XCFramework; and
+# `cdylib` for Android/JNA. Mobile builds expose only the small FFI surface in
+# `src/ffi.rs` and cfg-exclude the desktop client/PTY dependency graph.
+crate-type = ["rlib", "staticlib", "cdylib"]
 
 [dependencies]
 # iroh is intentionally NOT here — see the target-cfg'd block below for why.
@@ -53,7 +54,7 @@ uniffi = { version = "0.31", features = ["cli"] }
 # the boundary. Keeping iroh off iOS in turn keeps `ring` (iroh's transitive
 # C/asm dep) off iOS, which lets `build-ffi.sh` cross-compile from Linux
 # without `xcrun` (which doesn't exist outside macOS).
-[target.'cfg(not(target_os = "ios"))'.dependencies]
+[target.'cfg(not(any(target_os = "ios", target_os = "android")))'.dependencies]
 iroh = "1.0"
 iroh-tickets = "1.0"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "io-util", "signal", "time"] }
@@ -73,6 +74,9 @@ inquire = "0.7"
 petname = { version = "3", default-features = false, features = ["default-words"] }
 # RNG for generate_code (petname's generate_into takes a &mut dyn Rng).
 rand = "0.10"
+# Render the one-time `zuko://pair/<code>` value as a terminal QR code for the
+# iOS scanner. No image encoders are needed; only the Unicode renderer is used.
+qrcode = { version = "0.14", default-features = false }
 # SHA-256 for deriving a stable, per-(client,host) reattach token from the
 # client's persistent key (so a client always lands on the same host PTY
 # across reconnects and process restarts). Already compiled transitively via

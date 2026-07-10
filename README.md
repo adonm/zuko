@@ -2,7 +2,8 @@
 
 [![build](https://github.com/adonm/zuko/actions/workflows/build.yml/badge.svg)](https://github.com/adonm/zuko/actions/workflows/build.yml)
 [![ios](https://github.com/adonm/zuko/actions/workflows/build-ios.yml/badge.svg)](https://github.com/adonm/zuko/actions/workflows/build-ios.yml)
-[![docs](https://github.com/adonm/zuko/actions/workflows/docs.yml/badge.svg)](https://adonm.github.io/zuko/)
+[![android](https://github.com/adonm/zuko/actions/workflows/build-android.yml/badge.svg)](https://github.com/adonm/zuko/actions/workflows/build-android.yml)
+[![docs](https://github.com/adonm/zuko/actions/workflows/docs.yml/badge.svg)](https://zuko.adonm.dev/)
 [![release](https://github.com/adonm/zuko/actions/workflows/release.yml/badge.svg)](https://github.com/adonm/zuko/releases/latest)
 [![license](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 
@@ -69,7 +70,7 @@ and troubleshooting.
 |------|---------|------------|
 | **Core** | Linux/macOS host and Rust CLI | Primary supported workflow |
 | **Beta** | iOS/iPadOS client | Built and tested; distribution and OS support are still limited |
-| **Labs** | Browser client and Linux `zuko app` | Useful experiments; expect gaps and change |
+| **Labs** | Android/browser clients and Linux `zuko app` | Useful experiments; expect gaps and change |
 
 The current priority is to make pairing, connecting, reconnecting, diagnostics,
 and trust management boringly reliable. New platforms and richer streaming do
@@ -136,7 +137,8 @@ See [`docs/app.md`](docs/app.md).
 |--------|--------|--------|
 | Rust CLI | Core | Linux/macOS release binaries; `src/client.rs` |
 | iOS/iPadOS | Beta | iOS/iPadOS 26.5; source and TestFlight pipeline in `ios/` |
-| Web | Labs | [Open web client](https://adonm.github.io/zuko/web/); relay-only |
+| Android | Labs | API 29+ APK/AAB; native Compose, Iroh 1.0, and libghostty-vt in `android/` |
+| Web | Labs | [Open web client](https://zuko.adonm.dev/web/); relay-only |
 
 Protocol: [`docs/protocol.md`](docs/protocol.md). Client notes:
 [`docs/clients.md`](docs/clients.md).
@@ -163,6 +165,14 @@ mise run build-ios
 swift test --package-path ios/ZukoWire
 ```
 
+Android (JDK/SDK/NDK are opt-in; see [`android/NATIVE.md`](android/NATIVE.md)):
+
+```sh
+mise run test-android-core
+export ANDROID_NDK_HOME="$ANDROID_HOME/ndk/29.0.14206865"
+mise run android-ci
+```
+
 ## Repo map
 
 | Path | Contents |
@@ -170,6 +180,7 @@ swift test --package-path ios/ZukoWire
 | `src/` | Rust crate: host, CLI client, handoff, service, app streaming, FFI |
 | `ios/Zuko/` | iOS/iPadOS app |
 | `ios/ZukoWire/` | Swift wire-framing package |
+| `android/` | Android app, pure Kotlin protocol core, and libghostty JNI bridge |
 | `docs/` | mdBook docs |
 | `tests/e2e.rs` | ignored live-network integration test |
 | `.github/workflows/` | build, release, iOS, docs CI |

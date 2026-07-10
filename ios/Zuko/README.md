@@ -48,11 +48,14 @@ ios/ZukoFFI/   generated uniffi wrapper over Rust staticlib
 
 ## Terminal controls
 
-- Command-circle: shortcut row (`Esc`, `Tab`, arrows, modifiers, paste).
-- Hand-tap: cursor/tap mode; taps become terminal mouse clicks, swipes become
-  wheel events.
+- Input: choose keyboard or tap/scroll mode, and show/hide the shortcut row
+  (`Esc`, `Tab`, arrows, modifiers, paste). In tap mode, taps become terminal
+  mouse clicks and swipes become wheel events.
 - Refresh: send same-size resize to force remote repaint.
 - Overflow: logs, font size, theme picker.
+
+`zuko share` prints both the one-time code and a QR containing that same code.
+The QR never contains the long-lived endpoint ticket.
 
 Reconnects use a Keychain-backed per-install identity and host-scoped token.
 Detached output is discarded; use `tmux`/`zellij`/`screen` for durable work.

@@ -4,3 +4,8 @@
 
 [bindings.swift]
 cdylib_name = "zuko"
+
+[bindings.kotlin]
+package_name = "dev.adonm.zuko.ffi"
+cdylib_name = "zuko"
+android = true

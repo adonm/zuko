@@ -1,7 +1,6 @@
 import Foundation
 import IrohLib
 import Observation
-import UIKit
 import ZukoFFI
 import ZukoWire
 
@@ -16,12 +15,16 @@ enum ClaimError: LocalizedError {
     case dialFailed(String)
     /// The host sent a malformed payload (no ticket, not UTF-8, etc.).
     case handoffFailed(String)
+    /// A recovery sheet claimed a valid code for a different host. Refuse to
+    /// authorize it under the terminal currently being repaired.
+    case unexpectedHost
 
     var errorDescription: String? {
         switch self {
         case .derivationFailed(let m): return "Couldn't derive the pairing key: \(m)"
         case .dialFailed(let m): return m
         case .handoffFailed(let m): return "The host sent an invalid response: \(m)"
+        case .unexpectedHost: return "That pairing code belongs to a different host. Start `zuko share` on this host and try again."
         }
     }
 }
@@ -58,7 +61,11 @@ final class ClaimSession {
     /// Drive a claim. Returns the claimed `(label, ticket)` on success so the
     /// caller can save it. The session status transitions through
     /// `deriving` → `dialing` → `reading` → `idle` (or `failed` on error).
-    func claim(code: String) async throws -> (label: String, ticket: String) {
+    func claim(
+        code: String,
+        expectedHostNodeID: String? = nil,
+        persist: (_ label: String, _ ticket: String, _ clientLabel: String) throws -> Void
+    ) async throws {
         status = .deriving
 
         // 1. Derive the 32-byte seed via the Rust FFI. This is the same
@@ -74,6 +81,7 @@ final class ClaimSession {
             status = .failed(message)
             throw ClaimError.derivationFailed(message)
         }
+        try Task.checkCancellation()
 
         // 2. Construct the SecretKey + NodeId we'll dial.
         let secret = try SecretKey.fromBytes(bytes: seed)
@@ -103,6 +111,10 @@ final class ClaimSession {
             conn = try await Self.dialWithRetry(
                 endpoint: endpoint, addr: addr, alpn: Self.alpn, timeout: 60
             )
+        } catch is CancellationError {
+            try? await endpoint.close()
+            status = .idle
+            throw CancellationError()
         } catch {
             try? await endpoint.close()
             let msg = "couldn't reach the sharing host — is `zuko share` still running and the code correct?"
@@ -115,32 +127,109 @@ final class ClaimSession {
         //    payload to end.
         status = .reading
         LogCapture.shared.log(.info, category: "claim", "reading ticket")
-        var recv = try await conn.acceptUni()
-        let payloadData = try await Self.readToEnd(&recv, max: Self.maxPayload)
+        let payloadData: Data
+        do {
+            var recv = try await conn.acceptUni()
+            payloadData = try await Self.readToEnd(&recv, max: Self.maxPayload)
+        } catch is CancellationError {
+            try? conn.close(errorCode: 0, reason: Data("cancelled".utf8))
+            try? await endpoint.close()
+            status = .idle
+            throw CancellationError()
+        } catch {
+            try? conn.close(errorCode: 1, reason: Data("handoff failed".utf8))
+            try? await endpoint.close()
+            let message = error.localizedDescription
+            status = .failed(message)
+            throw ClaimError.handoffFailed(message)
+        }
 
+        try await finalizeClaim(
+            payloadData,
+            connection: conn,
+            endpoint: endpoint,
+            expectedHostNodeID: expectedHostNodeID,
+            persist: persist
+        )
+    }
+
+    private func finalizeClaim(
+        _ payloadData: Data,
+        connection: IrohLib.Connection,
+        endpoint: Endpoint,
+        expectedHostNodeID: String?,
+        persist: (_ label: String, _ ticket: String, _ clientLabel: String) throws -> Void
+    ) async throws {
         guard let payload = String(data: payloadData, encoding: .utf8) else {
+            await closeClaim(connection, endpoint: endpoint, reason: "invalid payload", errorCode: 1)
             status = .failed("payload wasn't UTF-8")
             throw ClaimError.handoffFailed("payload wasn't UTF-8")
         }
         let (label, ticket) = Self.parsePayload(payload)
         guard !ticket.isEmpty else {
-            LogCapture.shared.log(.error, category: "claim", "host sent an empty ticket")
+            await closeClaim(connection, endpoint: endpoint, reason: "empty ticket", errorCode: 1)
             status = .failed("host sent an empty ticket")
             throw ClaimError.handoffFailed("empty ticket")
         }
 
-        try? await Self.sendAuthorization(conn: conn, label: label, ticket: ticket)
+        let endpointTicket: EndpointTicket
+        do {
+            endpointTicket = try EndpointTicket.fromString(str: ticket)
+        } catch {
+            await closeClaim(connection, endpoint: endpoint, reason: "invalid ticket", errorCode: 1)
+            status = .failed("host returned an invalid ticket")
+            throw ClaimError.handoffFailed("ticket could not be parsed")
+        }
+        if let expectedHostNodeID,
+           endpointTicket.endpointAddr().id().description != expectedHostNodeID {
+            await closeClaim(connection, endpoint: endpoint, reason: "wrong host", errorCode: 1)
+            status = .failed(ClaimError.unexpectedHost.localizedDescription)
+            throw ClaimError.unexpectedHost
+        }
+        if Task.isCancelled {
+            try await cancelClaim(connection, endpoint: endpoint)
+        }
 
-        // 6. Close the connection so the host's `serve_handoff` returns and
-        //    `zuko share` can exit. Without this (the bug we fixed in
-        //    `handoff.rs`), the connection lingers via Iroh's keepalive pings
-        //    and `share` hangs for the whole session.
-        try? conn.close(errorCode: 0, reason: Data("claimed".utf8))
-        try? await endpoint.close()
+        let clientLabel = ClientIdentity.authorizationLabel(fallback: label)
+        status = .authorizing
+        do {
+            try persist(label, ticket, clientLabel)
+        } catch {
+            await closeClaim(connection, endpoint: endpoint, reason: "local save failed", errorCode: 1)
+            status = .idle
+            throw error
+        }
+        do {
+            try await Self.sendAuthorization(
+                conn: connection,
+                clientLabel: clientLabel,
+                endpointTicket: endpointTicket
+            )
+        } catch {
+            if Task.isCancelled { try await cancelClaim(connection, endpoint: endpoint) }
+            LogCapture.shared.log(.warn, category: "claim", "could not authorize host: \(error.localizedDescription)")
+        }
+        if Task.isCancelled { try await cancelClaim(connection, endpoint: endpoint) }
 
+        await closeClaim(connection, endpoint: endpoint, reason: "claimed", errorCode: 0)
         LogCapture.shared.log(.info, category: "claim", "claimed host: \(label)")
         status = .idle
-        return (label: label, ticket: ticket)
+    }
+
+    private func cancelClaim(_ connection: IrohLib.Connection, endpoint: Endpoint) async throws -> Never {
+        await closeClaim(connection, endpoint: endpoint, reason: "cancelled", errorCode: 0)
+        status = .idle
+        throw CancellationError()
+    }
+
+    private func closeClaim(
+        _ connection: IrohLib.Connection,
+        endpoint: Endpoint,
+        reason: String,
+        errorCode: Int64
+    ) async {
+        try? connection.close(errorCode: errorCode, reason: Data(reason.utf8))
+        try? await endpoint.close()
     }
 
     /// Extract the human message from a `deriveHandoffKey` failure: the typed
@@ -166,20 +255,14 @@ final class ClaimSession {
 
     private static func sendAuthorization(
         conn: IrohLib.Connection,
-        label: String,
-        ticket: String
+        clientLabel: String,
+        endpointTicket: EndpointTicket
     ) async throws {
-        let endpointTicket = try EndpointTicket.fromString(str: ticket)
         let token = try ClientIdentity.sessionToken(for: endpointTicket)
         let send = try await conn.openUni()
-        let frame = Wire.encodeAuthorize(token: token, label: clientLabel(fallback: label))
+        let frame = Wire.encodeAuthorize(token: token, label: clientLabel)
         try await send.writeAll(buf: frame)
         try await send.finish()
-    }
-
-    private static func clientLabel(fallback: String) -> String {
-        let name = UIDevice.current.name.trimmingCharacters(in: .whitespacesAndNewlines)
-        return name.isEmpty ? fallback : name.replacingOccurrences(of: " ", with: "-")
     }
 
     func reset() {
@@ -200,11 +283,14 @@ final class ClaimSession {
         let deadline = Date().addingTimeInterval(timeout)
         var lastError: Error?
         while Date() < deadline {
+            try Task.checkCancellation()
             do {
                 return try await endpoint.connect(addr: addr, alpn: alpn)
+            } catch is CancellationError {
+                throw CancellationError()
             } catch {
                 lastError = error
-                try? await Task.sleep(for: .seconds(2))
+                try await Task.sleep(for: .seconds(2))
             }
         }
         throw ClaimError.dialFailed(
@@ -218,7 +304,8 @@ final class ClaimSession {
         max: Int
     ) async throws -> Data {
         var buf = Data()
-        while !Task.isCancelled {
+        while true {
+            try Task.checkCancellation()
             let chunk = try await recv.read(sizeLimit: 4 * 1024)
             if chunk.isEmpty { break }  // end of stream
             buf.append(chunk)
@@ -231,12 +318,13 @@ final class ClaimSession {
 }
 
 /// Coarse-grained status for the UI to render. Ordered to match the claim
-/// flow so a `ProgressView` can show "step N of 3".
+/// flow so a `ProgressView` can show "step N of 4".
 enum ClaimStatus: Equatable {
     case idle
     case deriving
     case dialing
     case reading
+    case authorizing
     case failed(String)
 
     var step: Int {
@@ -245,6 +333,7 @@ enum ClaimStatus: Equatable {
         case .deriving: return 1
         case .dialing: return 2
         case .reading: return 3
+        case .authorizing: return 4
         case .failed: return 0
         }
     }
@@ -255,6 +344,7 @@ enum ClaimStatus: Equatable {
         case .deriving: return "Deriving pairing key…"
         case .dialing: return "Reaching the host…"
         case .reading: return "Receiving ticket…"
+        case .authorizing: return "Saving and authorizing…"
         case .failed(let m): return m
         }
     }

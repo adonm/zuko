@@ -1,4 +1,6 @@
 import SwiftUI
+import UIKit
+import ZukoWire
 
 /// Sheet for pairing with a host via a `zuko share` code.
 ///
@@ -11,6 +13,10 @@ import SwiftUI
 /// raw ticket never touches the UI surface. See [`ClaimSession`] + the
 /// `src/handoff.rs` Rust reference.
 struct AddConnectionView: View {
+    let initialCode: String
+    let expectedHostNodeID: String?
+    var onPaired: (Connection) -> Void
+
     @Environment(ConnectionStore.self) private var store
     @Environment(\.dismiss) private var dismiss
 
@@ -18,11 +24,24 @@ struct AddConnectionView: View {
     // the same Observation-based ownership rules as our other stores.
     @State private var claimSession = ClaimSession()
 
-    @State private var code: String = ""
+    @State private var code: String
     @State private var error: String?
+    @State private var showingScanner = false
+    @State private var claimTask: Task<Void, Never>?
     @FocusState private var codeFieldFocused: Bool
 
     private let codePlaceholder = "iridescent-hilton"
+
+    init(
+        initialCode: String = "",
+        expectedHostNodeID: String? = nil,
+        onPaired: @escaping (Connection) -> Void = { _ in }
+    ) {
+        self.initialCode = initialCode
+        self.expectedHostNodeID = expectedHostNodeID
+        self.onPaired = onPaired
+        _code = State(initialValue: initialCode)
+    }
 
     /// Is a claim in flight? Drives the button → spinner swap + disables input.
     private var isClaiming: Bool {
@@ -32,18 +51,38 @@ struct AddConnectionView: View {
         }
     }
 
+    private var isFinalizing: Bool {
+        if case .authorizing = claimSession.status { return true }
+        return false
+    }
+
     var body: some View {
         NavigationStack {
             Form {
                 Section {
-                    TextField(codePlaceholder, text: $code)
-                        .focused($codeFieldFocused)
-                        .font(.system(.body, design: .monospaced))
-                        .textInputAutocapitalization(.never)
-                        .autocorrectionDisabled()
-                        .submitLabel(.go)
-                        .onSubmit { claim() }
-                        .disabled(isClaiming)
+                    HStack {
+                        TextField(codePlaceholder, text: $code)
+                            .focused($codeFieldFocused)
+                            .font(.system(.body, design: .monospaced))
+                            .textContentType(.oneTimeCode)
+                            .textInputAutocapitalization(.never)
+                            .autocorrectionDisabled()
+                            .submitLabel(.go)
+                            .onSubmit { claim() }
+                            .disabled(isClaiming)
+                            .accessibilityIdentifier("pairing-code-field")
+
+                        if PairingCodeScanner.isSupported {
+                            Button {
+                                codeFieldFocused = false
+                                showingScanner = true
+                            } label: {
+                                Image(systemName: "qrcode.viewfinder")
+                            }
+                            .accessibilityLabel("Scan pairing QR code")
+                            .disabled(isClaiming)
+                        }
+                    }
                 } header: {
                     Text("Pairing code")
                 } footer: {
@@ -52,7 +91,7 @@ struct AddConnectionView: View {
                             .font(.caption).fontWeight(.semibold)
                         Text(HostSetup.shareCommand)
                             .font(.system(.caption, design: .monospaced))
-                        Text("Type the code here. The host's real ticket arrives over an E2E-encrypted Iroh stream — it never touches the clipboard.")
+                        Text("Type the code or scan the QR shown by `zuko share`. The host's real ticket arrives over an E2E-encrypted Iroh stream — it never touches the clipboard.")
                             .padding(.top, 2)
                     }
                 }
@@ -77,13 +116,13 @@ struct AddConnectionView: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
-                    Button("Cancel") { dismiss() }
-                        .disabled(isClaiming)
+                    Button("Cancel", action: cancel)
+                        .disabled(isFinalizing)
                 }
                 ToolbarItem(placement: .topBarTrailing) {
                     if isClaiming {
                         // Step label + spinner: the claim has three phases
-                        // (derive / dial / read), and each can take a few
+                        // (derive / dial / read / authorize), and each can take a few
                         // seconds, so show which one rather than an opaque
                         // spinner.
                         HStack(spacing: 6) {
@@ -96,34 +135,78 @@ struct AddConnectionView: View {
                         Button("Pair", action: claim)
                             .disabled(code.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                             .bold()
+                            .accessibilityIdentifier("pair-host-button")
                     }
                 }
             }
-            .onAppear { codeFieldFocused = true }
+            .onAppear { codeFieldFocused = initialCode.isEmpty }
         }
+        .sheet(isPresented: $showingScanner) {
+            PairingCodeScanner { scannedCode in
+                code = scannedCode
+                showingScanner = false
+                codeFieldFocused = true
+                UISelectionFeedbackGenerator().selectionChanged()
+            }
+        }
+        .interactiveDismissDisabled(isFinalizing)
+        .onDisappear { claimTask?.cancel() }
     }
 
     // MARK: - Actions
 
     private func claim() {
-        let trimmed = code.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return }
+        let entered = code.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !entered.isEmpty else { return }
+        guard let pairingCode = PairingLink.code(from: entered) else {
+            error = "Enter the two-word code from `zuko share` or scan its QR code."
+            UINotificationFeedbackGenerator().notificationOccurred(.error)
+            return
+        }
+        code = pairingCode
         error = nil
 
-        Task {
+        claimTask?.cancel()
+        claimTask = Task {
             do {
-                let result = try await claimSession.claim(code: trimmed)
-                // Save the claimed ticket under the host's label (sent in the
-                // payload). `ConnectionStore.add` validates + de-dupe + saves
-                // to the Keychain — same path as the old paste-ticket flow,
-                // just fed from the handoff instead of the clipboard.
-                _ = try store.add(label: result.label, ticket: result.ticket)
+                var savedConnection: Connection?
+                try await claimSession.claim(
+                    code: pairingCode,
+                    expectedHostNodeID: expectedHostNodeID
+                ) { label, ticket, clientLabel in
+                    try Task.checkCancellation()
+                    // Persist before authorizing the client on the host. A
+                    // Keychain failure therefore cannot leave remote trust
+                    // behind for a connection the app failed to save.
+                    savedConnection = try store.add(
+                        label: label,
+                        ticket: ticket,
+                        authorizedClientLabel: clientLabel
+                    )
+                }
+                guard let connection = savedConnection else {
+                    throw ConnectionStore.AddError.persistence("Pairing completed without saving the host.")
+                }
+                UINotificationFeedbackGenerator().notificationOccurred(.success)
+                onPaired(connection)
                 dismiss()
+            } catch is CancellationError {
+                claimSession.reset()
             } catch {
                 // ClaimSession.status already carries the failed message; the
                 // `error` state is a fallback for save failures specifically.
-                self.error = error.localizedDescription
+                if case .failed = claimSession.status {
+                    self.error = nil
+                } else {
+                    self.error = error.localizedDescription
+                }
+                UINotificationFeedbackGenerator().notificationOccurred(.error)
             }
         }
+    }
+
+    private func cancel() {
+        claimTask?.cancel()
+        dismiss()
     }
 }

@@ -196,7 +196,10 @@ pub fn authorize_client(name: &str, token: &SessionToken) -> Result<()> {
 
     let _guard = StoreLock::acquire(authorized_clients_path())?;
     let mut entries = load_entries(authorized_clients_path());
-    entries.retain(|(n, _)| n != name);
+    // A stable client token may be re-paired after its display label changes
+    // (for example, a renamed iPhone). Keep exactly one allow-list entry per
+    // name *and* per token so the stale label cannot retain hidden access.
+    entries.retain(|(n, existing_token)| n != name && existing_token != &token);
     entries.insert(0, (name.to_string(), token));
     store_authorized_clients(&entries)
 }
@@ -465,7 +468,13 @@ mod tests {
         ensure_client_authorized(&token).unwrap();
         assert!(ensure_client_authorized(&other).is_err());
 
-        let removed = remove_any("phone").unwrap();
+        // Re-pairing the same client under a new label replaces the stale
+        // label, so one displayed revoke command removes all access for token.
+        authorize_client("renamed-phone", &token).unwrap();
+        assert_eq!(authorized_client_names(), vec!["renamed-phone"]);
+        assert!(!remove_any("phone").unwrap().authorized_client);
+
+        let removed = remove_any("renamed-phone").unwrap();
         assert!(!removed.saved_host);
         assert!(removed.authorized_client);
         assert!(ensure_client_authorized(&token).is_err());

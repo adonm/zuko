@@ -23,7 +23,7 @@ pairing, authorization, reconnect behavior, and clear operator feedback.
 |------|---------|------------------|
 | **Core** | Primary maintained and release-gated workflow | Linux/macOS host and Rust CLI |
 | **Beta** | Intended for regular use, but availability or compatibility is not yet stable | iOS/iPadOS client |
-| **Labs** | Opt-in experiments used to learn; APIs and behavior may change | Browser client and Linux `zuko app` |
+| **Labs** | Opt-in experiments used to learn; APIs and behavior may change | Android/browser clients and Linux `zuko app` |
 
 A surface moves up a tier only when it has a clear install path, recovery
 behavior, security boundary, automated coverage, and maintained documentation.
@@ -85,6 +85,14 @@ a dedicated hardened origin. Browser Iroh remains relay-only. If those costs do
 not justify the use case, keep it as a pairing/protocol demonstration rather
 than expanding the core promise.
 
+### Android Labs client
+
+Keep in Labs until the libghostty renderer covers styles, cursor, selection,
+mouse reporting, and accessibility; pairing includes QR; lifecycle reconnect is
+device-tested; and signed package distribution is documented. The initial API
+29+ app deliberately shares the audited protocol and Rust KDF while keeping its
+Android Keystore persistence and JNI boundary small.
+
 ### `zuko app` Labs feature
 
 Keep the Kitty/cage path opt-in. Promote only if terminal compatibility,
@@ -97,7 +105,7 @@ is not on the active roadmap.
 These may be reconsidered when a demonstrated user need outweighs their ongoing
 cost, but they are not current goals:
 
-- Android and additional native clients;
+- additional native clients beyond iOS and Android;
 - durable PTY storage or output replay (use `tmux`, `zellij`, or `screen`);
 - full desktop streaming or a native video protocol;
 - centralized accounts, RBAC, audit pipelines, or enterprise fleet management;

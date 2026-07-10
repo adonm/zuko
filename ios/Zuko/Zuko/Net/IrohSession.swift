@@ -3,15 +3,6 @@ import GhosttyTerminal
 import IrohLib
 import ZukoWire
 
-enum SessionStatus: Equatable {
-    case idle
-    case connecting
-    case reconnecting(attempt: Int, delaySeconds: Int, reason: String)
-    case connected
-    case disconnected(String)
-    case failed(String)
-}
-
 /// A permanent, host-deliberate rejection (the host sent an `ERROR` frame).
 /// Distinct from a thrown link error so the reconnect loop can fail fast
 /// instead of redialing a connection the host has already refused — which
@@ -27,39 +18,6 @@ private struct RequestedReconnect: LocalizedError {
     let reason: String
 
     var errorDescription: String? { reason }
-}
-
-private struct ReconnectBackoff {
-    struct Step {
-        let attempt: Int
-        let delayNanoseconds: UInt64
-
-        var delaySeconds: Int {
-            max(1, Int(delayNanoseconds / 1_000_000_000))
-        }
-    }
-
-    private static let baseDelay: UInt64 = 1_000_000_000
-    private static let maxDelay: UInt64 = 15_000_000_000
-
-    private(set) var attempt = 0
-
-    mutating func recordFailure() -> Step {
-        attempt += 1
-        return Step(
-            attempt: attempt,
-            delayNanoseconds: Self.delay(forAttempt: attempt)
-        )
-    }
-
-    mutating func reset() {
-        attempt = 0
-    }
-
-    private static func delay(forAttempt attempt: Int) -> UInt64 {
-        let shift = UInt64(min(max(attempt - 1, 0), 4))
-        return min(baseDelay << shift, maxDelay)
-    }
 }
 
 /// Owns a single Iroh connection to a host and bridges it to GhosttyTerminal's
@@ -246,6 +204,25 @@ final class IrohSession: ObservableObject {
         enqueueResize(cols: cols, rows: rows)
     }
 
+    /// Skip reconnect backoff or restart a locally failed/ended session. Host
+    /// authorisation failures deliberately remain gated on re-pairing.
+    func retryNow() {
+        switch status {
+        case .reconnecting:
+            reconnectBackoff.reset()
+            status = .connecting
+            reconnectSleepTask?.cancel()
+        case .disconnected:
+            status = .idle
+            if let lastTicket { connect(ticket: lastTicket) }
+        case .failed(_, recovery: .retry):
+            status = .idle
+            if let lastTicket { connect(ticket: lastTicket) }
+        default:
+            break
+        }
+    }
+
     func backgrounded() {
         backgroundedAt = Date()
         LogCapture.shared.log(.info, category: "net", "app backgrounded")
@@ -333,18 +310,7 @@ final class IrohSession: ObservableObject {
     /// avoids churning local identities. Each successful stream reattaches the
     /// token's live PTY or creates a fresh one after its lease expires.
     private func runConnectionLoop(ticket: String) async {
-        let endpointTicket: EndpointTicket
-        let ep: Endpoint
-        do {
-            endpointTicket = try EndpointTicket.fromString(str: ticket)
-            sessionToken = try ClientIdentity.sessionToken(for: endpointTicket)
-            ep = try await Endpoint.bind(options: EndpointOptions(preset: presetN0()))
-            endpoint = ep
-        } catch {
-            LogCapture.shared.log(.error, category: "net", "endpoint bind failed: \(error.localizedDescription)")
-            status = .failed(error.localizedDescription)
-            return
-        }
+        guard let (endpointTicket, ep) = await prepareConnection(ticket: ticket) else { return }
         defer { closeEndpoint(ep) }
 
         while !Task.isCancelled, !disconnectRequested {
@@ -362,9 +328,8 @@ final class IrohSession: ObservableObject {
                 reportCancellationIfNeeded()
                 return
             } catch PermanentRejection.rejected(_) {
-                // Status was already set to `.failed` in `readLoop` with the
-                // host's message + re-pair hint. Do NOT retry: the host has
-                // refused this client and redialing would hammer it forever.
+                // Status was already set to `.failed` in `readLoop`; retrying
+                // would hammer a host that deliberately refused this client.
                 return
             } catch let requested as RequestedReconnect {
                 reconnectBackoff.reset()
@@ -386,6 +351,48 @@ final class IrohSession: ObservableObject {
         }
 
         reportCancellationIfNeeded()
+    }
+
+    private func prepareConnection(ticket: String) async -> (EndpointTicket, Endpoint)? {
+        let endpointTicket: EndpointTicket
+        do {
+            endpointTicket = try EndpointTicket.fromString(str: ticket)
+        } catch {
+            LogCapture.shared.log(.error, category: "net", "saved ticket is invalid: \(error.localizedDescription)")
+            status = .failed(
+                reason: "Saved connection information is invalid. Go back, forget this host, and pair it again.",
+                recovery: .none
+            )
+            return nil
+        }
+        do {
+            sessionToken = try ClientIdentity.sessionToken(for: endpointTicket)
+        } catch {
+            LogCapture.shared.log(.error, category: "net", "client identity failed: \(error.localizedDescription)")
+            status = .failed(
+                reason: "The stored client identity is unavailable. See Logs for details.",
+                recovery: .none
+            )
+            return nil
+        }
+
+        let ep: Endpoint
+        do {
+            ep = try await Endpoint.bind(options: EndpointOptions(preset: presetN0()))
+            endpoint = ep
+        } catch is CancellationError {
+            reportCancellationIfNeeded()
+            return nil
+        } catch {
+            if Task.isCancelled {
+                reportCancellationIfNeeded()
+                return nil
+            }
+            LogCapture.shared.log(.error, category: "net", "endpoint bind failed: \(error.localizedDescription)")
+            status = .failed(reason: error.localizedDescription, recovery: .retry)
+            return nil
+        }
+        return (endpointTicket, ep)
     }
 
     private func waitBeforeReconnect(after error: Error, step: ReconnectBackoff.Step) async -> Bool {
@@ -486,8 +493,6 @@ final class IrohSession: ObservableObject {
             // optional `controlSend` — see its docs).
             startWritePump(send: send, controlSend: controlSend, connection: conn)
 
-            status = .connected
-
             // Read loop — runs until EOF (host closed → shell exited) or
             // error (network drop). Iroh/QUIC owns transport liveness; the
             // outer loop redials stream errors.
@@ -570,7 +575,10 @@ final class IrohSession: ObservableObject {
                     ? " — re-pair this host with `zuko share` on the host"
                     : ""
                 LogCapture.shared.log(.warn, category: "net", "host rejected: \(message)\(hint)")
-                status = .failed("\(message)\(hint)")
+                let recovery: SessionFailureRecovery = code == Wire.ErrorCode.authorization
+                    ? .rePair
+                    : .none
+                status = .failed(reason: "\(message)\(hint)", recovery: recovery)
                 throw PermanentRejection.rejected(message)
             }
             handleInboundFrame(frame)
@@ -592,6 +600,7 @@ final class IrohSession: ObservableObject {
             if let token = Wire.parseAttached(frame.payload) {
                 sessionToken = token
                 reconnectBackoff.reset()
+                status = .connected
                 LogCapture.shared.log(.info, category: "net", "host attached")
             }
         default:

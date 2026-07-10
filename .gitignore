@@ -31,6 +31,19 @@ ios/ZukoFFI/Generated/
 # Rust / host
 target/
 **/*.rs.bk
+.tmp/
+
+# Android / Gradle
+android/.gradle/
+android/**/build/
+android/**/.cxx/
+android/local.properties
+android/app/src/main/jniLibs/
+android/native/
+*.jks
+*.keystore
+keystore-password
+key-password
 
 # Browser client dependencies/generated WASM.
 web/node_modules/

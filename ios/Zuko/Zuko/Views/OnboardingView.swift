@@ -53,7 +53,7 @@ struct OnboardingView: View {
 
             Divider().padding(.vertical, 4)
 
-            Text("Tap +, type the `zuko share` code, and the app saves the host. "
+            Text("Tap +, scan the QR from `zuko share` (or type its code), and the app saves the host. "
                 + "The real ticket arrives over an E2E-encrypted Iroh stream "
                 + "and never touches the clipboard.")
                 .font(.subheadline)
@@ -78,14 +78,9 @@ struct OnboardingView: View {
                     "Refresh icon asks the remote PTY to redraw without clearing zellij/tmux panes."
                 )
                 tip(
-                    icon: "command.circle",
-                    "Command-circle toggles the iOS shortcut-key row (Esc, Tab, arrows, Ctrl/Alt/Cmd). "
-                        + "It starts hidden so the default keyboard is plain."
-                )
-                tip(
-                    icon: "hand.tap",
-                    "Hand-tap toggles cursor/tap mode: the keyboard stays hidden, taps become mouse clicks, "
-                        + "and one-finger swipes scroll TUI panes like opencode or zellij."
+                    icon: "keyboard",
+                    "Input switches between typing and tap/scroll mode, and can show shortcut keys "
+                        + "(Esc, Tab, arrows, Ctrl/Alt/Cmd)."
                 )
                 tip(
                     icon: "rectangle.split.2x1",
@@ -140,8 +135,7 @@ struct CopyableCommand: View {
         HStack(spacing: 8) {
             Text(command)
                 .font(.system(.footnote, design: .monospaced))
-                .lineLimit(2)
-                .minimumScaleFactor(0.7)
+                .fixedSize(horizontal: false, vertical: true)
                 .textSelection(.enabled)
             Spacer(minLength: 4)
             Button {
@@ -158,6 +152,7 @@ struct CopyableCommand: View {
             }
             .buttonStyle(.bordered)
             .tint(copied ? Color.green : Color.accentColor)
+            .accessibilityLabel(copied ? "Copied command" : "Copy command")
         }
         .padding(10)
         .background(Color.black.opacity(0.35), in: RoundedRectangle(cornerRadius: 10))

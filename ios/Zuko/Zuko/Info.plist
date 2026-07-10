@@ -41,6 +41,8 @@
     <!-- Iroh can discover and dial hosts on the local network (e.g. LAN direct addresses). -->
     <key>NSLocalNetworkUsageDescription</key>
     <string>Zuko connects to your own hosts over the local network when they're nearby. No data leaves your devices except the terminal session to your host.</string>
+    <key>NSCameraUsageDescription</key>
+    <string>Zuko uses the camera only to scan a one-time pairing code shown by your host.</string>
     <key>NSBonjourServices</key>
     <array/>
     <key>UIApplicationSupportsIndirectInputEvents</key>

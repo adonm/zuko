@@ -6,7 +6,8 @@ Client tiers follow the [roadmap](roadmap.md):
 |--------|--------|--------|
 | Rust CLI | Core | Linux/macOS release binary; `src/client.rs` |
 | iOS/iPadOS | Beta | iOS/iPadOS 26.5; `ios/Zuko/` |
-| Web | Labs | [Open client](https://adonm.github.io/zuko/web/); `web/` |
+| Android | Labs | Android API 29+; `android/` |
+| Web | Labs | [Open client](https://zuko.adonm.dev/web/); `web/` |
 
 **Core** is release-gated and supported. **Beta** is intended for use but still
 has availability or compatibility constraints. **Labs** is opt-in and may have
@@ -20,6 +21,13 @@ The web client is published with the docs. It uses browser Iroh over relays,
 lacks automatic reconnect, and stores connection state in IndexedDB. See
 [Targets](targets.md#browser-client) for its promotion criteria, security
 boundary, and known gaps.
+
+The Android client is a native Compose app using Iroh 1.0 and a pinned
+`libghostty-vt` terminal core. CI builds APK/AAB packages and runs the portable
+protocol suite plus a native emulator smoke test. It remains Labs while the
+custom renderer, QR pairing, lifecycle recovery, and device coverage mature.
+Native dependency pins and local build steps are in
+[`android/NATIVE.md`](../android/NATIVE.md).
 
 ## Implementing a client
 
@@ -61,3 +69,4 @@ Reference code:
 - Rust framing/session: `src/wire.rs`, `src/client.rs`, `src/handoff.rs`
 - Swift framing/session: `ios/ZukoWire/`, `ios/Zuko/Zuko/Net/`
 - Browser framing/session: `web/wasm/src/lib.rs`, `web/src/`
+- Android framing/session: `android/core/`, `android/app/src/main/kotlin/dev/adonm/zuko/net/`

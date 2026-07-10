@@ -85,6 +85,9 @@ zuko <code>
 ```
 
 `claim` saves the ticket under the host label unless `--as <name>` is set.
+On an interactive terminal, `share` also renders a QR containing only the
+one-time code for the iOS scanner. The long-lived ticket is never in the QR,
+and stdout remains the plain code so scripts can continue to pipe it.
 After pairing:
 
 ```sh

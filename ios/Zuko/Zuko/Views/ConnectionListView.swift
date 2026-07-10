@@ -6,16 +6,22 @@ struct ConnectionListView: View {
     @Environment(ConnectionStore.self) private var store
     @State private var presentingAdd = false
     @State private var showingOnboarding = false
+    @State private var selectedConnectionID: Connection.ID?
+    @State private var detailsConnection: Connection?
+    @State private var pendingForget: ForgetRequest?
+    @State private var errorMessage: String?
+    @State private var incomingPairingCode = ""
+    @State private var preferredCompactColumn = NavigationSplitViewColumn.sidebar
 
     var body: some View {
-        NavigationStack {
+        NavigationSplitView(preferredCompactColumn: $preferredCompactColumn) {
             Group {
                 if store.connections.isEmpty {
                     ScrollView {
                         VStack(spacing: 20) {
                             OnboardingView()
                             Button {
-                                presentingAdd = true
+                                beginPairing()
                             } label: {
                                 Label("Add connection", systemImage: "plus.circle.fill")
                                     .font(.headline)
@@ -27,21 +33,30 @@ struct ConnectionListView: View {
                         .padding()
                     }
                 } else {
-                    List {
+                    List(selection: $selectedConnectionID) {
                         ForEach(store.connections) { connection in
-                            NavigationLink(value: connection) {
+                            NavigationLink(value: connection.id) {
                                 ConnectionRow(connection: connection)
                             }
+                            .contextMenu {
+                                Button {
+                                    detailsConnection = connection
+                                } label: {
+                                    Label("Host details", systemImage: "info.circle")
+                                }
+                                Button(role: .destructive) {
+                                    pendingForget = ForgetRequest(connections: [connection])
+                                } label: {
+                                    Label("Forget host", systemImage: "trash")
+                                }
+                            }
                         }
-                        .onDelete { store.remove(at: $0) }
+                        .onDelete(perform: requestForget)
                     }
                     .listStyle(.insetGrouped)
                 }
             }
             .navigationTitle("Zuko")
-            .navigationDestination(for: Connection.self) { connection in
-                TerminalScreen(connection: connection)
-            }
             .toolbar {
                 if !store.connections.isEmpty {
                     ToolbarItem(placement: .topBarLeading) {
@@ -54,21 +69,123 @@ struct ConnectionListView: View {
                     }
                     ToolbarItem(placement: .topBarTrailing) {
                         Button {
-                            presentingAdd = true
+                            beginPairing()
                         } label: {
                             Image(systemName: "plus")
                         }
                         .accessibilityLabel("Add connection")
+                        .keyboardShortcut("n", modifiers: .command)
                     }
                 }
             }
-            .sheet(isPresented: $presentingAdd) {
-                AddConnectionView()
-            }
-            .sheet(isPresented: $showingOnboarding) {
-                OnboardingSheet()
+        } detail: {
+            if let connection = selectedConnection {
+                TerminalScreen(connection: connection)
+                    .id(connection.id)
+            } else {
+                ContentUnavailableView(
+                    "Select a host",
+                    systemImage: "terminal",
+                    description: Text("Choose a saved host from the sidebar to open its terminal.")
+                )
             }
         }
+        .sheet(isPresented: $presentingAdd) {
+            AddConnectionView(initialCode: incomingPairingCode) { connection in
+                selectedConnectionID = connection.id
+                preferredCompactColumn = .detail
+            }
+        }
+        .sheet(isPresented: $showingOnboarding) {
+            OnboardingSheet()
+        }
+        .sheet(item: $detailsConnection) { connection in
+            HostDetailsView(connectionID: connection.id) { forgottenID in
+                if selectedConnectionID == forgottenID {
+                    selectedConnectionID = nil
+                    preferredCompactColumn = .sidebar
+                }
+            }
+        }
+        .confirmationDialog(
+            pendingForget?.title ?? "Forget host?",
+            isPresented: Binding(
+                get: { pendingForget != nil },
+                set: { if !$0 { pendingForget = nil } }
+            ),
+            titleVisibility: .visible
+        ) {
+            Button(pendingForget?.buttonTitle ?? "Forget", role: .destructive, action: forgetPending)
+            Button("Cancel", role: .cancel) { pendingForget = nil }
+        } message: {
+            Text("This only removes the saved connection from this device. Revoke access separately on the host with `zuko rm <device-name>`.")
+        }
+        .alert(
+            "Couldn't update hosts",
+            isPresented: Binding(
+                get: { errorMessage != nil },
+                set: { if !$0 { errorMessage = nil } }
+            )
+        ) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text(errorMessage ?? "Unknown error")
+        }
+        .onChange(of: store.connections) {
+            if let selectedConnectionID,
+               !store.connections.contains(where: { $0.id == selectedConnectionID }) {
+                self.selectedConnectionID = nil
+                preferredCompactColumn = .sidebar
+            }
+        }
+    }
+
+    private var selectedConnection: Connection? {
+        guard let selectedConnectionID else { return nil }
+        return store.connections.first { $0.id == selectedConnectionID }
+    }
+
+    private func beginPairing(code: String = "") {
+        incomingPairingCode = code
+        presentingAdd = true
+    }
+
+    private func requestForget(at offsets: IndexSet) {
+        let connections = offsets.compactMap { index in
+            store.connections.indices.contains(index) ? store.connections[index] : nil
+        }
+        guard !connections.isEmpty else { return }
+        pendingForget = ForgetRequest(connections: connections)
+    }
+
+    private func forgetPending() {
+        guard let request = pendingForget else { return }
+        do {
+            try store.remove(ids: Set(request.connections.map(\.id)))
+            if let selectedConnectionID,
+               request.connections.contains(where: { $0.id == selectedConnectionID }) {
+                self.selectedConnectionID = nil
+                preferredCompactColumn = .sidebar
+            }
+            pendingForget = nil
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+}
+
+private struct ForgetRequest: Identifiable {
+    let id = UUID()
+    let connections: [Connection]
+
+    var title: String {
+        connections.count == 1
+            ? "Forget \(connections[0].label)?"
+            : "Forget \(connections.count) hosts?"
+    }
+
+    var buttonTitle: String {
+        connections.count == 1 ? "Forget on this device" : "Forget hosts on this device"
     }
 }
 
@@ -83,10 +200,19 @@ struct ConnectionRow: View {
                     .font(.caption2)
                 Text(shortNodeId(for: connection))
                     .font(.system(.caption, design: .monospaced))
+                if let lastConnectedAt = connection.lastConnectedAt {
+                    Text("·")
+                    Text(lastConnectedAt, style: .relative)
+                } else {
+                    Text("· Never connected")
+                }
             }
             .foregroundStyle(.secondary)
         }
         .padding(.vertical, 2)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(connection.label)
+        .accessibilityValue(connection.lastConnectedAt == nil ? "Never connected" : "Previously connected")
     }
 }
 

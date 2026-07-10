@@ -4,6 +4,7 @@ Tags `v*` trigger binary releases for:
 
 - Linux x86_64/aarch64
 - macOS x86_64/aarch64
+- Android arm64-v8a/x86_64 APK and AAB packages
 
 The release tarballs are consumed by:
 
@@ -17,6 +18,7 @@ mise use --global github:adonm/zuko
 mise run test
 mise run lint          # if Swift changed
 mise run build-ios     # if iOS changed
+mise run android-ci    # if Android/mobile FFI changed
 mise run release v0.8.0
 ```
 
@@ -47,3 +49,21 @@ bundle cage yet; users need `cage` on `PATH`.
 ## iOS
 
 Signed/TestFlight builds: [`ios/DISTRIBUTION.md`](../ios/DISTRIBUTION.md).
+
+## Android
+
+The final `release.yml` publisher waits for both desktop and Android builds, so
+there is only one GitHub Release writer. Android assets include SHA-256
+sidecars and are signed before publication.
+
+Release signing requires all four secrets and fails closed if any are missing:
+
+- `ANDROID_KEYSTORE_BASE64`
+- `ANDROID_KEYSTORE_PASSWORD`
+- `ANDROID_KEY_ALIAS`
+- `ANDROID_KEY_PASSWORD`
+
+Use a distribution/upload key, not a Play app-signing private key. Native source
+pins and ABI details are documented in [`android/NATIVE.md`](../android/NATIVE.md).
+Unsigned APK/AAB outputs remain available from the ordinary Android CI workflow
+for build verification, but are never attached to a GitHub Release.

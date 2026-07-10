@@ -2,6 +2,7 @@ import CryptoKit
 import Foundation
 import IrohLib
 import Security
+import UIKit
 import ZukoWire
 
 /// Stable per-install client identity used to derive host-scoped reattach
@@ -20,6 +21,17 @@ enum ClientIdentity {
     /// collide.
     private static let account = "client-identity-v1"
     private static let seedLength = 32
+
+    /// Human-readable label written to the host's authorised-client list during
+    /// pairing. Kept here so the pairing flow and host-details recovery copy
+    /// show exactly the same value. UIKit device properties are main-actor-only.
+    @MainActor
+    static func authorizationLabel(fallback: String = "iPhone-or-iPad") -> String {
+        let name = UIDevice.current.name.trimmingCharacters(in: .whitespacesAndNewlines)
+        let cleaned = String(name.map { $0.isWhitespace ? "-" : $0 })
+            .trimmingCharacters(in: CharacterSet(charactersIn: "-"))
+        return cleaned.isEmpty || cleaned.hasPrefix("#") ? fallback : cleaned
+    }
 
     static func sessionToken(for ticket: EndpointTicket) throws -> Data {
         let seed = try loadOrCreateSeed()

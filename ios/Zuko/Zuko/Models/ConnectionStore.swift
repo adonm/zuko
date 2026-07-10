@@ -29,10 +29,15 @@ final class ConnectionStore {
         self.connections = load()
     }
 
-    /// Validates + normalises a ticket and, if it parses, saves it.
-    /// Throws a human-readable failure when the ticket is bad.
+    /// Validates + normalises a ticket and persists the complete candidate
+    /// collection before publishing it to the UI. A Keychain failure therefore
+    /// cannot produce a host that appears saved until the next app launch.
     @discardableResult
-    func add(label: String, ticket rawTicket: String) throws -> Connection {
+    func add(
+        label: String,
+        ticket rawTicket: String,
+        authorizedClientLabel: String? = nil
+    ) throws -> Connection {
         let ticket = rawTicket.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !ticket.isEmpty else {
             throw AddError.empty
@@ -44,38 +49,87 @@ final class ConnectionStore {
             throw AddError.invalid("That doesn't look like a ticket: \(error.localizedDescription)")
         }
 
-        let connection = Connection(label: label, ticket: ticket)
-        // De-dupe by node identity: if we already have this exact ticket, just
-        // bump it to the top rather than keeping a stale copy.
-        connections.removeAll { $0.ticket == connection.ticket }
-        connections.insert(connection, at: 0)
-        if connections.count > Self.maxConnections {
-            connections = Array(connections.prefix(Self.maxConnections))
+        var candidate = connections
+        let existing = candidate.first { sameHost($0.ticket, ticket) }
+        let connection = Connection(
+            id: existing?.id ?? UUID(),
+            label: label,
+            ticket: ticket,
+            addedAt: existing?.addedAt ?? .now,
+            lastConnectedAt: existing?.lastConnectedAt,
+            authorizedClientLabel: authorizedClientLabel ?? existing?.authorizedClientLabel
+        )
+        // Re-pairing the same node updates its addresses/label while preserving
+        // its local identity and history, then promotes it to the front.
+        candidate.removeAll { sameHost($0.ticket, connection.ticket) }
+        candidate.insert(connection, at: 0)
+        if candidate.count > Self.maxConnections {
+            candidate = Array(candidate.prefix(Self.maxConnections))
         }
-        save()
+        try persist(candidate, action: "save the host")
+        connections = candidate
         return connection
     }
 
     enum AddError: LocalizedError {
         case empty
         case invalid(String)
+        case invalidLabel
+        case persistence(String)
 
         var errorDescription: String? {
             switch self {
             case .empty: return "The host returned empty connection information. Pair again."
             case .invalid(let message): return message
+            case .invalidLabel: return "Enter a name for this host."
+            case .persistence(let message): return message
             }
         }
     }
 
-    func remove(at offsets: IndexSet) {
-        connections.remove(atOffsets: offsets)
-        save()
+    func remove(at offsets: IndexSet) throws {
+        let ids = Set(offsets.compactMap { index in
+            connections.indices.contains(index) ? connections[index].id : nil
+        })
+        try remove(ids: ids)
     }
 
-    func remove(_ connection: Connection) {
-        connections.removeAll { $0.id == connection.id }
-        save()
+    func remove(_ connection: Connection) throws {
+        try remove(ids: [connection.id])
+    }
+
+    func remove(ids: Set<Connection.ID>) throws {
+        guard !ids.isEmpty else { return }
+        let candidate = connections.filter { !ids.contains($0.id) }
+        try persist(candidate, action: ids.count == 1 ? "forget the host" : "forget the hosts")
+        connections = candidate
+    }
+
+    @discardableResult
+    func rename(_ connectionID: Connection.ID, to rawLabel: String) throws -> Connection {
+        let label = rawLabel.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !label.isEmpty else { throw AddError.invalidLabel }
+        guard let index = connections.firstIndex(where: { $0.id == connectionID }) else {
+            throw AddError.invalid("That host is no longer saved.")
+        }
+        var candidate = connections
+        candidate[index].label = label
+        try persist(candidate, action: "rename the host")
+        connections = candidate
+        return candidate[index]
+    }
+
+    /// Record a successful connection and promote the host to the front. This
+    /// mirrors the CLI's recent-host ordering and is transactional for the same
+    /// reason as add/remove: visible metadata must match the Keychain.
+    func markConnected(_ connectionID: Connection.ID, at date: Date = .now) throws {
+        guard let index = connections.firstIndex(where: { $0.id == connectionID }) else { return }
+        var candidate = connections
+        var connection = candidate.remove(at: index)
+        connection.lastConnectedAt = date
+        candidate.insert(connection, at: 0)
+        try persist(candidate, action: "update the host")
+        connections = candidate
     }
 
     // MARK: - Persistence
@@ -84,7 +138,7 @@ final class ConnectionStore {
     /// first launch if a pre-Keychain blob exists. Returns `[]` only when
     /// there's genuinely nothing stored — a decode failure is logged (not
     /// silently dropped) and the corrupted blob stays on disk for recovery;
-    /// `save()` is not called on the empty result of a failed decode.
+    /// `persist(_:)` is not called on the empty result of a failed decode.
     private func load() -> [Connection] {
         // Primary path: read from the Keychain.
         do {
@@ -127,23 +181,32 @@ final class ConnectionStore {
         return decoded
     }
 
-    private func save() {
+    private func persist(_ candidate: [Connection], action: String) throws {
         do {
-            try ConnectionKeychain.save(connections)
+            try ConnectionKeychain.save(candidate)
         } catch {
-            // The Keychain write failed (disk full, item locked, etc.). Surface
-            // it via os_log so the user has a chance to notice; the in-memory
-            // list still reflects their intent for this session.
-            logger.error("Failed to persist connections to Keychain: \(String(describing: error))")
+            let detail = error.localizedDescription
+            logger.error("Failed to \(action) in Keychain: \(String(describing: error))")
+            throw AddError.persistence("Couldn't \(action) in the Keychain. \(detail)")
         }
     }
+
+    private func sameHost(_ lhs: String, _ rhs: String) -> Bool {
+        guard let left = hostNodeID(forTicket: lhs),
+              let right = hostNodeID(forTicket: rhs)
+        else { return lhs == rhs }
+        return left == right
+    }
+}
+
+func hostNodeID(forTicket ticket: String) -> String? {
+    try? EndpointTicket.fromString(str: ticket).endpointAddr().id().description
 }
 
 /// Short, recognisable id for a connection (first 8 hex chars of the node id),
 /// derived lazily from the stored ticket. Falls back to a ticket prefix.
 func shortNodeId(for connection: Connection) -> String {
-    if let addr = try? EndpointTicket.fromString(str: connection.ticket).endpointAddr() {
-        let full = addr.id().description
+    if let full = hostNodeID(forTicket: connection.ticket) {
         return String(full.prefix(8))
     }
     return String(connection.ticket.prefix(8))

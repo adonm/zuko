@@ -73,6 +73,34 @@ run = "cargo test --release --test e2e -- --ignored --nocapture"
 description = "Build ZukoRust.xcframework + regenerate Swift bindings for the iOS app. Set ZUKO_FFI_DEVICE_ONLY=1 for xtool's default device-only build."
 run = "sh scripts/build-ffi.sh"
 
+[tasks.build-android-native]
+description = "Build pinned libghostty-vt, iroh-ffi, and Zuko JNI libraries for Android. Requires ANDROID_NDK_HOME (r29)."
+tools = { zig = "0.15.2", "cargo:cargo-ndk" = "3.5.4" }
+run = "sh scripts/build-android-native.sh"
+
+[tasks.test-android-core]
+description = "Run the pure Kotlin Android protocol/session tests (no SDK or NDK needed)."
+tools = { java = "temurin-21", gradle = "8.14.3" }
+run = "gradle -p android -Pzuko.skipAndroidApp=true :core:test --no-daemon --console=plain"
+
+[tasks.gradle-android-ci]
+description = "Run Android unit tests/lint and produce debug/release APK and AAB packages."
+tools = { java = "temurin-21" }
+run = """
+./android/gradlew -p android --no-daemon --stacktrace \
+  :core:test \
+  :app:testDebugUnitTest \
+  :app:lintDebug \
+  :app:assembleDebug \
+  :app:assembleRelease \
+  :app:bundleRelease
+"""
+
+[tasks.android-ci]
+description = "Full Android CI: native libraries, tests, lint, APK, and AAB."
+depends = ["build-android-native"]
+run = "mise run gradle-android-ci"
+
 [tasks.build-ios]
 description = "Build the iOS app with xtool. One command for local dev and CI: builds FFI, patches plist/frameworks, emits ios/xtool/Zuko.app."
 run = "sh scripts/build-ios-xtool.sh"

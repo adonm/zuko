@@ -15,11 +15,27 @@ struct Connection: Identifiable, Codable, Hashable {
     var label: String
     var ticket: String
     var addedAt: Date
+    /// Most recent successful ATTACH from this device. Optional so existing
+    /// Keychain records from older releases decode without a migration.
+    var lastConnectedAt: Date?
+    /// Exact allow-list label sent during pairing, used to generate a safe,
+    /// accurate host-side revoke command even if the device is later renamed.
+    var authorizedClientLabel: String?
 
-    init(id: UUID = UUID(), label: String, ticket: String, addedAt: Date = .now) {
+    init(
+        id: UUID = UUID(),
+        label: String,
+        ticket: String,
+        addedAt: Date = .now,
+        lastConnectedAt: Date? = nil,
+        authorizedClientLabel: String? = nil
+    ) {
         self.id = id
-        self.label = label.isEmpty ? "Host" : label
+        let trimmedLabel = label.trimmingCharacters(in: .whitespacesAndNewlines)
+        self.label = trimmedLabel.isEmpty ? "Host" : trimmedLabel
         self.ticket = ticket
         self.addedAt = addedAt
+        self.lastConnectedAt = lastConnectedAt
+        self.authorizedClientLabel = authorizedClientLabel
     }
 }

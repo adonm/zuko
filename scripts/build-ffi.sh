@@ -23,7 +23,7 @@ FRAMEWORK_NAME="ZukoRust"  # not "Zuko" — the iOS app target is also `Zuko`,
                            # iroh-ffi (framework `Iroh` ≠ consumer app name).
 LIB_NAME="zuko"
 OUT_DIR="$ROOT/ios/ZukoFFI"
-TARGET_DIR=$(cargo metadata --format-version 1 --no-deps | python3 -c 'import json,sys;print(json.load(sys.stdin)["target_directory"])')
+TARGET_DIR=$(cargo metadata --locked --format-version 1 --no-deps | python3 -c 'import json,sys;print(json.load(sys.stdin)["target_directory"])')
 
 # iOS deployment target — must match the ZukoFFI/ios Package.swift platforms
 # and iroh-ffi's binary floor (26.5: iroh-ffi 1.0 was built against the iOS
@@ -65,7 +65,7 @@ fi
 #
 # Our own `zuko_*` exports (the uniffi-generated FFI surface in ffi.rs)
 # don't match the `_rust_*` glob, so they stay externally visible.
-echo "==> cargo build --lib --release for iOS targets + localize std symbols"
+echo "==> cargo rustc --lib --release --crate-type staticlib for iOS targets + localize std symbols"
 OBJCOPY="$(rustup which --toolchain "$(rustup show active-toolchain | cut -d' ' -f1)" llvm-objcopy 2>/dev/null || true)"
 if [ -z "$OBJCOPY" ]; then
     rustup component add llvm-tools-preview >/dev/null
@@ -75,7 +75,7 @@ echo "    using: $OBJCOPY"
 
 build_and_localize() {
     target="$1"
-    cargo build --lib --release --target "$target"
+    cargo rustc --locked --lib --release --target "$target" --crate-type staticlib
     lib="target/$target/release/lib${LIB_NAME}.a"
     # llvm-objcopy uses `--wildcard` as a separate flag to enable glob
     # matching in the other arguments (NOT a `--wildcard-` prefix on
@@ -139,15 +139,15 @@ fi
 #    never linked into the iOS app, so the duplicate-symbol concern
 #    doesn't apply and matching Cargo.toml's release profile keeps the
 #    two builds (iOS and host) bit-compatible for metadata reads.
-echo "==> cargo build --lib --release (host, for bindgen metadata)"
-cargo build --lib --release
+echo "==> cargo rustc --lib --release --crate-type staticlib (host, for bindgen metadata)"
+cargo rustc --locked --lib --release --crate-type staticlib
 
 # 3. Regenerate Swift bindings + C header + modulemap.
 echo "==> generating Swift bindings via uniffi-bindgen"
 BINDGEN_OUT="$OUT_DIR/Generated"
 rm -rf "$BINDGEN_OUT"
 mkdir -p "$BINDGEN_OUT"
-cargo run --bin uniffi-bindgen -- generate \
+cargo run --locked --bin uniffi-bindgen -- generate \
     --language swift \
     --out-dir "$BINDGEN_OUT" \
     --library "$TARGET_DIR/release/lib${LIB_NAME}.a" \
