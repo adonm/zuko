@@ -7,7 +7,7 @@ inputs.
 
 ## Common release controls
 
-- [ ] Keep Cargo and Flutter versions aligned (`0.9.9` and `0.9.9+9009` at the
+- [ ] Keep Cargo and Flutter versions aligned (`0.9.11` and `0.9.11+9011` at the
   time of writing); run `just check-release-metadata`.
 - [ ] Use application/package/bundle ID `dev.adonm.zuko` everywhere except the
   Partner Center-assigned Microsoft package identity.
@@ -57,8 +57,10 @@ Details: [Android store publishing](android-publishing.md).
   Distribution, Mac Installer Distribution, and a Mac App Store profile.
 - [ ] Create a dedicated App Store Connect App Manager API key and retain its
   issuer ID, key ID, and one-time `.p8` securely.
-- [ ] Run iOS `lane=build` and macOS `lane=build` first; use `beta`/`upload`
-  only after inspecting those signed artifacts.
+- [ ] Run iOS `lane=build` and macOS `lane=build` first. A release tag uploads
+  iOS to internal TestFlight automatically; reserve manual iOS `lane=beta` for
+  an intentional retry, and use macOS `lane=upload` only after inspecting its
+  signed package.
 
 Details: [Apple store publishing](apple-publishing.md).
 
@@ -112,5 +114,6 @@ Details: [Flatpak packaging](../flatpak/README.md).
 1. Complete the portal records and protected GitHub environments.
 2. Publish the `crossterm-zuko` bootstrap dependency and verify Zuko packaging.
 3. Cut the immutable tag and let the coordinated GitHub release produce checksummed artifacts.
-4. Publish Google Play internal, TestFlight, Mac App Store, and Microsoft draft builds.
+4. Confirm the automatic TestFlight build, then publish Google Play internal,
+   Mac App Store, and Microsoft draft builds through their protected workflows.
 5. Review each portal's retained artifact, metadata, policy answers, and human approval before production submission.

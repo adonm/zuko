@@ -4,24 +4,52 @@
 |--------|--------|--------|
 | Rust CLI | Core | [curl installer](getting-started.md) or Linux/macOS release tarball |
 | Android | Beta | Signed APK attached to tagged GitHub Releases |
-| iOS/iPadOS | Beta | Signed TestFlight workflow |
-| macOS | Beta | CI-built application bundle |
+| iOS/iPadOS | Beta | Internal TestFlight build produced from each release tag |
+| macOS | Beta | CI application artifact; protected Mac App Store package workflow |
 | Web | Labs | [zuko.adonm.dev/web/](https://zuko.adonm.dev/web/) |
 | Linux desktop | Beta | Flatpak attached to GitHub Releases |
 | Windows desktop | Labs | Versioned x86_64 ZIP on GitHub Releases |
 
-Release downloads are at
+GitHub Release downloads are at
 [github.com/adonm/zuko/releases/latest](https://github.com/adonm/zuko/releases/latest).
-Every downloadable package has a `.sha256` sidecar.
+Every package attached there has a `.sha256` sidecar. The web deployment,
+TestFlight build, and transient CI artifacts are separate delivery channels.
 
 - Android: install the signed APK; the AAB is for store upload.
 - Linux: install the Flatpak bundle; credentials use the host Secret Service.
 - Windows: extract the complete ZIP and run `zuko.exe`; do not move the EXE
   away from its DLL and data files.
 
-The Windows bundle is not yet an installer and does not provide automatic updates.
-For toolchains, fresh-clone commands, signing behavior, and exact output paths,
-see [Building clients](building-clients.md).
+The Windows ZIP attached to GitHub Releases is not an installer and does not
+provide automatic updates. A separate protected workflow can build and sign
+MSIX/MSIXBundle packages for Partner Center, but that path remains manual. For
+toolchains, fresh-clone commands, signing behavior, and exact output paths, see
+[Building clients](building-clients.md).
+
+## Implemented shared behavior
+
+The current Flutter client provides the same application behavior on all six
+targets unless a platform note below says otherwise:
+
+- pair by entering a two-word code or `zuko://pair/...` value;
+- preserve a stable client identity and saved hosts in protected platform
+  storage, with invalid-state recovery;
+- connect only after validating the saved endpoint ticket, host identity, and
+  `ATTACHED` token;
+- expose connecting, attached, retrying, ended, rejected, and failed states,
+  with bounded reconnect for transient failures;
+- rename, inspect, and forget saved hosts, including the host-side revocation
+  command when its authorized-client label is known;
+- render a resizable `flterm`/`libghostty` terminal with scrollback, selection,
+  copy, guarded multi-line paste, desktop keyboard/IME input, and mobile
+  accessory keys;
+- persist system/light/dark theme and terminal font-size preferences.
+
+This is a remote shell client, not a durable session manager: it has no output
+replay, and forgetting a host locally does not revoke that client on the host.
+QR capture, operating-system deep-link registration, complete accessibility
+coverage, and representative physical-device/browser testing remain promotion
+gates rather than advertised capabilities.
 
 The Rust CLI and shared Flutter client are the behavior references. Former
 Compose, TypeScript, Relm4, and Swift UI implementations were removed.
@@ -39,7 +67,9 @@ Rust/WASM bridge in `flutter/rust/web_transport/`. Platform-specific code is
 reserved for credential storage, URI delivery, lifecycle, and packaging.
 
 Apple builds use the same Flutter implementation as every other graphical
-target. TestFlight and desktop store publication remain protected release jobs.
+target. A release tag automatically builds and uploads the protected iOS IPA to
+internal TestFlight. macOS store packaging and upload remain manual protected
+jobs; neither Apple package is attached to the GitHub Release.
 
 ## Implementing or reviewing a client
 

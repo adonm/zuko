@@ -1,10 +1,11 @@
 # Apple store publishing
 
 Development compilation stays in `build-flutter.yml`. Store distribution is a
-separate, manual boundary:
+separate, protected boundary:
 
-- `release-flutter-ios.yml` builds a signed IPA; `lane=beta` validates and
-  uploads it for internal TestFlight processing.
+- `release-flutter-ios.yml` builds, validates, and uploads a signed IPA for
+  internal TestFlight processing on every `vX.Y.Z` tag. Manual `lane=build`
+  runs stop after validation; manual `lane=beta` runs upload as well.
 - `release-flutter-macos.yml` builds a sandboxed Mac App Store `.pkg`;
   `lane=upload` starts a second job protected by the `apple-store` GitHub
   environment before validation and upload.

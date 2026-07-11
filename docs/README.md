@@ -43,9 +43,11 @@ zuko app --doctor
 - [Releasing](releasing.md)
 - [Security](security.md)
 
-The shared Flutter client is the sole graphical client implementation.
-The shared Flutter client for Android, iOS, macOS,
-[web](https://zuko.adonm.dev/web/), Linux, and Windows is Labs, as is
-`zuko app`. See the [roadmap](roadmap.md) before depending on them.
+The shared Flutter client is the sole graphical client implementation. Android,
+iOS/iPadOS, macOS, and Linux are Beta; the
+[web client](https://zuko.adonm.dev/web/) and Windows bundle remain Labs because
+their browser and installer/upgrade gates are incomplete. `zuko app` is also
+Labs. See [Clients](clients.md) for current delivery channels and the
+[roadmap](roadmap.md) for remaining promotion gates.
 
 Source: [github.com/adonm/zuko](https://github.com/adonm/zuko).

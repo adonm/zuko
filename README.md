@@ -53,12 +53,12 @@ logs, and first connection. Windows hosts can use the documented
 | Tier | Surface | Commitment |
 |------|---------|------------|
 | **Core** | Linux/macOS host and Rust CLI | Primary supported workflow |
-| **Beta** | Shared Flutter client (Android/iOS/macOS/web/Linux/Windows) | One cross-platform graphical client in active validation |
-| **Labs** | Linux `zuko app` | Optional GUI-over-terminal experiment |
+| **Beta** | Flutter Android, iOS/iPadOS, macOS, and Linux clients | Shared graphical client with signed or packaged delivery paths |
+| **Labs** | Flutter web/Windows clients and Linux `zuko app` | Deployed or buildable, with channel-specific gaps documented below |
 
-See [Clients](docs/clients.md) for downloads and the
-[client build guide](docs/building-clients.md) for fresh Android, Apple, web,
-Linux, and Windows builds.
+See [Clients](docs/clients.md) for the exact capabilities and delivery channel
+of each target, and the [client build guide](docs/building-clients.md) for fresh
+Android, Apple, web, Linux, and Windows builds.
 
 zuko is not a durable session manager, full remote desktop, or centralized
 fleet-access system. Use `tmux`, `zellij`, or `screen` for work that must survive

@@ -1,24 +1,28 @@
 # Flutter platform support
 
-Zuko supports the latest two major operating-system generations available to
-each Flutter target at release time. The policy is intentionally narrow before
-1.0 so terminal, lifecycle, storage, and packaging behavior can be tested on
-every supported generation.
+Zuko's pre-1.0 support statement distinguishes an enforced package floor from
+runtime validation. A successful cross-platform compile is not a claim that
+every operating-system or browser generation has completed physical testing.
 
-Current floors:
+Current build floors and validation:
 
-| Target | Supported generations | Enforced floor |
-|--------|-----------------------|----------------|
-| Android | Android 15 and 16 | API 35 |
-| iOS/iPadOS | iOS/iPadOS 18 and 26 | 18.0 |
-| macOS | macOS 15 and 26 | 15.0 |
-| Windows | Windows 10 and 11 | Windows 10 |
-| Linux | Distribution-independent Flatpak | Freedesktop 25.08 runtime |
-| Web | Latest two stable Chrome, Firefox, Edge, and Safari releases | CI/browser policy |
+| Target | Enforced package/build floor | Automated validation |
+|--------|------------------------------|----------------------|
+| Android | API 35 minimum; SDK/build-tools 36; NDK 28.2 | shared tests plus ARM64 debug and signed release builds |
+| iOS/iPadOS | 18.0 deployment target | ARM64 Simulator build, Appetize preview, and signed device IPA validation |
+| macOS | 15.0 deployment target | release app build and protected Mac App Store package validation |
+| Windows | Windows 10 package target, x86_64 build | release bundle build; protected MSIX/MSIXBundle validation is manual |
+| Linux | x86_64 Wayland Flatpak, Freedesktop 25.08 | release bundle, offline Flatpak package, metadata, linkage, and smoke checks |
+| Web | `/web/` deployment on current browsers | shared tests and a release WASM build; no automated browser matrix yet |
+
+Android 15+, iOS/iPadOS 18+, macOS 15+, Windows 10/11, the packaged Linux
+runtime, and current Chrome/Firefox/Edge/Safari are the intended test range.
+Only the floors and CI jobs above are mechanically enforced today.
 
 The apparent Apple version gap reflects Apple's 2025 platform-version naming
 change. There was no public iOS/iPadOS 19 or macOS 16 release.
 
-Floors are reviewed with each Flutter stable/toolchain update. Raising a floor
-requires release notes and package metadata changes; lowering one requires CI
-and physical-device coverage rather than only a successful compile.
+Floors are reviewed with each Flutter toolchain update. Raising a floor requires
+release notes and package metadata changes; broadening a support claim requires
+CI or recorded physical-device/browser coverage rather than only a successful
+compile.

@@ -139,11 +139,14 @@ flutter/build/ios/iphonesimulator/Runner.app
 flutter/build/macos/Build/Products/Release/Zuko.app
 ```
 
-Flutter Apple CI builds and uploads both bundles on pull requests and `main`.
-Maintainers can run `release-flutter-ios` with
-`lane=build` for a signed IPA artifact or `lane=beta` for an internal TestFlight
-upload. It uses bundle ID `dev.adonm.zuko` and the repository's protected Apple
-signing environment.
+Flutter Apple CI compiles both targets on pull requests, `main`, and manual
+runs. It uploads the simulator and macOS ZIP artifacts only for `main` and
+manual runs; those development artifacts are retained for seven days and are
+not GitHub Release assets. Every release tag separately runs
+`release-flutter-ios`, producing a signed IPA and uploading it to internal
+TestFlight. Maintainers can still dispatch `lane=build` to stop after signed IPA
+validation or `lane=beta` to upload manually. Apple builds use bundle ID
+`dev.adonm.zuko` and the protected `apple-store` environment.
 
 ## Matching CI
 
@@ -152,4 +155,21 @@ The source of truth for build environments is:
 - `.github/workflows/build-flutter.yml` for development artifacts;
 - `.github/workflows/release.yml` for signed/versioned Flutter packages;
 - `.github/workflows/release-flutter-ios.yml` for signed Flutter IPA/TestFlight;
+- `.github/workflows/release-flutter-macos.yml` for the signed Mac App Store
+  package and optional upload;
 - `Justfile` for supported local recipes.
+
+Current automation coverage is:
+
+| Target | Pull request / `main` build | Release-tag delivery |
+|--------|-----------------------------|----------------------|
+| Shared Dart + web | analyze, unit/widget tests, relay-only web build | Pages deploys after `main`; no release asset |
+| Android | ARM64 debug APK | signed APK/AAB release assets and Android Appetize update |
+| Linux | x86_64 release bundle | x86_64 Wayland Flatpak release asset |
+| Windows | x86_64 release bundle | x86_64 ZIP release asset |
+| iOS/iPadOS | debug ARM64 Simulator app | Appetize Simulator update plus signed IPA to internal TestFlight |
+| macOS | release application bundle | no automatic release asset; protected store package workflow is manual |
+
+Compilation in this matrix does not imply store publication or the
+physical-device/browser coverage listed in [Flutter platform support](platform-support.md)
+and the [roadmap](roadmap.md).

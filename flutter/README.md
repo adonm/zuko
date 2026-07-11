@@ -23,6 +23,17 @@ Linux and Windows builds run `scripts/patch-iroh-flutter.py` after dependency
 resolution to work around the published `iroh_flutter` 1.0.1 CMake FFI bundle
 path. The script fails closed when that package version changes.
 
+The pinned Flutter beta uses explicit Impeller enablement on Android, Linux,
+macOS, and web. Its Windows embedder predates the public
+`DartProject::set_impeller_switch` API, so Windows intentionally uses the SDK
+default until the Flutter pin and configuration check are advanced together.
+
+CI analyzes and tests the shared Dart code, builds web plus all five native
+target families, and publishes only the channels documented in
+[`../docs/building-clients.md`](../docs/building-clients.md). In particular,
+an iOS release tag uploads to internal TestFlight; macOS store packaging remains
+manual, and neither Apple store package is a GitHub Release asset.
+
 Dependencies and promotion gates are documented in
 [`../docs/building-clients.md`](../docs/building-clients.md) and
 [`../docs/roadmap.md`](../docs/roadmap.md).

@@ -64,4 +64,5 @@ Use GitHub Security Advisories:
 
 Use private advisories for vulnerabilities.
 
-Scope: `src/`, `flutter/`, wire protocol, handoff, service installer, and iOS app.
+Scope: `src/`, the shared Flutter client and platform runners, wire protocol,
+handoff, service installer, and release packaging.

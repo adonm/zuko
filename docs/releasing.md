@@ -7,7 +7,8 @@ Tags matching `vX.Y.Z` trigger the coordinated CLI and Flutter release graph:
 - Flutter Linux x86_64 Flatpak;
 - Flutter Windows x86_64 bundle;
 
-Flutter iOS and Mac App Store distribution use manual protected workflows.
+Flutter iOS uploads to TestFlight automatically for release tags. Mac App Store
+distribution uses a manual protected workflow.
 Flutter web is deployed by the Pages workflow after changes reach `main`.
 
 Published assets follow these names (`TAG` includes the leading `v`):
@@ -34,7 +35,7 @@ the platform guides provide deeper operational detail.
 mise bootstrap
 just check
 just test-e2e
-just release v0.9.10
+just release v0.9.11
 ```
 
 `scripts/release.sh` validates the version, commits requested pending work,
@@ -111,10 +112,13 @@ current policy caveats in [Flatpak packaging](../flatpak/README.md).
 ## Flutter Apple distribution
 
 The Apple job in `build-flutter.yml` remains the ordinary iOS Simulator and
-macOS compile gate. Store signing and upload are isolated in manual workflows:
+macOS compile gate. It uploads seven-day development ZIP artifacts only for
+non-PR runs. Store signing and upload are isolated in protected workflows:
 
-- `lane=build` creates and validates `Zuko-Flutter.ipa` without uploading it;
-- iOS `lane=beta` uploads that IPA for internal TestFlight processing;
+- every `vX.Y.Z` tag creates, validates, and uploads `Zuko-Flutter.ipa` for
+  internal TestFlight processing;
+- a manual iOS `lane=build` creates and validates the IPA without uploading it,
+  while `lane=beta` performs the same TestFlight upload as a release tag;
 - macOS `lane=build` creates and validates a signed, sandboxed Mac App Store
   installer package;
 - macOS `lane=upload` passes through the protected `apple-store` environment

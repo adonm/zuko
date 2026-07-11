@@ -19,8 +19,8 @@ terminal experience, recovery, packaging, and clear operator feedback.
 | Tier | Product | Surfaces |
 |------|---------|----------|
 | **Core** | Host and reference client | Linux/macOS host and Rust CLI |
-| **Beta** | Shared Flutter client | Android, iOS, macOS, web, Linux, and Windows |
-| **Labs** | Application streaming experiment | Linux `zuko app` |
+| **Beta** | Packaged shared Flutter client | Android, iOS/iPadOS, macOS, and Linux |
+| **Labs** | Early delivery channels and application streaming | Flutter web/Windows and Linux `zuko app` |
 
 The former Compose Android client, TypeScript web client, and Relm4 Flatpak
 client and native Swift client were removed. They will not receive parallel
@@ -106,15 +106,16 @@ representative physical-device coverage remain open.
 | **Android** | Signed APK/AAB, Appetize preview, upgrade test, physical phone/tablet tests, Play-ready metadata |
 | **Web** | Chrome/Firefox/Safari tests, strict CSP, origin review, deployed `/web/` smoke test |
 | **Linux** | Reproducible Wayland-only Flatpak, Impeller rendering, Secret Service behavior, install/uninstall documentation |
-| **Windows** | Signed installer, Credential Manager behavior, URI registration, upgrade/uninstall tests |
+| **Windows** | Promote the protected MSIX/MSIXBundle path, verify protected-storage behavior, URI registration, and upgrade/uninstall tests |
 | **iOS/iPadOS** | Signed TestFlight build, physical-device Iroh/terminal/lifecycle tests, replacement migration decision |
-| **macOS** | Signed/notarized package, Keychain behavior, keyboard/accessibility and upgrade tests |
+| **macOS** | Mac App Store package/upload validation, Keychain behavior, keyboard/accessibility and upgrade tests |
 
 CI now analyzes and tests the shared client and builds all six target families.
-Tagged releases produce Android, Linux, and Windows artifacts; web remains part
-of the Pages deployment, while Apple builds remain validation artifacts.
-Promotion waits for package-level smoke tests and target-specific gates, not
-merely a successful compile.
+Tagged releases produce Android, Linux, and Windows GitHub assets, Android/iOS
+Appetize previews, and an internal TestFlight upload. Web remains part of the
+Pages deployment; macOS store packaging/upload and Windows Store publication
+remain protected manual workflows. Promotion waits for package-level smoke
+tests and target-specific gates, not merely a successful compile.
 
 ## Core and shared-client policy
 
