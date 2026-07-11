@@ -48,10 +48,12 @@ use std::time::Instant;
 use tokio::io::AsyncWriteExt as _;
 use tokio::sync::mpsc::{self, error::TrySendError};
 
+use crate::tunnel::{self, ClientTunnelEvent, TunnelOffer};
 use crate::wire::{
     ALPN_V2, SESSION_TOKEN_LEN, SessionToken, TYPE_ATTACHED, TYPE_DATA, TYPE_ERROR, TYPE_PING,
-    TYPE_PONG, TYPE_RESIZE, attach_frame, decode_nonce, parse_attached, parse_error, pong_frame,
-    resize_frame, try_parse_frame,
+    TYPE_PONG, TYPE_RESIZE, TYPE_TUNNEL_CLOSE, TYPE_TUNNEL_OFFER, attach_frame, decode_nonce,
+    parse_attached, parse_error, parse_tunnel_id, parse_tunnel_offer, pong_frame, resize_frame,
+    try_parse_frame,
 };
 
 /// Force-quit escape hatch: in raw mode Ctrl-C (0x03) is forwarded to the
@@ -116,6 +118,14 @@ pub async fn connect(ticket_str: &str) -> Result<()> {
         .bind()
         .await
         .context("bind local endpoint")?;
+
+    let (tunnel_tx, tunnel_rx) = mpsc::channel(128);
+    let tunnel_task = tokio::spawn(tunnel::run_client_events(
+        tunnel_rx,
+        endpoint.clone(),
+        addr.clone(),
+        initial_token,
+    ));
 
     crossterm::terminal::enable_raw_mode().context("enable raw mode")?;
     let _guard = RawModeGuard;
@@ -246,6 +256,7 @@ pub async fn connect(ticket_str: &str) -> Result<()> {
         frame_tx: &frame_tx,
         stdout_seq: &stdout_seq,
         connected: &connected,
+        tunnel_tx: &tunnel_tx,
     };
     let result: Result<()> = loop {
         connected.store(false, Ordering::Release);
@@ -278,6 +289,8 @@ pub async fn connect(ticket_str: &str) -> Result<()> {
     if let Err(e) = &result {
         eprintln!("\nzuko: {e:#}");
     }
+
+    tunnel_task.abort();
 
     // Close the endpoint gracefully so iroh can drain the connection to the
     // host. Dropping without this logs "Endpoint dropped without calling
@@ -352,6 +365,7 @@ struct ConnCtx<'a> {
     frame_tx: &'a mpsc::Sender<Vec<u8>>,
     stdout_seq: &'a std::sync::atomic::AtomicU64,
     connected: &'a std::sync::atomic::AtomicBool,
+    tunnel_tx: &'a mpsc::Sender<ClientTunnelEvent>,
 }
 
 /// Open one connection, complete the ATTACH handshake, and pump both
@@ -437,7 +451,11 @@ async fn run_one_connection(
                             Ok(Some(n)) => {
                                 acc.extend_from_slice(&tmp[..n]);
                                 if let Some(msg) = process_buffered_frames(
-                                    &mut acc, token, ctx.stdout_seq, None,
+                                    &mut acc,
+                                    token,
+                                    ctx.stdout_seq,
+                                    None,
+                                    Some(ctx.tunnel_tx),
                                 )
                                 .await?
                                 {
@@ -455,7 +473,11 @@ async fn run_one_connection(
                 Ok(Some(n)) => {
                     acc.extend_from_slice(&tmp[..n]);
                     if let Some(msg) = process_buffered_frames(
-                        &mut acc, token, ctx.stdout_seq, Some(ctx.frame_tx),
+                        &mut acc,
+                        token,
+                        ctx.stdout_seq,
+                        Some(ctx.frame_tx),
+                        Some(ctx.tunnel_tx),
                     )
                     .await?
                     {
@@ -477,7 +499,11 @@ async fn run_one_connection(
                     if let Some((_, _, control_acc, control_tmp)) = control.as_mut() {
                         control_acc.extend_from_slice(&control_tmp[..n]);
                         if let Some(msg) = process_buffered_frames(
-                            control_acc, token, ctx.stdout_seq, Some(ctx.frame_tx),
+                            control_acc,
+                            token,
+                            ctx.stdout_seq,
+                            Some(ctx.frame_tx),
+                            Some(ctx.tunnel_tx),
                         )
                         .await?
                         {
@@ -522,6 +548,7 @@ async fn process_buffered_frames(
     token: &mut SessionToken,
     stdout_seq: &std::sync::atomic::AtomicU64,
     frame_tx: Option<&mpsc::Sender<Vec<u8>>>,
+    tunnel_tx: Option<&mpsc::Sender<ClientTunnelEvent>>,
 ) -> Result<Option<String>> {
     while let Some(f) = try_parse_frame(acc) {
         match f.typ {
@@ -555,6 +582,20 @@ async fn process_buffered_frames(
             TYPE_ERROR => {
                 let (_code, msg) = parse_error(&f.payload).unwrap_or_default();
                 return Ok(Some(msg));
+            }
+            TYPE_TUNNEL_OFFER => {
+                if let Some((id, port)) = parse_tunnel_offer(&f.payload)
+                    && let Some(tx) = tunnel_tx
+                {
+                    let _ = tx.try_send(ClientTunnelEvent::Open(TunnelOffer { id, port }));
+                }
+            }
+            TYPE_TUNNEL_CLOSE => {
+                if let Some(id) = parse_tunnel_id(&f.payload)
+                    && let Some(tx) = tunnel_tx
+                {
+                    let _ = tx.try_send(ClientTunnelEvent::Close(id));
+                }
             }
             _ => {}
         }
@@ -833,7 +874,7 @@ mod tests {
         let stdout_seq = AtomicU64::new(0);
         // ATTACHED-only buffer: no DATA, so nothing is written to stdout, and
         // no ERROR frame, so the pump keeps going (None).
-        let rejected = process_buffered_frames(&mut acc, &mut token, &stdout_seq, None)
+        let rejected = process_buffered_frames(&mut acc, &mut token, &stdout_seq, None, None)
             .await
             .unwrap();
         assert!(rejected.is_none(), "ATTACHED must not signal rejection");
@@ -850,7 +891,7 @@ mod tests {
         acc.extend(crate::wire::frame(0xEE, b"junk"));
         let mut token = [9u8; SESSION_TOKEN_LEN];
         let stdout_seq = AtomicU64::new(0);
-        let rejected = process_buffered_frames(&mut acc, &mut token, &stdout_seq, None)
+        let rejected = process_buffered_frames(&mut acc, &mut token, &stdout_seq, None, None)
             .await
             .unwrap();
         assert!(rejected.is_none(), "unknown frames must not reject");
@@ -869,7 +910,7 @@ mod tests {
         );
         let mut token = [0u8; SESSION_TOKEN_LEN];
         let stdout_seq = AtomicU64::new(0);
-        let rejected = process_buffered_frames(&mut acc, &mut token, &stdout_seq, None)
+        let rejected = process_buffered_frames(&mut acc, &mut token, &stdout_seq, None, None)
             .await
             .unwrap();
         let msg = rejected.expect("ERROR frame must signal rejection");

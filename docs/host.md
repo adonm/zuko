@@ -1,7 +1,7 @@
 # Host operations
 
-`zuko` is one binary: host daemon, CLI client, pairing helper, service installer,
-upgrader, and Linux `zuko app` launcher.
+`zuko` is one binary: host daemon, CLI client, pairing helper, temporary TCP
+tunnel, service installer, upgrader, and Linux `zuko app` launcher.
 
 For binary installation, first service setup, and pairing, start with
 [Install and connect](getting-started.md).
@@ -26,6 +26,7 @@ zuko ls                # saved hosts + authorised clients
 zuko rm <name>         # remove saved host and/or authorised client
 zuko reset             # rotate host key; clear authorised clients
 
+zuko tunnel <port>     # inside hosted shell: client → host loopback TCP
 zuko app <command>     # Linux GUI app over Kitty graphics
 ```
 

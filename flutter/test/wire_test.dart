@@ -63,4 +63,20 @@ void main() {
       0,
     ]);
   });
+
+  test('encodes tunnel attachment and decodes tunnel offers', () {
+    final token = List.filled(16, 7);
+    final id = List<int>.generate(16, (index) => index);
+    final attach = encodeTunnelAttach(token, id);
+    expect(attach.first, WireType.tunnelAttach);
+    expect(attach.sublist(3), [...token, ...id]);
+
+    final offer = decodeTunnelOffer([...id, 0x1f, 0x90]);
+    expect(offer, isNotNull);
+    expect(offer!.id, id);
+    expect(offer.port, 8080);
+    expect(decodeTunnelOffer(List.filled(17, 0)), isNull);
+    expect(decodeTunnelOffer([...id, 0, 0]), isNull);
+    expect(String.fromCharCodes(tunnelAlpn), 'zuko/tunnel/1');
+  });
 }

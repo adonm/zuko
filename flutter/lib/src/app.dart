@@ -6,6 +6,7 @@ import 'package:flutter/foundation.dart'
 import 'package:flutter/material.dart' hide Key;
 import 'package:flutter/services.dart';
 import 'package:libghostty/libghostty.dart' show pasteIsSafe;
+import 'package:url_launcher/url_launcher.dart';
 
 import 'app_controller.dart';
 import 'model.dart';
@@ -69,6 +70,7 @@ class _HomeState extends State<_Home> with WidgetsBindingObserver {
   TerminalSession? session;
   StreamSubscription<Uint8List>? outputSubscription;
   StreamSubscription<SessionState>? stateSubscription;
+  StreamSubscription<TunnelEndpoint>? tunnelSubscription;
   SavedHost? selected;
   SessionState sessionState = const SessionState.ended(
     'Choose a saved host or pair a new one.',
@@ -121,12 +123,15 @@ class _HomeState extends State<_Home> with WidgetsBindingObserver {
     final active = session;
     final output = outputSubscription;
     final states = stateSubscription;
+    final tunnels = tunnelSubscription;
     session = null;
     outputSubscription = null;
     stateSubscription = null;
+    tunnelSubscription = null;
     unawaited(() async {
       await output?.cancel();
       await states?.cancel();
+      await tunnels?.cancel();
       await active?.close();
       await widget.controller.close();
     }());
@@ -139,15 +144,18 @@ class _HomeState extends State<_Home> with WidgetsBindingObserver {
     final previous = session;
     final previousOutput = outputSubscription;
     final previousStates = stateSubscription;
+    final previousTunnels = tunnelSubscription;
     session = null;
     outputSubscription = null;
     stateSubscription = null;
+    tunnelSubscription = null;
     selected = host;
     sessionState = const SessionState.connecting();
     if (mounted) setState(() {});
 
     await previousOutput?.cancel();
     await previousStates?.cancel();
+    await previousTunnels?.cancel();
     await previous?.close();
     if (!mounted || generation != _sessionGeneration) return;
 
@@ -173,6 +181,13 @@ class _HomeState extends State<_Home> with WidgetsBindingObserver {
         }
         setState(() => sessionState = state);
       });
+      tunnelSubscription = active.tunnels.listen((tunnel) {
+        if (mounted &&
+            generation == _sessionGeneration &&
+            identical(session, active)) {
+          unawaited(_openTunnel(tunnel, generation, active));
+        }
+      });
       setState(() {});
       terminal.requestFocus();
     } catch (error) {
@@ -183,14 +198,57 @@ class _HomeState extends State<_Home> with WidgetsBindingObserver {
     }
   }
 
+  Future<void> _openTunnel(
+    TunnelEndpoint tunnel,
+    int generation,
+    TerminalSession active,
+  ) async {
+    var opened = false;
+    try {
+      opened = await launchUrl(
+        tunnel.browserUrl,
+        mode: LaunchMode.inAppBrowserView,
+      );
+      if (!opened) {
+        opened = await launchUrl(
+          tunnel.browserUrl,
+          mode: LaunchMode.externalApplication,
+        );
+      }
+    } catch (_) {
+      try {
+        opened = await launchUrl(
+          tunnel.browserUrl,
+          mode: LaunchMode.externalApplication,
+        );
+      } catch (_) {
+        opened = false;
+      }
+    }
+    if (!mounted ||
+        generation != _sessionGeneration ||
+        !identical(session, active)) {
+      return;
+    }
+    final local = '127.0.0.1:${tunnel.localPort}';
+    final message = opened
+        ? 'Tunnel opened: $local → host 127.0.0.1:${tunnel.hostPort}'
+        : 'Tunnel ready at $local (browser could not be opened).';
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(SnackBar(content: Text(message)));
+  }
+
   Future<void> _disconnect() async {
     ++_sessionGeneration;
     final active = session;
     final output = outputSubscription;
     final states = stateSubscription;
+    final tunnels = tunnelSubscription;
     session = null;
     outputSubscription = null;
     stateSubscription = null;
+    tunnelSubscription = null;
     selected = null;
     sessionState = const SessionState.ended(
       'Choose a saved host or pair a new one.',
@@ -198,6 +256,7 @@ class _HomeState extends State<_Home> with WidgetsBindingObserver {
     if (mounted) setState(() {});
     await output?.cancel();
     await states?.cancel();
+    await tunnels?.cancel();
     await active?.close();
   }
 

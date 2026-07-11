@@ -24,6 +24,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::Duration;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tracing::{info, warn};
 
 use crate::HostArgs;
@@ -31,10 +32,11 @@ use crate::config_dir;
 use crate::secret;
 use crate::store;
 use crate::ticket_file::write_current_ticket;
+use crate::tunnel::{self, TunnelRegistry};
 use crate::wire::{
-    self, ALPN_V2, ERR_AUTHORIZATION, ERR_PROTOCOL, SESSION_TOKEN_LEN, SessionToken, TYPE_ATTACH,
-    TYPE_DATA, TYPE_PING, TYPE_RESIZE, decode_nonce, empty_session_token, parse_attach,
-    supported_alpns, try_parse_frame,
+    self, ALPN_V2, ERR_AUTHORIZATION, ERR_PROTOCOL, SESSION_TOKEN_LEN, SessionToken, TUNNEL_ALPN,
+    TYPE_ATTACH, TYPE_DATA, TYPE_PING, TYPE_RESIZE, decode_nonce, empty_session_token,
+    parse_attach, supported_alpns, try_parse_frame,
 };
 
 /// Per-direction capacity of the bounded channels that connect the network
@@ -102,6 +104,7 @@ struct Session {
     next_attach_id: AtomicU64,
     lease_generation: AtomicU64,
     exited: AtomicBool,
+    tunnels: TunnelRegistry,
 }
 
 impl Session {
@@ -109,7 +112,16 @@ impl Session {
         &self,
         tx: tokio::sync::mpsc::Sender<OutItem>,
         cancel: tokio::sync::watch::Sender<bool>,
-    ) -> u64 {
+    ) -> Result<u64> {
+        // Queue active tunnel offers before publishing this attachment to the
+        // PTY reader. The registry caps offers below this fresh channel's
+        // capacity, so replay cannot race terminal output or be silently lost.
+        for offer in self.tunnels.offers_for(&self.token) {
+            tx.try_send(OutItem::Frame(wire::tunnel_offer_frame(
+                offer.id, offer.port,
+            )))
+            .map_err(|_| anyhow::anyhow!("queue active tunnel offer for reattachment"))?;
+        }
         let id = self.next_attach_id.fetch_add(1, Ordering::Relaxed) + 1;
         let old = {
             let mut guard = self.attachment.lock().expect("attachment mutex poisoned");
@@ -118,7 +130,19 @@ impl Session {
         if let Some(old) = old {
             let _ = old.cancel.send(true);
         }
-        id
+        Ok(id)
+    }
+
+    async fn send_frame(&self, frame: Vec<u8>) {
+        let tx = self
+            .attachment
+            .lock()
+            .expect("attachment mutex poisoned")
+            .as_ref()
+            .map(|attachment| attachment.tx.clone());
+        if let Some(tx) = tx {
+            let _ = tx.send(OutItem::Frame(frame)).await;
+        }
     }
 
     fn detach(&self, id: u64) -> Option<u64> {
@@ -288,14 +312,16 @@ pub async fn run(args: HostArgs) -> Result<()> {
     // PTY-backed session; short client drops can reattach within the detached
     // lease window.
     let sessions: SessionRegistry = Arc::new(tokio::sync::Mutex::new(HashMap::new()));
+    let tunnels = TunnelRegistry::default();
     loop {
         if let Some(incoming) = endpoint.accept().await {
             let shell = shell.clone();
             let shell_args = args.shell_args.clone();
             let cwd = args.cwd.clone();
             let sessions = sessions.clone();
+            let tunnels = tunnels.clone();
             tokio::spawn(async move {
-                if let Err(e) = serve(incoming, shell, shell_args, cwd, sessions).await {
+                if let Err(e) = serve(incoming, shell, shell_args, cwd, sessions, tunnels).await {
                     warn!("connection ended: {e:#}");
                 }
             });
@@ -316,12 +342,19 @@ async fn serve(
     shell_args: Vec<String>,
     cwd: Option<PathBuf>,
     sessions: SessionRegistry,
+    tunnels: TunnelRegistry,
 ) -> Result<()> {
     let connecting = incoming.accept().context("accept connection")?;
     let conn = tokio::time::timeout(HANDSHAKE_TIMEOUT, connecting)
         .await
         .context("timed out completing connection")?
         .context("complete connection")?;
+    if conn.alpn() == TUNNEL_ALPN {
+        return tunnel::serve_connection(conn, tunnels).await;
+    }
+    if conn.alpn() != ALPN_V2 {
+        bail!("unsupported negotiated ALPN");
+    }
     let is_v2 = conn.alpn() == ALPN_V2;
     let (mut send, mut recv) = tokio::time::timeout(HANDSHAKE_TIMEOUT, conn.accept_bi())
         .await
@@ -360,6 +393,7 @@ async fn serve(
         shell,
         shell_args,
         cwd,
+        tunnels,
         TermSize {
             cols: request.cols,
             rows: request.rows,
@@ -378,7 +412,7 @@ async fn serve(
     let (cancel_tx, mut cancel_rx) = tokio::sync::watch::channel(false);
     let mut exit_rx = session.exit_tx.subscribe();
     let pong_tx = out_tx.clone();
-    let attach_id = session.attach(out_tx, cancel_tx);
+    let attach_id = session.attach(out_tx, cancel_tx)?;
     let token = session.token;
 
     let mut control_task = if is_v2 {
@@ -637,6 +671,7 @@ async fn get_or_create_session(
     shell: String,
     shell_args: Vec<String>,
     cwd: Option<PathBuf>,
+    tunnels: TunnelRegistry,
     size: TermSize,
 ) -> Result<Arc<Session>> {
     let (session, existed) = {
@@ -657,7 +692,7 @@ async fn get_or_create_session(
             } else {
                 requested_token
             };
-            let session = spawn_session(token, shell, shell_args, cwd, size)?;
+            let session = spawn_session(token, shell, shell_args, cwd, tunnels, size)?;
             guard.insert(token, session.clone());
             (session, false)
         }
@@ -712,15 +747,23 @@ fn spawn_session(
     shell: String,
     shell_args: Vec<String>,
     cwd: Option<PathBuf>,
+    tunnels: TunnelRegistry,
     size: TermSize,
 ) -> Result<Arc<Session>> {
+    let control = std::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0))
+        .context("bind per-session tunnel control socket")?;
+    control
+        .set_nonblocking(true)
+        .context("configure tunnel control socket")?;
+    let control_addr = control.local_addr()?;
+    let control_secret = tunnel::new_control_secret();
     let Pty {
         tx: pty_tx,
         rx: pty_rx,
         reader: pty_reader,
         master,
         child,
-    } = spawn_pty(shell, shell_args, cwd, size)?;
+    } = spawn_pty(shell, shell_args, cwd, size, control_addr, &control_secret)?;
 
     let session = Arc::new(Session {
         token,
@@ -731,11 +774,100 @@ fn spawn_session(
         next_attach_id: AtomicU64::new(0),
         lease_generation: AtomicU64::new(0),
         exited: AtomicBool::new(false),
+        tunnels,
     });
 
+    let control =
+        tokio::net::TcpListener::from_std(control).context("adopt tunnel control socket")?;
+    spawn_tunnel_control(session.clone(), control, control_secret);
     spawn_pty_reader(session.clone(), pty_reader);
     spawn_pty_writer(pty_rx, master);
     Ok(session)
+}
+
+fn spawn_tunnel_control(
+    session: Arc<Session>,
+    listener: tokio::net::TcpListener,
+    secret: [u8; 32],
+) {
+    tokio::spawn(async move {
+        let mut exit = session.exit_tx.subscribe();
+        loop {
+            tokio::select! {
+                accepted = listener.accept() => {
+                    let Ok((stream, peer)) = accepted else { break };
+                    if !peer.ip().is_loopback() {
+                        continue;
+                    }
+                    let session = session.clone();
+                    tokio::spawn(async move {
+                        if let Err(error) = handle_tunnel_registration(session, stream, secret).await {
+                            tracing::debug!("tunnel registration ended: {error:#}");
+                        }
+                    });
+                }
+                changed = exit.changed() => {
+                    if changed.is_err() || *exit.borrow() {
+                        break;
+                    }
+                }
+            }
+        }
+    });
+}
+
+async fn handle_tunnel_registration(
+    session: Arc<Session>,
+    mut stream: tokio::net::TcpStream,
+    secret: [u8; 32],
+) -> Result<()> {
+    let port = tokio::time::timeout(
+        HANDSHAKE_TIMEOUT,
+        tunnel::read_control_registration(&mut stream, &secret),
+    )
+    .await
+    .context("timed out registering tunnel")??;
+    let (offer, mut events) = match session.tunnels.register(session.token, port) {
+        Ok(registration) => registration,
+        Err(error) => {
+            stream.write_u8(1).await?;
+            stream.flush().await?;
+            return Err(error);
+        }
+    };
+    stream.write_u8(0).await?;
+    stream.flush().await?;
+    session
+        .send_frame(wire::tunnel_offer_frame(offer.id, offer.port))
+        .await;
+
+    let (mut reader, mut writer) = stream.into_split();
+    let mut byte = [0u8; 1];
+    let mut exit = session.exit_tx.subscribe();
+    loop {
+        tokio::select! {
+            read = reader.read(&mut byte) => {
+                match read {
+                    Ok(0) | Err(_) => break,
+                    Ok(_) => bail!("unexpected tunnel control data"),
+                }
+            }
+            event = events.recv() => {
+                let Some(event) = event else { break };
+                if tunnel::write_event(&mut writer, event).await.is_err() {
+                    break;
+                }
+            }
+            changed = exit.changed() => {
+                if changed.is_err() || *exit.borrow() {
+                    break;
+                }
+            }
+        }
+    }
+    session.tunnels.remove(offer.id);
+    session.send_frame(wire::tunnel_close_frame(offer.id)).await;
+    Ok(())
 }
 
 fn spawn_pty_reader(session: Arc<Session>, pty_reader: Box<dyn std::io::Read + Send>) {
@@ -855,6 +987,8 @@ fn spawn_pty(
     shell_args: Vec<String>,
     cwd: Option<PathBuf>,
     size: TermSize,
+    tunnel_control_addr: std::net::SocketAddr,
+    tunnel_control_secret: &[u8; 32],
 ) -> Result<Pty> {
     let pty_system = native_pty_system();
     let pair = pty_system
@@ -869,6 +1003,11 @@ fn spawn_pty(
     let mut cmd = CommandBuilder::new(&shell);
     cmd.args(&shell_args);
     cmd.env("TERM", "xterm-256color");
+    cmd.env(tunnel::CONTROL_ADDR_ENV, tunnel_control_addr.to_string());
+    cmd.env(
+        tunnel::CONTROL_SECRET_ENV,
+        tunnel::control_secret_hex(tunnel_control_secret),
+    );
     if let Some(dir) = cwd.as_deref() {
         cmd.cwd(dir);
     }

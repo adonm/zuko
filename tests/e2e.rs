@@ -45,6 +45,7 @@
 #![cfg(unix)]
 
 use std::io::{BufRead, BufReader, Read, Write};
+use std::net::{TcpListener, TcpStream};
 use std::path::Path;
 use std::process::{Child, Command, ExitStatus, Stdio};
 use std::sync::{Arc, Mutex, mpsc};
@@ -421,6 +422,25 @@ fn test_host_connect(zuko: &str, xdg: &Path, ticket: &str) -> Result<()> {
     fs::write(zuko_dir.join("authorized_clients"), authorized)
         .context("seed authorized clients file")?;
 
+    // A deliberately protocol-agnostic host-loopback target. The tunnel test
+    // sends arbitrary bytes and expects arbitrary bytes back, proving Zuko is
+    // forwarding raw TCP rather than interpreting HTTP/TLS.
+    let target = TcpListener::bind(("127.0.0.1", 0)).context("bind tunnel target")?;
+    let target_port = target.local_addr()?.port();
+    let target_thread = thread::spawn(move || -> Result<()> {
+        let (mut stream, _) = target.accept().context("accept tunnel target")?;
+        stream.set_read_timeout(Some(Duration::from_secs(10)))?;
+        stream.set_write_timeout(Some(Duration::from_secs(10)))?;
+        let mut request = [0u8; 16];
+        stream.read_exact(&mut request)?;
+        if &request != b"raw-tunnel-ping!" {
+            bail!("unexpected tunnel target payload: {request:?}");
+        }
+        stream.write_all(b"raw-tunnel-pong!")?;
+        Ok(())
+    });
+    let zuko_absolute = fs::canonicalize(zuko).context("canonicalize zuko binary")?;
+
     // Fork `zuko connect e2e-direct` on a PTY: crossterm's enable_raw_mode on
     // stdin needs a controlling terminal, which the PTY provides. portable-pty
     // is already a dependency (the host uses it for the shell PTY), so no new
@@ -444,6 +464,7 @@ fn test_host_connect(zuko: &str, xdg: &Path, ticket: &str) -> Result<()> {
     cmd.args(["connect", "e2e-direct"]);
     cmd.env("XDG_CONFIG_HOME", xdg.as_os_str());
     cmd.env("RUST_LOG", "");
+    cmd.env("ZUKO_NO_BROWSER", "1");
     let mut child = pair
         .slave
         .spawn_command(cmd)
@@ -471,28 +492,68 @@ fn test_host_connect(zuko: &str, xdg: &Path, ticket: &str) -> Result<()> {
         }
     });
 
-    // Drive the session: wait for the remote shell to come up, type the
-    // command once, watch for the echo, then leave cleanly. Matches the old
-    // Python harness's timing so behaviour is directly comparable.
+    // Drive the session: start the foreground tunnel inside the hosted shell,
+    // round-trip opaque bytes through its client-loopback port, interrupt it,
+    // verify the local listener closes, then prove the shell remains usable.
     let start = Instant::now();
     let token_bytes = TOKEN.as_bytes();
-    let mut typed = false;
+    let mut started_tunnel = false;
+    let mut tunnel_round_trip = false;
+    let mut tunnel_local = None;
+    let mut interrupted = false;
+    let mut interrupted_at = None;
+    let mut typed_echo = false;
     let mut success = false;
     while start.elapsed() < CLIENT_WINDOW {
         // Child exited on its own (e.g. shell died) — stop polling.
         if child.try_wait().ok().flatten().is_some() {
             break;
         }
-        // Give the remote shell a moment to come up, then type the command
-        // once. 3s matches the old Python harness.
-        if !typed && start.elapsed() > Duration::from_secs(3) {
+        if !started_tunnel && start.elapsed() > Duration::from_secs(3) {
+            let command = format!("'{}' tunnel {target_port}\r", zuko_absolute.display());
+            let _ = writer.write_all(command.as_bytes());
+            started_tunnel = true;
+        }
+        if started_tunnel && !tunnel_round_trip {
+            let local = out_buf
+                .lock()
+                .ok()
+                .and_then(|output| extract_tunnel_address(&output));
+            if let Some(local) = local {
+                round_trip_tunnel(&local)?;
+                eprintln!("OK: raw bytes round-tripped through client {local}");
+                tunnel_local = Some(local);
+                tunnel_round_trip = true;
+            }
+        }
+        if tunnel_round_trip
+            && !interrupted
+            && out_buf.lock().is_ok_and(|output| {
+                let text = String::from_utf8_lossy(&output);
+                text.contains("closed (up 16 B, down 16 B")
+            })
+        {
+            let _ = writer.write_all(&[0x03]);
+            interrupted = true;
+            interrupted_at = Some(Instant::now());
+        }
+        if interrupted
+            && !typed_echo
+            && interrupted_at.is_some_and(|at| at.elapsed() > Duration::from_millis(500))
+            && out_buf.lock().is_ok_and(|output| {
+                String::from_utf8_lossy(&output).contains("zuko tunnel: stopped")
+            })
+            && tunnel_local
+                .as_deref()
+                .is_some_and(|local| TcpStream::connect(local).is_err())
+        {
             let _ = writer.write_all(b"echo ");
             let _ = writer.write_all(TOKEN.as_bytes());
             let _ = writer.write_all(b"\r");
-            typed = true;
+            typed_echo = true;
         }
-        // Once the token is echoed back, leave the shell cleanly.
-        if typed {
+        // Once the post-tunnel token is echoed back, leave the shell cleanly.
+        if typed_echo {
             let saw_token = out_buf
                 .lock()
                 .is_ok_and(|o| o.windows(token_bytes.len()).any(|w| w == token_bytes));
@@ -542,7 +603,46 @@ fn test_host_connect(zuko: &str, xdg: &Path, ticket: &str) -> Result<()> {
     if !out.windows(token_bytes.len()).any(|w| w == token_bytes) {
         bail!("token {TOKEN:?} not seen in client output");
     }
-    eprintln!("OK: client saw the shell's echo output");
+    if !tunnel_round_trip {
+        bail!("raw tunnel round-trip did not complete");
+    }
+    let output = String::from_utf8_lossy(&out);
+    if !output.contains("zuko tunnel: connection") || !output.contains("zuko tunnel: stopped") {
+        bail!("tunnel traffic/lifecycle stats were not printed");
+    }
+    target_thread
+        .join()
+        .map_err(|_| anyhow::anyhow!("tunnel target thread panicked"))??;
+    eprintln!("OK: tunnel stopped, local port closed, and shell remained usable");
+    Ok(())
+}
+
+fn extract_tunnel_address(output: &[u8]) -> Option<String> {
+    let text = String::from_utf8_lossy(output);
+    let marker = "zuko tunnel: client ";
+    let start = text.rfind(marker)? + marker.len();
+    let rest = &text[start..];
+    let end = rest
+        .find(|character: char| character.is_ascii_whitespace())
+        .unwrap_or(rest.len());
+    let address = &rest[..end];
+    address
+        .parse::<std::net::SocketAddr>()
+        .ok()
+        .filter(|address| address.ip().is_loopback())
+        .map(|address| address.to_string())
+}
+
+fn round_trip_tunnel(address: &str) -> Result<()> {
+    let mut stream = TcpStream::connect(address).context("connect client tunnel listener")?;
+    stream.set_read_timeout(Some(Duration::from_secs(10)))?;
+    stream.set_write_timeout(Some(Duration::from_secs(10)))?;
+    stream.write_all(b"raw-tunnel-ping!")?;
+    let mut response = [0u8; 16];
+    stream.read_exact(&mut response)?;
+    if &response != b"raw-tunnel-pong!" {
+        bail!("unexpected tunnel response: {response:?}");
+    }
     Ok(())
 }
 

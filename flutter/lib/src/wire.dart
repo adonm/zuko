@@ -2,6 +2,21 @@ import 'dart:convert';
 import 'dart:typed_data';
 
 const sessionAlpn = <int>[0x7a, 0x75, 0x6b, 0x6f, 0x2f, 0x32];
+const tunnelAlpn = <int>[
+  0x7a,
+  0x75,
+  0x6b,
+  0x6f,
+  0x2f,
+  0x74,
+  0x75,
+  0x6e,
+  0x6e,
+  0x65,
+  0x6c,
+  0x2f,
+  0x31,
+];
 const handoffAlpn = <int>[
   0x7a,
   0x75,
@@ -28,6 +43,10 @@ abstract final class WireType {
   static const attached = 0x07;
   static const authorize = 0x08;
   static const error = 0x09;
+  static const tunnelOffer = 0x0a;
+  static const tunnelClose = 0x0b;
+  static const tunnelAttach = 0x0c;
+  static const tunnelAttached = 0x0d;
 }
 
 final class WireFrame {
@@ -67,6 +86,19 @@ Uint8List encodeAuthorize(List<int> token, String label) {
     ...token,
     ...bytes.take(0xffff - 16),
   ]);
+}
+
+Uint8List encodeTunnelAttach(List<int> token, List<int> id) {
+  if (token.length != 16) throw ArgumentError('session token must be 16 bytes');
+  if (id.length != 16) throw ArgumentError('tunnel id must be 16 bytes');
+  return encodeFrame(WireType.tunnelAttach, [...token, ...id]);
+}
+
+({Uint8List id, int port})? decodeTunnelOffer(List<int> payload) {
+  if (payload.length != 18) return null;
+  final port = (payload[16] << 8) | payload[17];
+  if (port == 0) return null;
+  return (id: Uint8List.fromList(payload.take(16).toList()), port: port);
 }
 
 Uint8List encodeResize(TerminalGeometry size) =>

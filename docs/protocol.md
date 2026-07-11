@@ -4,8 +4,10 @@
 
 - Iroh QUIC endpoint ticket (`endpointa…`).
 - Session ALPN: `zuko/2`.
+- Raw tunnel ALPN: `zuko/tunnel/1`.
 - Handoff ALPN: `zuko/handoff/1`.
-- First bidi stream is data. Optional second bidi stream is control.
+- On `zuko/2`, the first bidi stream is data. An optional second bidi stream
+  is control.
 
 ## Frame format
 
@@ -28,6 +30,10 @@ accumulate and parse greedily; frames can split/coalesce across QUIC reads.
 | `0x07` | `ATTACHED` | host → client | `token:16 bytes` |
 | `0x08` | `AUTHORIZE` | client → handoff host | `token:16 bytes` + UTF-8 label |
 | `0x09` | `ERROR` | host → client | `code:u8` + UTF-8 message |
+| `0x0a` | `TUNNEL_OFFER` | host → terminal client | `id:16 bytes port:u16` |
+| `0x0b` | `TUNNEL_CLOSE` | host → terminal client | `id:16 bytes` |
+| `0x0c` | `TUNNEL_ATTACH` | client → tunnel host | `token:16 bytes id:16 bytes` |
+| `0x0d` | `TUNNEL_ATTACHED` | tunnel host → client | `id:16 bytes` |
 
 Unknown types are ignored.
 
@@ -61,10 +67,37 @@ lease. A second connection with the same token takes over the same PTY.
 Shell EOF closes the stream and kills the PTY. Network/client drop detaches the
 PTY for 5 minutes; output while detached is discarded.
 
+## Raw TCP tunnel
+
+`zuko tunnel <port>` runs inside the hosted PTY and registers host
+`127.0.0.1:<port>` with the parent host over a random, per-PTY loopback control
+capability. The registration control connection is the tunnel's lifetime
+lease. The host sends `TUNNEL_OFFER(id, port)` on the authenticated terminal
+stream and replays active offers after terminal reattachment. A session may
+register at most 64 active tunnels.
+
+A native client then:
+
+1. Dials the same endpoint on `zuko/tunnel/1`.
+2. Opens a handshake bidi stream and sends `TUNNEL_ATTACH(token, id)`.
+3. Requires `TUNNEL_ATTACHED(id)` before binding a local listener.
+4. Binds an ephemeral port on client `127.0.0.1`.
+5. Maps each accepted local TCP connection to one additional Iroh bidi stream.
+
+The host validates the normal authorized-client token and random tunnel ID,
+then maps each post-handshake bidi stream to a fresh TCP connection to the
+registered host-loopback port. Bytes after the handshake are opaque. Zuko does
+not parse HTTP, terminate TLS, rewrite traffic, or infer application protocol.
+
+Control EOF removes the registration and emits `TUNNEL_CLOSE(id)`. Command
+exit, PTY exit, explicit close, or Iroh connection closure tears down listeners
+and active streams. Completed streams report byte counts to the foreground
+command over the private control connection.
+
 ## Compatibility
 
-- The ALPN is the incompatible-version boundary. Current peers support only
-  `zuko/2`; there is no version negotiation or v1 fallback.
+- The ALPN is the incompatible-version boundary. There is no version
+  negotiation or v1 fallback.
 - New optional frame types may be added to `zuko/2`; receivers ignore unknown
   types.
 - Existing frame meanings and required handshake order must not change within

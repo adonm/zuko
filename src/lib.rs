@@ -16,6 +16,7 @@ pub mod secret;
 pub mod service;
 pub mod store;
 pub mod ticket_file;
+pub mod tunnel;
 pub mod wire;
 
 use std::path::PathBuf;
@@ -77,6 +78,15 @@ pub struct HostArgs {
     /// Directory to start the shell in.
     #[arg(long)]
     pub cwd: Option<PathBuf>,
+}
+
+/// `zuko tunnel` configuration. The command runs inside a hosted shell and
+/// forwards a client-loopback TCP port to the selected host-loopback port.
+#[derive(clap::Args, Clone, Debug)]
+pub struct TunnelArgs {
+    /// TCP port listening on 127.0.0.1 on the host.
+    #[arg(value_parser = clap::value_parser!(u16).range(1..))]
+    pub port: u16,
 }
 
 /// `zuko app` configuration: run one Wayland GUI app inside a terminal by

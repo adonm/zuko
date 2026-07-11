@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:iroh_flutter/iroh_flutter.dart';
@@ -107,6 +108,8 @@ final class _NativeSession implements TerminalSession {
   TerminalGeometry _geometry;
   final _output = StreamController<Uint8List>.broadcast(sync: true);
   final _states = StreamController<SessionState>.broadcast(sync: true);
+  final _tunnels = StreamController<TunnelEndpoint>.broadcast(sync: true);
+  final Map<String, _NativeTunnel> _activeTunnels = {};
   SendStream? _send;
   Connection? _connection;
   Future<void> _writeTail = Future.value();
@@ -119,6 +122,8 @@ final class _NativeSession implements TerminalSession {
   Stream<Uint8List> get output => _output.stream;
   @override
   Stream<SessionState> get states => _states.stream;
+  @override
+  Stream<TunnelEndpoint> get tunnels => _tunnels.stream;
 
   void start() {
     _runner = Future<void>.microtask(_run);
@@ -135,9 +140,13 @@ final class _NativeSession implements TerminalSession {
       );
       try {
         await _runOnce(onAttached: () => attempt = 0);
-        if (!_closed) _states.add(const SessionState.ended());
+        if (!_closed) {
+          await _closeAllTunnels();
+          _states.add(const SessionState.ended());
+        }
         return;
       } on _SessionFailure catch (error) {
+        await _closeAllTunnels();
         _states.add(error.state);
         return;
       } catch (error) {
@@ -174,10 +183,8 @@ final class _NativeSession implements TerminalSession {
       );
     }
     final token = deriveSessionToken(_clientKey, ticket.address.id.asBytes());
-    final connection = await (await _endpoint()).connect(
-      ticket.address,
-      sessionAlpn,
-    );
+    final endpoint = await _endpoint();
+    final connection = await endpoint.connect(ticket.address, sessionAlpn);
     _connection = connection;
     final (send, receive) = await connection.openBi();
     _send = send;
@@ -218,6 +225,15 @@ final class _NativeSession implements TerminalSession {
                   ? null
                   : utf8.decode(frame.payload.sublist(1), allowMalformed: true);
               throw _SessionFailure(sessionFailureState(code, message));
+            case WireType.tunnelOffer:
+              final offer = decodeTunnelOffer(frame.payload);
+              if (_attached && offer != null) {
+                unawaited(_openTunnel(endpoint, ticket.address, token, offer));
+              }
+            case WireType.tunnelClose:
+              if (frame.payload.length == 16) {
+                unawaited(_closeTunnel(_hex(frame.payload)));
+              }
           }
         }
       }
@@ -235,6 +251,49 @@ final class _NativeSession implements TerminalSession {
       if (!_closed && send != null) await send.writeAll(bytes);
     });
     return _writeTail;
+  }
+
+  Future<void> _openTunnel(
+    Endpoint endpoint,
+    EndpointAddr address,
+    Uint8List token,
+    ({Uint8List id, int port}) offer,
+  ) async {
+    final key = _hex(offer.id);
+    final existing = _activeTunnels[key];
+    if (existing != null && !existing.closed) return;
+    await existing?.close();
+    final tunnel = _NativeTunnel(
+      endpoint: endpoint,
+      address: address,
+      token: token,
+      id: offer.id,
+      hostPort: offer.port,
+    );
+    _activeTunnels[key] = tunnel;
+    try {
+      final endpoint = await tunnel.start();
+      if (!_closed && identical(_activeTunnels[key], tunnel)) {
+        _tunnels.add(endpoint);
+      } else {
+        await tunnel.close();
+      }
+    } catch (_) {
+      if (identical(_activeTunnels[key], tunnel)) {
+        _activeTunnels.remove(key);
+      }
+      await tunnel.close();
+    }
+  }
+
+  Future<void> _closeTunnel(String key) async {
+    await _activeTunnels.remove(key)?.close();
+  }
+
+  Future<void> _closeAllTunnels() async {
+    final tunnels = _activeTunnels.values.toList();
+    _activeTunnels.clear();
+    await Future.wait(tunnels.map((tunnel) => tunnel.close()));
   }
 
   @override
@@ -269,8 +328,154 @@ final class _NativeSession implements TerminalSession {
     _connection?.close(reason: utf8.encode('client disconnected'));
     await _writeTail.catchError((_) {});
     await _runner?.catchError((_) {});
+    await _closeAllTunnels();
     await _output.close();
     await _states.close();
+    await _tunnels.close();
+  }
+}
+
+final class _NativeTunnel {
+  _NativeTunnel({
+    required this.endpoint,
+    required this.address,
+    required this.token,
+    required this.id,
+    required this.hostPort,
+  });
+
+  final Endpoint endpoint;
+  final EndpointAddr address;
+  final Uint8List token;
+  final Uint8List id;
+  final int hostPort;
+  Connection? _connection;
+  ServerSocket? _listener;
+  final Set<Socket> _sockets = {};
+  final Set<Future<void>> _proxies = {};
+  Future<void>? _closing;
+  bool closed = false;
+
+  Future<TunnelEndpoint> start() async {
+    final connection = await endpoint.connect(address, tunnelAlpn);
+    if (closed) {
+      connection.close(reason: utf8.encode('tunnel cancelled'));
+      throw StateError('Tunnel was cancelled during setup.');
+    }
+    _connection = connection;
+    final (send, receive) = await connection.openBi();
+    await send.writeAll(encodeTunnelAttach(token, id));
+    await send.finish();
+
+    final decoder = WireDecoder();
+    while (true) {
+      final bytes = await receive.read(1024);
+      if (bytes == null) throw StateError('Tunnel closed during setup.');
+      for (final frame in decoder.add(bytes)) {
+        if (frame.type == WireType.tunnelAttached &&
+            frame.payload.length == 16 &&
+            _equal(frame.payload, id)) {
+          if (closed) throw StateError('Tunnel was cancelled during setup.');
+          final listener = await ServerSocket.bind(
+            InternetAddress.loopbackIPv4,
+            0,
+            shared: false,
+          );
+          if (closed) {
+            await listener.close();
+            throw StateError('Tunnel was cancelled during setup.');
+          }
+          _listener = listener;
+          unawaited(_accept(listener, connection));
+          unawaited(connection.closed().then((_) => close()));
+          return TunnelEndpoint(
+            id: _hex(id),
+            hostPort: hostPort,
+            localPort: listener.port,
+          );
+        }
+        if (frame.type == WireType.error) {
+          final message = frame.payload.length <= 1
+              ? 'Tunnel rejected.'
+              : utf8.decode(frame.payload.sublist(1), allowMalformed: true);
+          throw StateError(message);
+        }
+      }
+    }
+  }
+
+  Future<void> _accept(ServerSocket listener, Connection connection) async {
+    try {
+      await for (final socket in listener) {
+        if (closed) {
+          socket.destroy();
+          break;
+        }
+        _sockets.add(socket);
+        late final Future<void> proxy;
+        proxy = _proxy(socket, connection).whenComplete(() {
+          _sockets.remove(socket);
+          _proxies.remove(proxy);
+        });
+        _proxies.add(proxy);
+        unawaited(proxy);
+      }
+    } catch (_) {
+      if (!closed) await close();
+    }
+  }
+
+  Future<void> _proxy(Socket socket, Connection connection) async {
+    try {
+      final (send, receive) = await connection.openBi();
+      Future<void> upload() async {
+        await for (final bytes in socket) {
+          await send.writeAll(bytes);
+        }
+        await send.finish();
+      }
+
+      Future<void> download() async {
+        while (true) {
+          final bytes = await receive.read(16 * 1024);
+          if (bytes == null) break;
+          socket.add(bytes);
+          await socket.flush();
+        }
+        // Dart Socket.close() closes the IOSink/send half; the input stream
+        // remains readable until upload completes, preserving TCP half-close.
+        await socket.close();
+      }
+
+      await Future.wait([upload(), download()]);
+    } catch (_) {
+      socket.destroy();
+    } finally {
+      socket.destroy();
+    }
+  }
+
+  Future<void> close() {
+    closed = true;
+    return _closing ??= _close();
+  }
+
+  Future<void> _close() async {
+    await _listener?.close();
+    _listener = null;
+    final sockets = _sockets.toList();
+    _sockets.clear();
+    for (final socket in sockets) {
+      socket.destroy();
+    }
+    _connection?.close(reason: utf8.encode('tunnel stopped'));
+    _connection = null;
+    final proxies = _proxies.toList();
+    if (proxies.isNotEmpty) {
+      await Future.wait(
+        proxies,
+      ).timeout(const Duration(seconds: 2), onTimeout: () => const <void>[]);
+    }
   }
 }
 
@@ -282,6 +487,9 @@ bool _equal(List<int> left, List<int> right) {
   }
   return difference == 0;
 }
+
+String _hex(List<int> bytes) =>
+    bytes.map((byte) => byte.toRadixString(16).padLeft(2, '0')).join();
 
 final class _SessionFailure implements Exception {
   const _SessionFailure(this.state);

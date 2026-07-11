@@ -72,6 +72,8 @@ zuko                     # TTY picker / non-TTY list
 zuko share               # authorise a new client
 zuko claim <code> --as x # explicit claim form
 zuko doctor              # check service, ticket, state, and network
+# inside a connected host shell:
+zuko tunnel 8000         # client loopback → host 127.0.0.1:8000
 ```
 
 Session notes:
@@ -80,6 +82,24 @@ Session notes:
 - Detached PTY lease: 5 minutes. No replay buffer.
 - Use `tmux`, `zellij`, or `screen` for durable work.
 - CLI force-exit: Ctrl-C three times within ~1s with no remote output.
+
+## Temporary TCP tunnels
+
+Run `zuko tunnel <port>` inside a shell opened through Zuko. The native client
+binds an ephemeral loopback port, prints it, and opens its HTTP URL for the
+common local-web-server case. Traffic is raw TCP: Zuko does not parse HTTP or
+terminate TLS, so the printed port also works with HTTPS, WebSockets, SSH, and
+other TCP clients.
+
+```sh
+# On the host, inside the connected shell:
+python3 -m http.server 8000 --bind 127.0.0.1 &
+zuko tunnel 8000
+```
+
+The command remains in the foreground and reports connection/byte totals.
+Ctrl-C closes the Iroh tunnel and client port. See
+[`docs/tunnel.md`](docs/tunnel.md).
 
 ## Labs: `zuko app` (Linux)
 

@@ -42,7 +42,7 @@ argon2 = "0.5"
 anyhow = "1"
 iroh = "1.0"
 iroh-tickets = "1.0"
-tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "io-util", "signal", "time"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "io-util", "signal", "time", "net"] }
 portable-pty = "0.8"
 crossterm = { package = "crossterm-zuko", version = "=0.29.0-zuko.1", git = "https://github.com/adonm/crossterm.git", tag = "crossterm-zuko-v0.29.0-zuko.1" }
 clap = { version = "4", features = ["derive"] }
@@ -72,6 +72,9 @@ shell-words = "1"
 # TIOCGWINSZ ioctl to read terminal pixel size: the client sends pixels to the
 # host so a host-side `zuko app` renders at the client's real resolution.
 libc = "0.2"
+# Open the client-loopback endpoint for `zuko tunnel`; raw tunnel traffic does
+# not depend on any HTTP/TLS implementation in Zuko itself.
+webbrowser = { version = "1.2.1", features = ["hardened"] }
 
 # Linux-only `zuko app` backend. zuko spawns cage (a mature wlroots kiosk) as a
 # subprocess — cage does the compositing/output/scale/xdg-shell/seat work in

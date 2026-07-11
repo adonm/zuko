@@ -83,6 +83,7 @@ final class _WebSession implements TerminalSession {
   TerminalGeometry _geometry;
   final _output = StreamController<Uint8List>.broadcast(sync: true);
   final _states = StreamController<SessionState>.broadcast(sync: true);
+  final _tunnels = StreamController<TunnelEndpoint>.broadcast(sync: true);
   JSObject? _session;
   bool _attached = false;
   bool _closed = false;
@@ -93,6 +94,8 @@ final class _WebSession implements TerminalSession {
   Stream<Uint8List> get output => _output.stream;
   @override
   Stream<SessionState> get states => _states.stream;
+  @override
+  Stream<TunnelEndpoint> get tunnels => _tunnels.stream;
 
   void start() {
     _runner = Future<void>.microtask(_run);
@@ -238,5 +241,6 @@ final class _WebSession implements TerminalSession {
     await _runner?.catchError((_) {});
     await _output.close();
     await _states.close();
+    await _tunnels.close();
   }
 }

@@ -19,6 +19,10 @@
 //!   0x09 ERROR    payload = [code: u8][message: UTF-8]   (host -> client, fatal)
 //!                 code 0x01 = authorisation failure — re-pair with `zuko share`.
 //!                 code 0x02 = protocol violation.
+//!   0x0a TUNNEL_OFFER payload = [id: 16 bytes][host port: u16 BE]
+//!   0x0b TUNNEL_CLOSE payload = [id: 16 bytes]
+//!   0x0c TUNNEL_ATTACH payload = [token: 16 bytes][id: 16 bytes]
+//!   0x0d TUNNEL_ATTACHED payload = [id: 16 bytes]
 //! ```
 //!
 //! ## Handshake
@@ -36,9 +40,12 @@ use anyhow::{Result, anyhow};
 /// Protocol v2 ALPN. v2 keeps v1 frame encoding but allows a second bidi
 /// control stream so resize/ping traffic does not queue behind terminal DATA.
 pub const ALPN_V2: &[u8] = b"zuko/2";
+/// Independent raw TCP forwarding protocol. A separate ALPN prevents opaque
+/// application bytes from ever being interpreted as terminal control frames.
+pub const TUNNEL_ALPN: &[u8] = b"zuko/tunnel/1";
 
 pub fn supported_alpns() -> Vec<Vec<u8>> {
-    vec![ALPN_V2.to_vec()]
+    vec![ALPN_V2.to_vec(), TUNNEL_ALPN.to_vec()]
 }
 
 pub const TYPE_DATA: u8 = 0x00;
@@ -49,12 +56,18 @@ pub const TYPE_ATTACH: u8 = 0x06;
 pub const TYPE_ATTACHED: u8 = 0x07;
 pub const TYPE_AUTHORIZE: u8 = 0x08;
 pub const TYPE_ERROR: u8 = 0x09;
+pub const TYPE_TUNNEL_OFFER: u8 = 0x0A;
+pub const TYPE_TUNNEL_CLOSE: u8 = 0x0B;
+pub const TYPE_TUNNEL_ATTACH: u8 = 0x0C;
+pub const TYPE_TUNNEL_ATTACHED: u8 = 0x0D;
 /// `ERROR` frame codes (the first byte of an ERROR payload).
 pub const ERR_AUTHORIZATION: u8 = 0x01;
 pub const ERR_PROTOCOL: u8 = 0x02;
 pub const MAX_PAYLOAD_LEN: usize = u16::MAX as usize;
 pub const SESSION_TOKEN_LEN: usize = 16;
 pub type SessionToken = [u8; SESSION_TOKEN_LEN];
+pub const TUNNEL_ID_LEN: usize = 16;
+pub type TunnelId = [u8; TUNNEL_ID_LEN];
 
 pub struct ParsedFrame {
     pub typ: u8,
@@ -210,6 +223,58 @@ pub fn parse_error(payload: &[u8]) -> Option<(u8, String)> {
     Some((code, String::from_utf8_lossy(rest).into_owned()))
 }
 
+pub fn tunnel_offer_frame(id: TunnelId, port: u16) -> Vec<u8> {
+    let mut payload = Vec::with_capacity(TUNNEL_ID_LEN + 2);
+    payload.extend_from_slice(&id);
+    payload.extend_from_slice(&port.to_be_bytes());
+    frame(TYPE_TUNNEL_OFFER, &payload)
+}
+
+pub fn tunnel_close_frame(id: TunnelId) -> Vec<u8> {
+    frame(TYPE_TUNNEL_CLOSE, &id)
+}
+
+pub fn tunnel_attach_frame(token: SessionToken, id: TunnelId) -> Vec<u8> {
+    let mut payload = Vec::with_capacity(SESSION_TOKEN_LEN + TUNNEL_ID_LEN);
+    payload.extend_from_slice(&token);
+    payload.extend_from_slice(&id);
+    frame(TYPE_TUNNEL_ATTACH, &payload)
+}
+
+pub fn tunnel_attached_frame(id: TunnelId) -> Vec<u8> {
+    frame(TYPE_TUNNEL_ATTACHED, &id)
+}
+
+pub fn parse_tunnel_offer(payload: &[u8]) -> Option<(TunnelId, u16)> {
+    if payload.len() != TUNNEL_ID_LEN + 2 {
+        return None;
+    }
+    let mut id = [0; TUNNEL_ID_LEN];
+    id.copy_from_slice(&payload[..TUNNEL_ID_LEN]);
+    let port = u16::from_be_bytes([payload[TUNNEL_ID_LEN], payload[TUNNEL_ID_LEN + 1]]);
+    (port != 0).then_some((id, port))
+}
+
+pub fn parse_tunnel_id(payload: &[u8]) -> Option<TunnelId> {
+    if payload.len() != TUNNEL_ID_LEN {
+        return None;
+    }
+    let mut id = [0; TUNNEL_ID_LEN];
+    id.copy_from_slice(payload);
+    Some(id)
+}
+
+pub fn parse_tunnel_attach(payload: &[u8]) -> Option<(SessionToken, TunnelId)> {
+    if payload.len() != SESSION_TOKEN_LEN + TUNNEL_ID_LEN {
+        return None;
+    }
+    let mut token = [0; SESSION_TOKEN_LEN];
+    token.copy_from_slice(&payload[..SESSION_TOKEN_LEN]);
+    let mut id = [0; TUNNEL_ID_LEN];
+    id.copy_from_slice(&payload[SESSION_TOKEN_LEN..]);
+    Some((token, id))
+}
+
 pub const fn empty_session_token(token: &SessionToken) -> bool {
     let mut i = 0;
     while i < SESSION_TOKEN_LEN {
@@ -350,5 +415,36 @@ mod tests {
         let mut buf = error_frame(ERR_PROTOCOL, "");
         let f = try_parse_frame(&mut buf).unwrap();
         assert_eq!(parse_error(&f.payload), Some((ERR_PROTOCOL, String::new())));
+    }
+
+    #[test]
+    fn tunnel_frames_round_trip_on_separate_alpn() {
+        let id = [3u8; TUNNEL_ID_LEN];
+        let token = [4u8; SESSION_TOKEN_LEN];
+
+        let mut buf = tunnel_offer_frame(id, 8443);
+        let frame = try_parse_frame(&mut buf).unwrap();
+        assert_eq!(frame.typ, TYPE_TUNNEL_OFFER);
+        assert_eq!(parse_tunnel_offer(&frame.payload), Some((id, 8443)));
+
+        let mut buf = tunnel_close_frame(id);
+        let frame = try_parse_frame(&mut buf).unwrap();
+        assert_eq!(frame.typ, TYPE_TUNNEL_CLOSE);
+        assert_eq!(parse_tunnel_id(&frame.payload), Some(id));
+
+        let mut buf = tunnel_attach_frame(token, id);
+        let frame = try_parse_frame(&mut buf).unwrap();
+        assert_eq!(frame.typ, TYPE_TUNNEL_ATTACH);
+        assert_eq!(parse_tunnel_attach(&frame.payload), Some((token, id)));
+
+        let mut buf = tunnel_attached_frame(id);
+        let frame = try_parse_frame(&mut buf).unwrap();
+        assert_eq!(frame.typ, TYPE_TUNNEL_ATTACHED);
+        assert_eq!(parse_tunnel_id(&frame.payload), Some(id));
+
+        assert_eq!(
+            supported_alpns(),
+            vec![ALPN_V2.to_vec(), TUNNEL_ALPN.to_vec()]
+        );
     }
 }

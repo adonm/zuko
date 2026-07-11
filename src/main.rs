@@ -52,7 +52,10 @@ use inquire::{Confirm, InquireError, Select};
 use std::io::IsTerminal;
 use std::path::{Path, PathBuf};
 
-use zuko::{HostArgs, ShareArgs, client, code, handoff, host, secret, service, store, ticket_file};
+use zuko::{
+    HostArgs, ShareArgs, TunnelArgs, client, code, handoff, host, secret, service, store,
+    ticket_file, tunnel,
+};
 
 #[derive(Parser)]
 #[command(
@@ -81,6 +84,10 @@ enum Command {
         /// Saved host name (from `zuko ls`). Use `zuko claim <code>` to add one.
         name: String,
     },
+
+    /// Forward an ephemeral client-loopback TCP port to a host-loopback port.
+    /// Run inside a shell opened through Zuko; stays foreground until Ctrl-C.
+    Tunnel(TunnelArgs),
 
     /// Install the host daemon as a user service (systemd on Linux, launchd
     /// on macOS).
@@ -205,6 +212,7 @@ async fn main() -> Result<()> {
     match cli.command {
         Some(Command::Host(args)) => host::run(args).await,
         Some(Command::Connect { name }) => connect_by_name(&name).await,
+        Some(Command::Tunnel(args)) => tunnel::run(args).await,
         Some(Command::Install(args)) => {
             service::install(&args.resolve())?;
             Ok(())

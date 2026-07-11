@@ -9,6 +9,7 @@
 - [Windows host through WSL2](windows-wsl2.md)
 - [Clients](clients.md)
   - [Platform support](platform-support.md)
+- [Temporary TCP tunnels](tunnel.md)
 - [`zuko app` (Labs)](app.md)
 
 # For client authors
