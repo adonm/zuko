@@ -120,8 +120,8 @@ jobs:
       - uses: jdx/mise-action@e6a8b3978addb5a52f2b4cd9d91eafa7f0ab959d # v4.2.0
         with:
           cache: true
-      - name: Build Windows client
-        run: mise exec -- just build-flutter-windows
+      - name: Build and package Windows client
+        run: mise exec -- just build-flutter-windows-release v0.0.0
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: ${{ github.event_name != 'pull_request' }}
         with:
