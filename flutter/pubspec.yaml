@@ -10,7 +10,6 @@ dependencies:
   flutter:
     sdk: flutter
   crypto: 3.0.7
-  cupertino_icons: 1.0.8
   flterm:
     path: packages/flterm
   flutter_secure_storage: 10.3.1
