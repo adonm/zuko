@@ -78,13 +78,13 @@ jobs:
       - name: Build locked Flutter Windows release
         env:
           RELEASE_VERSION: ${{ needs.prepare.outputs.version }}
-        run: mise exec -- just build-flutter-windows-store "$RELEASE_VERSION"
+        run: mise exec -- just build-flutter-windows-store "$env:RELEASE_VERSION"
 
       - name: Package, sign, and verify MSIX artifacts
         env:
           TAG: ${{ needs.prepare.outputs.tag }}
           EXPECTED_SHA: ${{ needs.prepare.outputs.sha }}
-        run: mise exec -- just package-windows-store "$TAG" "$EXPECTED_SHA"
+        run: mise exec -- just package-windows-store "$env:TAG" "$env:EXPECTED_SHA"
 
       - name: Upload signed Store artifacts
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -134,7 +134,7 @@ jobs:
         env:
           TAG: ${{ needs.prepare.outputs.tag }}
           EXPECTED_SHA: ${{ needs.prepare.outputs.sha }}
-        run: mise exec -- just validate-windows-store "$TAG" "$EXPECTED_SHA"
+        run: mise exec -- just validate-windows-store "$env:TAG" "$env:EXPECTED_SHA"
 
       - name: Set up pinned Microsoft Store Developer CLI
         uses: microsoft/microsoft-store-apppublisher@b76227f539d68e6465f79bbbc82ed92f61081aa4 # v1.3
@@ -184,7 +184,7 @@ jobs:
         env:
           TAG: ${{ needs.prepare.outputs.tag }}
           EXPECTED_SHA: ${{ needs.prepare.outputs.sha }}
-        run: mise exec -- just validate-windows-store "$TAG" "$EXPECTED_SHA"
+        run: mise exec -- just validate-windows-store "$env:TAG" "$env:EXPECTED_SHA"
 
       - name: Set up pinned Microsoft Store Developer CLI
         uses: microsoft/microsoft-store-apppublisher@b76227f539d68e6465f79bbbc82ed92f61081aa4 # v1.3

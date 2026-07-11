@@ -298,7 +298,7 @@ jobs:
       - name: Build and package Windows client
         env:
           TAG: ${{ needs.prepare.outputs.tag }}
-        run: mise exec -- just build-flutter-windows-release "$TAG"
+        run: mise exec -- just build-flutter-windows-release "$env:TAG"
 
       - name: Upload Windows release asset
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1

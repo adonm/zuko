@@ -5,8 +5,8 @@ if [ "$#" -ne 1 ]; then
   echo "usage: publish-github-release.sh <vX.Y.Z>" >&2
   exit 2
 fi
-+: "${GH_REPO:?GH_REPO is required}"
-+: "${GITHUB_REPOSITORY:?GITHUB_REPOSITORY is required}"
+: "${GH_REPO:?GH_REPO is required}"
+: "${GITHUB_REPOSITORY:?GITHUB_REPOSITORY is required}"
 tag="$1"
 
 echo "Publishing $tag with:"
