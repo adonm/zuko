@@ -15,6 +15,7 @@ if [[ "$actual" != "$commit" ]]; then
 fi
 
 location=$(flatpak info --system --show-location "$ref")
+mkdir -p "$(dirname "$destination")"
 ln -sfn "$location/files" "$destination"
 "$destination/bin/clang" --version
 "$destination/bin/clang++" --version
