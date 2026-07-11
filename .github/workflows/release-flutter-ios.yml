@@ -1,6 +1,9 @@
 name: release-flutter-ios
 
 on:
+  push:
+    tags:
+      - 'v*'
   workflow_dispatch:
     inputs:
       tag:
@@ -24,7 +27,7 @@ concurrency:
 
 jobs:
   build:
-    name: signed Flutter iOS (${{ inputs.lane }})
+    name: signed Flutter iOS (${{ github.event_name == 'push' && 'beta' || inputs.lane }})
     runs-on: macos-latest
     timeout-minutes: 120
     environment: apple-store
@@ -33,21 +36,28 @@ jobs:
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
-          ref: ${{ inputs.tag }}
+          ref: ${{ github.event_name == 'push' && github.ref || inputs.tag }}
           fetch-depth: 0
           submodules: recursive
 
       - name: Resolve release metadata
         env:
-          TAG: ${{ inputs.tag }}
+          TAG: ${{ github.event_name == 'push' && github.ref_name || inputs.tag }}
+          EVENT_NAME: ${{ github.event_name }}
+          EVENT_SHA: ${{ github.sha }}
         run: |
           set -euo pipefail
           python3 scripts/check-release-metadata.py
           version=$(scripts/version.sh)
+          [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]
           [ "$TAG" = "v$version" ]
-          [ "$(git rev-parse HEAD)" = "$(git rev-parse "$TAG^{commit}")" ]
+          head=$(git rev-parse HEAD)
+          [ "$head" = "$(git rev-parse "$TAG^{commit}")" ]
+          if [ "$EVENT_NAME" = push ]; then
+            [ "$head" = "$EVENT_SHA" ]
+          fi
           remote=$(git ls-remote origin "refs/tags/$TAG^{}" | cut -f1)
-          [ -n "$remote" ] && [ "$remote" = "$(git rev-parse HEAD)" ]
+          [ -n "$remote" ] && [ "$remote" = "$head" ]
           echo "ZUKO_VERSION=$version" >> "$GITHUB_ENV"
           echo "ZUKO_BUILD_NUMBER=$(date -u +%s)" >> "$GITHUB_ENV"
 
@@ -151,7 +161,9 @@ jobs:
           retention-days: 7
 
       - name: Upload to TestFlight
-        if: ${{ inputs.lane == 'beta' }}
+        # Release tags always upload. A manual run can still select `build` to
+        # validate signing without consuming a TestFlight build number.
+        if: ${{ github.event_name == 'push' || inputs.lane == 'beta' }}
         env:
           ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
           ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}

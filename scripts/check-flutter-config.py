@@ -19,6 +19,12 @@ def require_text(path: str, value: str) -> None:
         raise SystemExit(f"Flutter config: {path} must contain {value!r}")
 
 
+def forbid_text(path: str, value: str) -> None:
+    content = (ROOT / path).read_text(encoding="utf-8")
+    if value in content:
+        raise SystemExit(f"Flutter config: {path} must not contain {value!r}")
+
+
 def main() -> None:
     with (ROOT / "mise.toml").open("rb") as source:
         mise = tomllib.load(source)
@@ -74,10 +80,10 @@ def main() -> None:
         "flutter/linux/runner/my_application.cc",
         "fl_dart_project_set_enable_impeller(project, TRUE);",
     )
-    require_text(
-        "flutter/windows/runner/main.cpp",
-        "project.set_impeller_switch(flutter::ImpellerSwitch::Enabled);",
-    )
+    # This published beta predates the Windows DartProject Impeller API. Keep
+    # the runner compatible with its headers; later SDKs can use the explicit
+    # switch after the SDK pin and this check are updated together.
+    forbid_text("flutter/windows/runner/main.cpp", "set_impeller_switch")
     require_text("flutter/web/flutter_bootstrap.js", "enableWimp: true")
     require_text("flutter/web/flutter_bootstrap.js", "renderer: 'skwasm'")
 

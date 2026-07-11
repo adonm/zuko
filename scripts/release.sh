@@ -2,7 +2,9 @@
 # Cut a zuko release by tagging `v<version>` and pushing it.
 #
 # The tag push triggers .github/workflows/release.yml, which cross-compiles
-# the CLI for Linux/macOS and the Flutter client for Android/Linux/Windows.
+# the CLI for Linux/macOS and the Flutter client for Android/Linux/Windows. It
+# also triggers release-flutter-ios.yml, which validates and uploads the signed
+# iOS build to internal TestFlight.
 # CLI tarballs are what `mise use --global github:adonm/zuko` consumes. The end
 # user then runs `zuko install` to set up the host daemon as a user service.
 #
@@ -17,7 +19,8 @@
 #   3. Refuse if the tag already exists locally or on the remote.
 #   4. Warn (but proceed) if the working tree is dirty or the branch isn't
 #      `main` — both are usually mistakes, but legitimate in a pinch.
-#   5. Create an annotated tag and push it to origin.
+#   5. Create an annotated tag and push it to origin, triggering the coordinated
+#      GitHub Release and TestFlight workflows.
 #   6. Print the Actions run URL so you can watch the build.
 set -eu
 
@@ -78,9 +81,9 @@ if [ -n "$(git status --porcelain)" ]; then
     git commit -m "release $TAG
 
 Bundle pending work for the $TAG release. Cut by scripts/release.sh;
-the tag push triggers .github/workflows/release.yml, which publishes
-CLI binaries plus Flutter Android/Linux/Windows clients to the GitHub Release
-attached to $TAG."
+the tag push publishes CLI binaries plus Flutter Android/Linux/Windows clients
+to the GitHub Release attached to $TAG and uploads the signed Flutter iOS build
+to internal TestFlight."
 fi
 
 # Make sure the branch (and any commit we just made) is on the remote before
@@ -96,7 +99,8 @@ git tag -a "$TAG" -m "zuko $TAG
 
 Cut from $SHA. The tag push triggers .github/workflows/release.yml, which
 publishes CLI binaries plus Flutter Android/Linux/Windows clients to the GitHub
-Release attached to this tag."
+Release attached to this tag, and release-flutter-ios.yml, which uploads the
+signed iOS build to internal TestFlight."
 
 echo "==> pushing $TAG to origin"
 git push origin "$TAG"

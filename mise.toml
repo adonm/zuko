@@ -23,8 +23,8 @@ actionlint = "1.7.12"
 
 # Official beta archives for framework revision
 # 677d472756f83c14371dd8cc624387065f3d32a7. Platform checksums come from
-# Flutter's published release manifests. The beta is new enough for the
-# explicit desktop Impeller APIs without relying on a moving master checkout.
+# Flutter's published release manifests. The beta has the Linux and macOS
+# Impeller controls used here; its Windows embedder still uses the SDK default.
 [tools."http:flutter"]
 version = "3.46.0-0.3.pre"
 
@@ -145,7 +145,7 @@ description = "Run `zuko host` in the foreground (mise shim or local debug build
 run = "just run-host"
 
 [tasks.release]
-description = "Cut a release: commit pending work, push, tag vX.Y.Z, push tag (triggers release.yml). Pass the version, e.g. `mise run release v0.1.0`."
+description = "Cut a release: commit pending work, push, tag vX.Y.Z, and push the tag to trigger GitHub assets plus TestFlight. Pass the version, e.g. `mise run release v0.1.0`."
 run = "just release ${@}"
 
 # ───────────────────────── docs (mdBook) ────────────────────────────
