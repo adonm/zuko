@@ -28,6 +28,7 @@ jobs:
         uses: jdx/mise-action@e6a8b3978addb5a52f2b4cd9d91eafa7f0ab959d # v4.2.0
         with:
           cache: true
+          install_args: ${{ matrix.os == 'ubuntu-latest' && 'rust just lychee actionlint' || 'rust just' }}
 
       - name: Ensure clippy/rustfmt (reliable across cached toolchains)
         run: rustup component add clippy rustfmt
@@ -38,6 +39,7 @@ jobs:
         run: mise run test
 
       - name: Build (release)
+        if: ${{ github.event_name != 'pull_request' }}
         run: mise run build
 
       - name: End-to-end (connect, pairing, revocation)

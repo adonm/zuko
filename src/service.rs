@@ -894,7 +894,7 @@ fn mise_upgrade_args(version: Option<&str>) -> Vec<String> {
         Some(v) => vec![
             "use".into(),
             "--global".into(),
-            format!("github:adonm/zuko@{v}"),
+            format!("github:adonm/zuko[minimum_release_age=0s]@{v}"),
         ],
         None => vec!["upgrade".into(), MISE_TOOL.into()],
     }
@@ -1155,7 +1155,7 @@ mod tests {
             vec![
                 "use".to_string(),
                 "--global".to_string(),
-                "github:adonm/zuko@0.7.0".to_string(),
+                "github:adonm/zuko[minimum_release_age=0s]@0.7.0".to_string(),
             ]
         );
     }

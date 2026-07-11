@@ -1,65 +1,50 @@
-[package]
-name = "zuko"
-version = "0.9.2"
+[workspace]
+members = ["."]
+default-members = ["."]
+resolver = "3"
+
+[workspace.package]
+version = "0.9.9"
 edition = "2024"
 license = "Apache-2.0"
+
+[package]
+name = "zuko"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
 description = "Remote terminals over Iroh: the host daemon and reference CLI client."
 repository = "https://github.com/adonm/zuko"
-publish = false
+homepage = "https://zuko.adonm.dev/"
+readme = "README.md"
+publish = ["crates-io"]
+keywords = ["terminal", "remote", "shell", "iroh", "p2p"]
+categories = ["command-line-utilities", "network-programming"]
+include = [
+  "src/**/*.rs",
+  "src/app/keymap_us.xkb",
+  "build.rs",
+  "Cargo.toml",
+  "Cargo.lock",
+  "README.md",
+  "LICENSE",
+]
 
 [[bin]]
 name = "zuko"
 path = "src/main.rs"
 
-# One-liner wrapper around `uniffi::uniffi_bindgen_main()`, so the Swift
-# bindings can be generated with `cargo run --bin uniffi-bindgen -- generate
-# --language swift ...` without a separate `cargo install` step. Only used at
-# XCFramework build time; not part of the `zuko` CLI.
-[[bin]]
-name = "uniffi-bindgen"
-path = "uniffi-bindgen.rs"
-
-[lib]
-name = "zuko"
-# `rlib` for the binary + tests; `staticlib` for the iOS XCFramework; and
-# `cdylib` for Android/JNA. Mobile builds expose only the small FFI surface in
-# `src/ffi.rs` and cfg-exclude the desktop client/PTY dependency graph.
-crate-type = ["rlib", "staticlib", "cdylib"]
-
 [dependencies]
-# iroh is intentionally NOT here — see the target-cfg'd block below for why.
 # Memory-hard KDF for deriving the throwaway handoff key from a memorable code
 # (`zuko share`/`claim`). Replaces a single unsalted SHA-256 so the ~28-bit
 # code resists offline brute-force if the ephemeral NodeId leaks.
 argon2 = "0.5"
 anyhow = "1"
-# `#[derive(thiserror::Error)]` for the FFI error enum (uniffi requires a
-# proper Error type, not a bare String).
-thiserror = "1"
-# FFI bindings for mobile clients (the iOS app's `Zuko.xcframework`).
-# Pinned to 0.31 to match iroh-ffi so both XCFrameworks link cleanly together.
-# `cli` feature provides `uniffi_bindgen_main()`, used by the `uniffi-bindgen`
-# binary wrapper (see [[bin]] above) to generate Swift bindings at build time.
-uniffi = { version = "0.31", features = ["cli"] }
-
-# Host/client-only deps — NOT compiled for iOS (the FFI build only needs
-# `code.rs` + `ffi.rs`, which are synchronous and pull in none of these).
-# `portable-pty` uses Linux/macOS ioctl symbols that don't exist on iOS;
-# `crossterm` + `inquire` are interactive-terminal-only; etc. Target-cfg
-# keeps the CLI build unchanged while letting `cargo build --lib --target
-# *-apple-ios*` succeed.
-#
-# `iroh` lives here (not in the unconditional `[dependencies]` above) because
-# the iOS FFI exposes only `derive_seed` — pure Argon2, no iroh types across
-# the boundary. Keeping iroh off iOS in turn keeps `ring` (iroh's transitive
-# C/asm dep) off iOS, which lets `build-ffi.sh` cross-compile from Linux
-# without `xcrun` (which doesn't exist outside macOS).
-[target.'cfg(not(any(target_os = "ios", target_os = "android")))'.dependencies]
 iroh = "1.0"
 iroh-tickets = "1.0"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "io-util", "signal", "time"] }
 portable-pty = "0.8"
-crossterm = "0.29"
+crossterm = { package = "crossterm-zuko", version = "=0.29.0-zuko.1", git = "https://github.com/adonm/crossterm.git", tag = "crossterm-zuko-v0.29.0-zuko.1" }
 clap = { version = "4", features = ["derive"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
@@ -75,7 +60,7 @@ petname = { version = "3", default-features = false, features = ["default-words"
 # RNG for generate_code (petname's generate_into takes a &mut dyn Rng).
 rand = "0.10"
 # Render the one-time `zuko://pair/<code>` value as a terminal QR code for the
-# iOS scanner. No image encoders are needed; only the Unicode renderer is used.
+# mobile scanner. No image encoders are needed; only the Unicode renderer is used.
 qrcode = { version = "0.14", default-features = false }
 # SHA-256 for deriving a stable, per-(client,host) reattach token from the
 # client's persistent key (so a client always lands on the same host PTY
@@ -121,12 +106,7 @@ lto = true
 codegen-units = 1
 strip = "symbols"
 
-# [TEMP-PATCH] crossterm 0.28.1/0.29.0 panic on SGR-pixel mouse: the unix
-# parser does an unchecked `coord - 1` that overflows (panics in debug) when a
-# terminal reports a 0-based pixel coordinate (Ghostty on the top row),
-# crashing `zuko app` on click. The fix (saturating_sub) is on crossterm
-# master but UNRELEASED, so we patch from git until a fixed version ships on
-# crates.io. Drop this patch + re-pin to the published crate once ≥0.29.1 (or
-# whatever release includes the "Fix integer underflow" CHANGELOG entry) lands.
-[patch.crates-io]
-crossterm = { git = "https://github.com/crossterm-rs/crossterm.git", rev = "3cea5b2d1d0c1cd4f285d18791b32e4b15e9bc0e" }
+# `crossterm-zuko` is a temporary source-compatible package whose library name
+# remains `crossterm`. Development resolves its immutable Git tag; Cargo strips
+# the Git source when packaging and retains the exact crates.io fallback. This
+# keeps Zuko publishable without reverting the zero-coordinate parser fix.

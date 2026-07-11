@@ -20,6 +20,11 @@ fn app_doctor_smoke_when_cage_is_available() {
         String::from_utf8_lossy(&output.stderr)
     );
     assert!(String::from_utf8_lossy(&output.stdout).contains("zuko app doctor"));
+    assert!(
+        !String::from_utf8_lossy(&output.stderr).contains("cannot be mapped to an output device"),
+        "virtual pointer was not mapped to Cage's output:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
 }
 
 fn command_on_path(name: &str) -> bool {

@@ -1,72 +1,62 @@
 # Clients
 
-Client tiers follow the [roadmap](roadmap.md):
-
-| Client | Status | Source |
+| Client | Status | Get it |
 |--------|--------|--------|
-| Rust CLI | Core | Linux/macOS release binary; `src/client.rs` |
-| iOS/iPadOS | Beta | iOS/iPadOS 26.5; `ios/Zuko/` |
-| Android | Labs | Android API 29+; `android/` |
-| Web | Labs | [Open client](https://zuko.adonm.dev/web/); `web/` |
+| Rust CLI | Core | [curl installer](getting-started.md) or Linux/macOS release tarball |
+| Android | Beta | Signed APK attached to tagged GitHub Releases |
+| iOS/iPadOS | Beta | Signed TestFlight workflow |
+| macOS | Beta | CI-built application bundle |
+| Web | Labs | [zuko.adonm.dev/web/](https://zuko.adonm.dev/web/) |
+| Linux desktop | Beta | Flatpak attached to GitHub Releases |
+| Windows desktop | Labs | Versioned x86_64 ZIP on GitHub Releases |
 
-**Core** is release-gated and supported. **Beta** is intended for use but still
-has availability or compatibility constraints. **Labs** is opt-in and may have
-known reliability or security-boundary gaps.
+Release downloads are at
+[github.com/adonm/zuko/releases/latest](https://github.com/adonm/zuko/releases/latest).
+Every downloadable package has a `.sha256` sidecar.
 
-The iOS/iPadOS app is built in CI and has a signed/TestFlight release pipeline,
-but this repository does not currently document a public TestFlight or App
-Store install path. Build instructions are in [`ios/Zuko/README.md`](../ios/Zuko/README.md).
+- Android: install the signed APK; the AAB is for store upload.
+- Linux: install the Flatpak bundle; credentials use the host Secret Service.
+- Windows: extract the complete ZIP and run `zuko.exe`; do not move the EXE
+  away from its DLL and data files.
 
-The web client is published with the docs. It uses browser Iroh over relays,
-lacks automatic reconnect, and stores connection state in IndexedDB. See
-[Targets](targets.md#browser-client) for its promotion criteria, security
-boundary, and known gaps.
+The Windows bundle is not yet an installer and does not provide automatic updates.
+For toolchains, fresh-clone commands, signing behavior, and exact output paths,
+see [Building clients](building-clients.md).
 
-The Android client is a native Compose app using Iroh 1.0 and a pinned
-`libghostty-vt` terminal core. CI builds APK/AAB packages and runs the portable
-protocol suite plus a native emulator smoke test. It remains Labs while the
-custom renderer, QR pairing, lifecycle recovery, and device coverage mature.
-Native dependency pins and local build steps are in
-[`android/NATIVE.md`](../android/NATIVE.md).
+The Rust CLI and shared Flutter client are the behavior references. Former
+Compose, TypeScript, Relm4, and Swift UI implementations were removed.
 
-## Implementing a client
+The Flutter client shares:
 
-Read [`protocol.md`](protocol.md). Checklist:
+- pairing and saved-host behavior;
+- wire framing and bounded reconnect;
+- `flterm`/`libghostty` terminal rendering;
+- secure-storage model and platform-neutral UI;
+- Dart unit and widget tests.
 
-1. Claim ticket via `zuko/handoff/1`:
-   - derive handoff key from code;
-   - dial throwaway endpoint;
-   - read `<label>\n<ticket>`;
-   - derive host-scoped token;
-   - send `AUTHORIZE` before closing handoff connection.
-2. Persist a client secret. Derive non-zero token from `(client secret, host id)`.
-3. Dial host ticket with ALPN `zuko/2`.
-4. `open_bi`; first frame must be `ATTACH(token, cols, rows, pixels)`.
-5. Pump length-prefixed frames:
-   - stdin/terminal bytes → `DATA`;
-   - remote `DATA` → terminal emulator;
-   - size changes → `RESIZE`;
-   - optional control stream for `RESIZE`/`PING`/`PONG`.
-6. Store `ATTACHED` token. Reuse it for short reconnects.
-7. Surface `ERROR` as fatal; do not retry an authorization or protocol failure.
+Native targets use `iroh_flutter`. Browser Iroh remains relay-only and uses the
+Rust/WASM bridge in `flutter/rust/web_transport/`. Platform-specific code is
+reserved for credential storage, URI delivery, lifecycle, and packaging.
 
-Operational details:
+Apple builds use the same Flutter implementation as every other graphical
+target. TestFlight and desktop store publication remain protected release jobs.
 
-- First frame is mandatory; Iroh exposes streams to the peer after initiator data.
-- Clamp terminal cells to at least `1x1`.
-- Serialise writes; frame interleaving corrupts the stream.
-- Bound outbound queues. Dropping impatient input is better than unbounded memory.
-- Forward terminal bytes verbatim. Local Ctrl-C handling should be an explicit
-  escape hatch only.
-- Clean EOF means shell exit. Redial transient link errors.
-- Apply bounded backoff and stop reconnecting when the user leaves the session.
+## Implementing or reviewing a client
 
-Mobile clients should call the Rust FFI `derive_handoff_key(code)` instead of
-reimplementing Argon2id. See `src/ffi.rs` and `ios/Zuko/`.
+Read [`protocol.md`](protocol.md). A client must:
 
-Reference code:
+1. claim through `zuko/handoff/1`, derive the canonical Argon2 key, read the
+   endpoint ticket, persist a stable client identity, and send `AUTHORIZE`;
+2. dial the saved endpoint ticket with ALPN `zuko/2`;
+3. open a bidirectional stream and send `ATTACH` first;
+4. reject terminal data until the host echoes the expected token in `ATTACHED`;
+5. serialize writes, chunk `DATA` at 65,535 bytes, and send `RESIZE` changes;
+6. treat host `ERROR` and clean shell exit as permanent, while reconnecting only
+   transient failures with bounded backoff;
+7. cancel readers, writers, and pending retries on disconnect or host switch.
 
-- Rust framing/session: `src/wire.rs`, `src/client.rs`, `src/handoff.rs`
-- Swift framing/session: `ios/ZukoWire/`, `ios/Zuko/Zuko/Net/`
-- Browser framing/session: `web/wasm/src/lib.rs`, `web/src/`
-- Android framing/session: `android/core/`, `android/app/src/main/kotlin/dev/adonm/zuko/net/`
+Reference implementations and fixtures:
+
+- Rust: `src/wire.rs`, `src/client.rs`, `src/handoff.rs`
+- Flutter: `flutter/lib/src/`, `flutter/test/`
+- Browser bridge: `flutter/rust/web_transport/`

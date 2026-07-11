@@ -1,0 +1,53 @@
+{
+  "app-id": "dev.adonm.zuko",
+  "runtime": "org.freedesktop.Platform",
+  "runtime-version": "25.08",
+  "sdk": "org.freedesktop.Sdk",
+  "command": "zuko",
+  "finish-args": [
+    "--share=ipc",
+    "--share=network",
+    "--socket=wayland",
+    "--socket=fallback-x11",
+    "--device=dri",
+    "--talk-name=org.freedesktop.secrets"
+  ],
+  "modules": [
+    {
+      "name": "zuko",
+      "buildsystem": "simple",
+      "build-commands": [
+        "install -Dm755 bundle/zuko /app/bin/zuko",
+        "cp -a bundle/data /app/bin/data",
+        "cp -a bundle/lib /app/bin/lib",
+        "install -Dm644 dev.adonm.zuko.desktop /app/share/applications/dev.adonm.zuko.desktop",
+        "install -Dm644 dev.adonm.zuko.metainfo.xml /app/share/metainfo/dev.adonm.zuko.metainfo.xml",
+        "install -Dm644 zuko-logo.svg /app/share/icons/hicolor/scalable/apps/dev.adonm.zuko.svg",
+        "install -Dm644 zuko-logo.png /app/share/icons/hicolor/256x256/apps/dev.adonm.zuko.png"
+      ],
+      "sources": [
+        {
+          "type": "dir",
+          "path": "../build/flatpak/staging/bundle",
+          "dest": "bundle"
+        },
+        {
+          "type": "file",
+          "path": "dev.adonm.zuko.desktop"
+        },
+        {
+          "type": "file",
+          "path": "dev.adonm.zuko.metainfo.xml"
+        },
+        {
+          "type": "file",
+          "path": "../zuko-logo.svg"
+        },
+        {
+          "type": "file",
+          "path": "../flutter/assets/zuko-logo.png"
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,208 @@
+name: flutter
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'flutter/**'
+      - 'Justfile'
+      - 'mise.toml'
+      - 'scripts/build-web.sh'
+      - 'scripts/finalize-web-build.py'
+      - 'scripts/patch-iroh-flutter.py'
+      - '.github/workflows/build-flutter.yml'
+  pull_request:
+    paths:
+      - 'flutter/**'
+      - 'Justfile'
+      - 'mise.toml'
+      - 'scripts/build-web.sh'
+      - 'scripts/finalize-web-build.py'
+      - 'scripts/patch-iroh-flutter.py'
+      - '.github/workflows/build-flutter.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: flutter-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  shared:
+    name: Dart tests and web build
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          submodules: recursive
+      - uses: jdx/mise-action@e6a8b3978addb5a52f2b4cd9d91eafa7f0ab959d # v4.2.0
+        with:
+          cache: true
+          install_args: flutter rust just
+      - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+        with:
+          shared-key: flutter-web
+          workspaces: flutter/rust/web_transport -> ../../../target/web-wasm
+      - uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        with:
+          path: flutter/packages/flterm/.tmp/flterm-0.0.4.tar.gz
+          key: flterm-test-assets-0.0.4-d903c7c768f067bcd
+      - name: Install web compiler dependencies
+        run: sudo apt-get update && sudo apt-get install -y clang
+      - name: Analyze and test shared client
+        run: mise run flutter-check
+      - name: Build relay-only Flutter web client
+        run: mise run build-web
+
+  android:
+    name: Android debug package
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          submodules: recursive
+      - uses: jdx/mise-action@e6a8b3978addb5a52f2b4cd9d91eafa7f0ab959d # v4.2.0
+        with:
+          cache: true
+          install_args: flutter rust
+      - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+        with:
+          key: flutter-android
+      - uses: android-actions/setup-android@40fd30fb8d7440372e1316f5d1809ec01dcd3699 # v4.0.1
+        with:
+          packages: >-
+            platform-tools
+            platforms;android-36
+            build-tools;36.0.0
+            ndk;28.2.13676358
+      - name: Resolve locked packages
+        run: mise exec -C flutter -- flutter pub get --enforce-lockfile
+      - name: Build APK
+        run: mise exec -C flutter -- flutter build apk --debug --no-pub --target-platform android-arm64
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: zuko-flutter-android-${{ github.sha }}
+          path: flutter/build/app/outputs/flutter-apk/app-debug.apk
+          if-no-files-found: error
+
+  linux:
+    name: Linux desktop bundle
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          submodules: recursive
+      - uses: jdx/mise-action@e6a8b3978addb5a52f2b4cd9d91eafa7f0ab959d # v4.2.0
+        with:
+          cache: true
+          install_args: flutter rust just
+      - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+        with:
+          key: flutter-linux
+      - name: Install Linux desktop dependencies
+        run: >-
+          sudo apt-get update && sudo apt-get install -y
+          clang cmake libgtk-3-dev libsecret-1-dev ninja-build pkg-config
+      - name: Build Linux client
+        run: mise run build-flutter-linux
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: zuko-flutter-linux-${{ github.sha }}
+          path: flutter/build/linux/x64/release/bundle/**
+          if-no-files-found: error
+
+  windows:
+    name: Windows desktop bundle
+    runs-on: windows-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          submodules: recursive
+      - uses: jdx/mise-action@e6a8b3978addb5a52f2b4cd9d91eafa7f0ab959d # v4.2.0
+        with:
+          cache: true
+          install_args: flutter rust
+      - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+        with:
+          key: flutter-windows
+      - name: Build Windows client
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $PSNativeCommandUseErrorActionPreference = $true
+          $flutter = Join-Path (mise where flutter) "bin/flutter.bat"
+          $rustBin = Join-Path (mise where rust) "bin"
+          $env:Path = "$rustBin;$env:Path"
+          Push-Location flutter
+          & $flutter pub get --enforce-lockfile
+          Pop-Location
+          python scripts/patch-iroh-flutter.py flutter
+          Push-Location flutter
+          & $flutter build windows --release --no-pub
+          Pop-Location
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: ${{ github.event_name != 'pull_request' }}
+        with:
+          name: zuko-flutter-windows-${{ github.sha }}
+          path: flutter/build/windows/x64/runner/Release/**
+          if-no-files-found: error
+          retention-days: 7
+
+  apple:
+    name: iOS simulator and macOS
+    runs-on: macos-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          submodules: recursive
+      - name: Select Xcode 26.3
+        run: |
+          set -euo pipefail
+          xcode=/Applications/Xcode_26.3.app
+          test -d "$xcode"
+          sudo xcode-select -s "$xcode"
+          xcodebuild -version | grep -x 'Xcode 26.3'
+      - uses: jdx/mise-action@e6a8b3978addb5a52f2b4cd9d91eafa7f0ab959d # v4.2.0
+        with:
+          cache: true
+          install_args: flutter rust
+      - uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        with:
+          path: ~/.pub-cache
+          key: ${{ runner.os }}-${{ runner.arch }}-flutter-pub-${{ hashFiles('flutter/pubspec.lock') }}
+      - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+        with:
+          key: flutter-apple
+      - name: Resolve locked packages
+        run: mise exec -C flutter -- flutter pub get --enforce-lockfile
+      - name: Build iOS Simulator client
+        run: mise exec -C flutter -- flutter build ios --simulator --debug --no-pub
+      - name: Build macOS client
+        run: mise exec -C flutter -- flutter build macos --release --no-pub
+      - name: Package Apple clients
+        if: ${{ github.event_name != 'pull_request' }}
+        run: |
+          set -euo pipefail
+          mkdir -p flutter/build/apple-artifacts
+          ios_app=flutter/build/ios/iphonesimulator/Runner.app
+          test -d "$ios_app"
+          ditto -c -k --sequesterRsrc --keepParent \
+            "$ios_app" flutter/build/apple-artifacts/Zuko-Flutter-ios-simulator.zip
+          mac_app="$(find flutter/build/macos/Build/Products/Release -maxdepth 1 -name '*.app' -type d -print -quit)"
+          test -n "$mac_app"
+          ditto -c -k --sequesterRsrc --keepParent \
+            "$mac_app" flutter/build/apple-artifacts/Zuko-Flutter-macOS.zip
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: ${{ github.event_name != 'pull_request' }}
+        with:
+          name: zuko-flutter-apple-${{ github.sha }}
+          path: flutter/build/apple-artifacts/*.zip
+          if-no-files-found: error
+          retention-days: 7

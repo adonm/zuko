@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Package
+  xmlns="http://schemas.microsoft.com/appx/manifest/foundation/windows10"
+  xmlns:uap="http://schemas.microsoft.com/appx/manifest/uap/windows10"
+  xmlns:uap10="http://schemas.microsoft.com/appx/manifest/uap/windows10/10"
+  xmlns:rescap="http://schemas.microsoft.com/appx/manifest/foundation/windows10/restrictedcapabilities"
+  xmlns:build="http://schemas.microsoft.com/developer/appx/2015/build"
+  IgnorableNamespaces="uap uap10 rescap build">
+  <Identity
+    Name="__PARTNER_CENTER_PACKAGE_IDENTITY_NAME__"
+    Publisher="__PARTNER_CENTER_PACKAGE_PUBLISHER__"
+    Version="1.0.0.0"
+    ProcessorArchitecture="x64" />
+  <Properties>
+    <DisplayName>__PARTNER_CENTER_PACKAGE_DISPLAY_NAME__</DisplayName>
+    <PublisherDisplayName>__PARTNER_CENTER_PUBLISHER_DISPLAY_NAME__</PublisherDisplayName>
+    <Description>Private remote shells over Iroh.</Description>
+    <Logo>Assets\StoreLogo.png</Logo>
+  </Properties>
+  <Resources>
+    <Resource Language="en-us" />
+  </Resources>
+  <Dependencies>
+    <TargetDeviceFamily
+      Name="Windows.Desktop"
+      MinVersion="10.0.19041.0"
+      MaxVersionTested="10.0.26100.0" />
+  </Dependencies>
+  <Capabilities>
+    <rescap:Capability Name="runFullTrust" />
+  </Capabilities>
+  <Applications>
+    <Application
+      Id="dev.adonm.zuko"
+      Executable="zuko.exe"
+      uap10:RuntimeBehavior="packagedClassicApp"
+      uap10:TrustLevel="mediumIL">
+      <uap:VisualElements
+        DisplayName="__PARTNER_CENTER_PACKAGE_DISPLAY_NAME__"
+        Description="Private remote shells over Iroh."
+        BackgroundColor="transparent"
+        Square150x150Logo="Assets\Square150x150Logo.png"
+        Square44x44Logo="Assets\Square44x44Logo.png" />
+    </Application>
+  </Applications>
+  <build:Metadata>
+    <build:Item Name="MSStoreCLIAppId" Value="__PARTNER_CENTER_PRODUCT_ID__" />
+  </build:Metadata>
+</Package>

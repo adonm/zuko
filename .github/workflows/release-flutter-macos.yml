@@ -1,0 +1,191 @@
+name: release-flutter-macos
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Immutable release tag to build (vX.Y.Z)"
+        required: true
+        type: string
+      lane:
+        description: "Build a signed Mac App Store package or upload it"
+        type: choice
+        default: build
+        options:
+          - build
+          - upload
+
+permissions:
+  contents: read
+
+concurrency:
+  group: mac-app-store-dev-adonm-zuko
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: signed Flutter macOS package
+    runs-on: macos-latest
+    timeout-minutes: 120
+    environment: apple-store
+    env:
+      TEAM_ID: ${{ secrets.TEAM_ID }}
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: ${{ inputs.tag }}
+          fetch-depth: 0
+          submodules: recursive
+
+      - name: Resolve release metadata
+        env:
+          TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+          python3 scripts/check-release-metadata.py
+          version=$(scripts/version.sh)
+          [ "$TAG" = "v$version" ]
+          [ "$(git rev-parse HEAD)" = "$(git rev-parse "$TAG^{commit}")" ]
+          remote=$(git ls-remote origin "refs/tags/$TAG^{}" | cut -f1)
+          [ -n "$remote" ] && [ "$remote" = "$(git rev-parse HEAD)" ]
+          echo "ZUKO_VERSION=$version" >> "$GITHUB_ENV"
+          echo "ZUKO_BUILD_NUMBER=$(date -u +%s)" >> "$GITHUB_ENV"
+
+      - name: Select Xcode 26.3
+        run: |
+          set -euo pipefail
+          xcode=/Applications/Xcode_26.3.app
+          test -d "$xcode"
+          sudo xcode-select -s "$xcode"
+          xcodebuild -version | grep -x 'Xcode 26.3'
+          xcodebuild -version
+
+      - name: Set up mise
+        uses: jdx/mise-action@e6a8b3978addb5a52f2b4cd9d91eafa7f0ab959d # v4.2.0
+        with:
+          cache: true
+          install_args: flutter rust just zig@0.15.2
+
+      - name: Set up Python 3.13.14
+        uses: actions/setup-python@83679a892e2d95755f2dac6acb0bfd1e9ac5d548 # v6.1.0
+        with:
+          python-version: 3.13.14
+          cache: pip
+          cache-dependency-path: scripts/codemagic-requirements.txt
+
+      - name: Install pinned Codemagic CLI Tools
+        run: scripts/install-codemagic.sh
+
+      - uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        with:
+          path: ~/.pub-cache
+          key: ${{ runner.os }}-${{ runner.arch }}-flutter-pub-${{ hashFiles('flutter/pubspec.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-${{ runner.arch }}-flutter-pub-
+
+      - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+        with:
+          key: flutter-macos-store-release
+
+      - name: Resolve, analyze, and test shared client
+        run: mise run flutter-check
+
+      - name: Configure Mac App Store signing with Codemagic
+        env:
+          MACOS_APPLICATION_CERTIFICATE_BASE64: ${{ secrets.MACOS_APPLICATION_CERTIFICATE_BASE64 }}
+          MACOS_APPLICATION_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_APPLICATION_CERTIFICATE_PASSWORD }}
+          MACOS_INSTALLER_CERTIFICATE_BASE64: ${{ secrets.MACOS_INSTALLER_CERTIFICATE_BASE64 }}
+          MACOS_INSTALLER_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_INSTALLER_CERTIFICATE_PASSWORD }}
+          MACOS_PROVISIONING_PROFILE_BASE64: ${{ secrets.MACOS_PROVISIONING_PROFILE_BASE64 }}
+        run: scripts/apple-setup-signing.sh macos
+
+      - name: Build signed Flutter macOS application
+        run: |
+          set -euo pipefail
+          mise exec zig@0.15.2 -C flutter -- flutter build macos \
+            --release \
+            --no-pub \
+            --build-name "$ZUKO_VERSION" \
+            --build-number "$ZUKO_BUILD_NUMBER"
+
+      - name: Create and validate Mac App Store package
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          apps=(flutter/build/macos/Build/Products/Release/*.app)
+          [ "${#apps[@]}" -eq 1 ]
+          app="${apps[0]}"
+          mkdir -p dist/flutter-macos
+          package="$PWD/dist/flutter-macos/Zuko-Flutter.pkg"
+          xcrun productbuild \
+            --component "$app" /Applications \
+            --sign "$MACOS_INSTALLER_IDENTITY" \
+            "$package"
+          scripts/apple-validate-package.sh macos "$app" "$package" \
+            "$ZUKO_VERSION" "$ZUKO_BUILD_NUMBER"
+          (cd dist/flutter-macos && shasum -a 256 Zuko-Flutter.pkg > Zuko-Flutter.pkg.sha256)
+
+      - name: Upload signed Mac App Store package
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: zuko-flutter-macos-${{ env.ZUKO_VERSION }}-${{ env.ZUKO_BUILD_NUMBER }}
+          path: |
+            dist/flutter-macos/Zuko-Flutter.pkg
+            dist/flutter-macos/Zuko-Flutter.pkg.sha256
+          if-no-files-found: error
+          retention-days: 7
+
+  upload:
+    name: upload to Mac App Store Connect
+    if: ${{ inputs.lane == 'upload' }}
+    needs: build
+    runs-on: macos-latest
+    timeout-minutes: 30
+    environment: apple-store
+    env:
+      TEAM_ID: ${{ secrets.TEAM_ID }}
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: ${{ inputs.tag }}
+          fetch-depth: 0
+
+      - name: Select Xcode 26.3
+        run: |
+          set -euo pipefail
+          xcode=/Applications/Xcode_26.3.app
+          test -d "$xcode"
+          sudo xcode-select -s "$xcode"
+          xcodebuild -version | grep -x 'Xcode 26.3'
+
+      - name: Set up Python 3.13.14
+        uses: actions/setup-python@83679a892e2d95755f2dac6acb0bfd1e9ac5d548 # v6.1.0
+        with:
+          python-version: 3.13.14
+          cache: pip
+          cache-dependency-path: scripts/codemagic-requirements.txt
+
+      - name: Install pinned Codemagic CLI Tools
+        run: scripts/install-codemagic.sh
+
+      - name: Download signed package
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: zuko-flutter-macos-*
+          path: dist/flutter-macos
+          merge-multiple: true
+
+      - name: Revalidate package and upload with Codemagic
+        env:
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          ASC_KEY_CONTENT: ${{ secrets.ASC_KEY_CONTENT }}
+        run: |
+          set -euo pipefail
+          cd dist/flutter-macos
+          shasum -a 256 -c Zuko-Flutter.pkg.sha256
+          package_signature="$(pkgutil --check-signature Zuko-Flutter.pkg)"
+          grep -q "$TEAM_ID" <<< "$package_signature"
+          xcode-project pkg-info Zuko-Flutter.pkg
+          cd ../..
+          scripts/apple-upload.sh macos dist/flutter-macos/Zuko-Flutter.pkg

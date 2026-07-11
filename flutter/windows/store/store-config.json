@@ -1,0 +1,7 @@
+{
+  "logicalApplicationId": "dev.adonm.zuko",
+  "architecture": "x64",
+  "versionMapping": "major-plus-one.minor.patch.0",
+  "minimumWindowsVersion": "10.0.19041.0",
+  "maximumWindowsVersionTested": "10.0.26100.0"
+}

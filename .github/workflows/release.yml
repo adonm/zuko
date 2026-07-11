@@ -65,6 +65,9 @@ jobs:
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
           echo "sha=$sha" >> "$GITHUB_OUTPUT"
 
+      - name: Validate cross-platform release metadata
+        run: python3 scripts/check-release-metadata.py
+
   build:
     name: build ${{ matrix.target }}
     needs: prepare
@@ -101,10 +104,13 @@ jobs:
         uses: jdx/mise-action@e6a8b3978addb5a52f2b4cd9d91eafa7f0ab959d # v4.2.0
         with:
           cache: true
+          cache_save: ${{ github.event_name == 'workflow_dispatch' }}
+          install_args: rust
 
       - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
         with:
           key: ${{ matrix.target }}
+          save-if: ${{ github.event_name == 'workflow_dispatch' }}
 
       - name: Add rust target
         run: rustup target add "${ZUKO_TARGET}"
@@ -179,23 +185,27 @@ jobs:
           if-no-files-found: error
 
   android:
-    name: build Android release packages
+    name: build Flutter Android release packages
     needs: prepare
     runs-on: ubuntu-latest
-    timeout-minutes: 75
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           ref: ${{ needs.prepare.outputs.sha }}
+          submodules: recursive
 
       - name: Install mise tools
         uses: jdx/mise-action@e6a8b3978addb5a52f2b4cd9d91eafa7f0ab959d # v4.2.0
         with:
           cache: true
+          cache_save: ${{ github.event_name == 'workflow_dispatch' }}
+          install_args: flutter rust just
 
       - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
         with:
-          key: android-release-r29
+          key: flutter-android-release
+          save-if: ${{ github.event_name == 'workflow_dispatch' }}
 
       - name: Set up Android SDK
         uses: android-actions/setup-android@40fd30fb8d7440372e1316f5d1809ec01dcd3699 # v4.0.1
@@ -204,23 +214,7 @@ jobs:
             platform-tools
             platforms;android-36
             build-tools;36.0.0
-            cmake;3.22.1
-
-      - name: Set up Android NDK
-        id: ndk
-        uses: nttld/setup-ndk@ed92fe6cadad69be94a966a7ee3271275e62f779 # v1.6.0
-        with:
-          ndk-version: r29
-          link-to-sdk: true
-
-      - name: Set up Gradle cache
-        uses: gradle/actions/setup-gradle@3f131e8634966bd73d06cc69884922b02e6faf92 # v6.2.0
-
-      - name: Build native libraries
-        env:
-          ANDROID_NDK_HOME: ${{ steps.ndk.outputs.ndk-path }}
-          ANDROID_NDK_ROOT: ${{ steps.ndk.outputs.ndk-path }}
-        run: mise run build-android-native
+            ndk;28.2.13676358
 
       - name: Configure Android signing
         id: signing
@@ -246,30 +240,13 @@ jobs:
             echo "path=$keystore" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Test and build Android packages
+      - name: Test and build Flutter Android packages
         env:
           ANDROID_KEYSTORE_PATH: ${{ steps.signing.outputs.path }}
           ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
           ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
           ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
-        run: mise run gradle-android-ci
-
-      - name: Enable KVM for the Android emulator
-        run: |
-          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' \
-            | sudo tee /etc/udev/rules.d/99-kvm4all.rules >/dev/null
-          sudo udevadm control --reload-rules
-          sudo udevadm trigger --name-match=kvm
-
-      - name: Native Android instrumentation smoke test
-        uses: ReactiveCircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2.38.0
-        with:
-          api-level: 36
-          arch: x86_64
-          target: google_apis
-          profile: pixel_6
-          disable-animations: true
-          script: mise exec java@temurin-21 -- ./android/gradlew -p android :app:connectedDebugAndroidTest --no-daemon --stacktrace
+        run: mise run build-flutter-android
 
       - name: Name and checksum Android assets
         env:
@@ -279,15 +256,16 @@ jobs:
           set -euo pipefail
           mkdir -p dist/android
           [ "$SIGNING_MODE" = signed ]
-          apk=android/app/build/outputs/apk/release/app-release.apk
+          apk=flutter/build/app/outputs/flutter-apk/app-release.apk
           "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify --verbose "$apk"
-          aab_verify=$(jarsigner -verify android/app/build/outputs/bundle/release/app-release.aab 2>&1)
+          aab=flutter/build/app/outputs/bundle/release/app-release.aab
+          aab_verify=$(jarsigner -verify "$aab" 2>&1)
           case "$aab_verify" in
             *"jar verified"*) echo "AAB JAR signature verified" ;;
             *) printf '%s\n' "$aab_verify" >&2; exit 1 ;;
           esac
           cp "$apk" "dist/android/zuko-android-${TAG}-${SIGNING_MODE}.apk"
-          cp android/app/build/outputs/bundle/release/app-release.aab \
+          cp "$aab" \
             "dist/android/zuko-android-${TAG}-${SIGNING_MODE}.aab"
           cd dist/android
           for asset in *.apk *.aab; do sha256sum "$asset" > "$asset.sha256"; done
@@ -299,9 +277,220 @@ jobs:
           path: dist/android/*
           if-no-files-found: error
 
+      - name: Upload signed APK to Appetize
+        id: appetize
+        env:
+          APPETIZE_API_TOKEN: ${{ secrets.APPETIZE_API_TOKEN }}
+          APPETIZE_PUBLIC_KEY: ${{ secrets.APPETIZE_ANDROID_PUBLIC_KEY }}
+          TAG: ${{ needs.prepare.outputs.tag }}
+        run: |
+          set -euo pipefail
+          [ -n "$APPETIZE_API_TOKEN" ] || { echo "Set APPETIZE_API_TOKEN" >&2; exit 1; }
+          public_key="${APPETIZE_PUBLIC_KEY:--}"
+          sh scripts/upload-appetize.sh android \
+            "dist/android/zuko-android-${TAG}-signed.apk" \
+            "$public_key" \
+            "Zuko ${TAG} from GitHub Actions"
+
+  ios-preview:
+    name: build Flutter iOS Appetize preview
+    needs: prepare
+    runs-on: macos-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: ${{ needs.prepare.outputs.sha }}
+          submodules: recursive
+
+      - name: Select Xcode 26.3
+        run: |
+          set -euo pipefail
+          xcode=/Applications/Xcode_26.3.app
+          test -d "$xcode"
+          sudo xcode-select -s "$xcode"
+          xcodebuild -version | grep -x 'Xcode 26.3'
+
+      - uses: jdx/mise-action@e6a8b3978addb5a52f2b4cd9d91eafa7f0ab959d # v4.2.0
+        with:
+          cache: true
+          cache_save: ${{ github.event_name == 'workflow_dispatch' }}
+          install_args: flutter rust
+
+      - uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        with:
+          path: ~/.pub-cache
+          key: ${{ runner.os }}-${{ runner.arch }}-flutter-pub-${{ hashFiles('flutter/pubspec.lock') }}
+
+      - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+        with:
+          key: flutter-ios-appetize
+          save-if: ${{ github.event_name == 'workflow_dispatch' }}
+
+      - name: Build locked ARM iOS Simulator client
+        env:
+          TAG: ${{ needs.prepare.outputs.tag }}
+        run: |
+          set -euo pipefail
+          version="${TAG#v}"
+          mise exec -C flutter -- flutter pub get --enforce-lockfile
+          mise exec -C flutter -- flutter build ios --simulator --debug --no-pub \
+            --build-name "$version"
+
+      - name: Package and validate Appetize client
+        id: package
+        run: |
+          set -euo pipefail
+          app=flutter/build/ios/iphonesimulator/Runner.app
+          test -d "$app"
+          plist="$app/Info.plist"
+          platform=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleSupportedPlatforms:0' "$plist")
+          executable=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$plist")
+          test "$platform" = iPhoneSimulator
+          lipo -archs "$app/$executable" | tr ' ' '\n' | grep -qx arm64
+          archive="$RUNNER_TEMP/Zuko-Flutter-ios-simulator.zip"
+          ditto -c -k --sequesterRsrc --keepParent "$app" "$archive"
+          echo "archive=$archive" >> "$GITHUB_OUTPUT"
+
+      - name: Upload Simulator package to Appetize
+        env:
+          APPETIZE_API_TOKEN: ${{ secrets.APPETIZE_API_TOKEN }}
+          APPETIZE_PUBLIC_KEY: ${{ secrets.APPETIZE_IOS_PUBLIC_KEY }}
+          TAG: ${{ needs.prepare.outputs.tag }}
+          APP_FILE: ${{ steps.package.outputs.archive }}
+        run: |
+          set -euo pipefail
+          [ -n "$APPETIZE_API_TOKEN" ] || { echo "Set APPETIZE_API_TOKEN" >&2; exit 1; }
+          public_key="${APPETIZE_PUBLIC_KEY:--}"
+          sh scripts/upload-appetize.sh ios "$APP_FILE" "$public_key" \
+            "Zuko ${TAG} iOS Simulator from GitHub Actions"
+
+  linux:
+    name: build Flutter Linux Flatpak
+    needs: prepare
+    runs-on: ubuntu-24.04
+    container:
+      # freedesktop-25.08, including the exact Platform/SDK commits checked by
+      # scripts/package-flatpak.sh. Update all three pins together.
+      image: ghcr.io/flathub-infra/flatpak-github-actions@sha256:bc5938197c339664f893828925061b08486e7f355c3e91eefcaae7293d3cfd6b
+      options: --privileged
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: ${{ needs.prepare.outputs.sha }}
+          submodules: recursive
+
+      - name: Trust container checkout ownership
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+
+      - uses: jdx/mise-action@e6a8b3978addb5a52f2b4cd9d91eafa7f0ab959d # v4.2.0
+        with:
+          cache: true
+          cache_save: ${{ github.event_name == 'workflow_dispatch' }}
+          install_args: flutter rust
+
+      - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+        with:
+          key: flutter-linux-release
+          save-if: ${{ github.event_name == 'workflow_dispatch' }}
+
+      - name: Expose Freedesktop SDK compilers to Flutter
+        run: |
+          set -euo pipefail
+          # Flutter hard-codes these executable names. CMake identifies the
+          # pinned SDK image's compilers as GNU and configures them accordingly.
+          ln -s /usr/bin/gcc /app/bin/clang
+          ln -s /usr/bin/g++ /app/bin/clang++
+          dbus-uuidgen --ensure=/etc/machine-id
+          clang++ --version
+
+      - name: Build locked Flutter Linux client
+        env:
+          RELEASE_SHA: ${{ needs.prepare.outputs.sha }}
+        run: |
+          set -euo pipefail
+          SOURCE_DATE_EPOCH="$(git show -s --format=%ct "$RELEASE_SHA")"
+          export SOURCE_DATE_EPOCH
+          export TZ=UTC LC_ALL=C.UTF-8
+          mise exec -C flutter -- flutter pub get --enforce-lockfile
+          python3 scripts/patch-iroh-flutter.py flutter
+          mise exec -C flutter -- flutter build linux --release --no-pub
+
+      - name: Package and smoke-test Flatpak offline
+        env:
+          TAG: ${{ needs.prepare.outputs.tag }}
+          RELEASE_SHA: ${{ needs.prepare.outputs.sha }}
+        run: |
+          set -euo pipefail
+          SOURCE_DATE_EPOCH="$(git show -s --format=%ct "$RELEASE_SHA")"
+          export SOURCE_DATE_EPOCH
+          dbus-run-session -- bash scripts/package-flatpak.sh "$TAG"
+
+      - name: Upload Linux Flatpak release asset
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: zuko-flutter-linux-${{ needs.prepare.outputs.tag }}
+          path: |
+            dist/linux/*.flatpak
+            dist/linux/*.flatpak.sha256
+          if-no-files-found: error
+
+  windows:
+    name: build Flutter Windows bundle
+    needs: prepare
+    runs-on: windows-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: ${{ needs.prepare.outputs.sha }}
+          submodules: recursive
+
+      - uses: jdx/mise-action@e6a8b3978addb5a52f2b4cd9d91eafa7f0ab959d # v4.2.0
+        with:
+          cache: true
+          cache_save: ${{ github.event_name == 'workflow_dispatch' }}
+          install_args: flutter rust
+
+      - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+        with:
+          key: flutter-windows-release
+          save-if: ${{ github.event_name == 'workflow_dispatch' }}
+
+      - name: Build and package Windows client
+        shell: pwsh
+        env:
+          TAG: ${{ needs.prepare.outputs.tag }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          $PSNativeCommandUseErrorActionPreference = $true
+          $flutter = Join-Path (mise where flutter) "bin/flutter.bat"
+          $rustBin = Join-Path (mise where rust) "bin"
+          $env:Path = "$rustBin;$env:Path"
+          Push-Location flutter
+          & $flutter pub get --enforce-lockfile
+          Pop-Location
+          python scripts/patch-iroh-flutter.py flutter
+          Push-Location flutter
+          & $flutter build windows --release --no-pub
+          Pop-Location
+          New-Item -ItemType Directory -Force dist/windows | Out-Null
+          $archive = "dist/windows/zuko-windows-$env:TAG-x86_64.zip"
+          Compress-Archive -Path flutter/build/windows/x64/runner/Release/* -DestinationPath $archive
+          $hash = (Get-FileHash -Algorithm SHA256 $archive).Hash.ToLower()
+          "$hash  $(Split-Path -Leaf $archive)" | Set-Content -NoNewline "$archive.sha256"
+
+      - name: Upload Windows release asset
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: zuko-flutter-windows-${{ needs.prepare.outputs.tag }}
+          path: dist/windows/*
+          if-no-files-found: error
+
   release:
     name: publish GitHub Release
-    needs: [prepare, build, android]
+    needs: [prepare, build, android, ios-preview, linux, windows]
     runs-on: ubuntu-latest
     permissions:
       contents: write

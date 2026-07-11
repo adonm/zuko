@@ -2,127 +2,144 @@
 
 ## North star
 
-zuko provides **private remote shells for machines you own, without opening
-inbound ports or operating a VPN**.
-
-The primary user is a developer, self-hoster, or small operator connecting to a
-personal Linux or macOS machine. The complete core workflow should stay short:
+Zuko provides private remote shells for machines you own without opening an
+inbound port or operating a VPN:
 
 1. install a per-user host service;
-2. pair a device with a one-time code;
-3. reconnect by a memorable name;
-4. survive brief network changes;
+2. pair once with a short code;
+3. reconnect by name;
+4. survive ordinary network and application lifecycle changes;
 5. inspect or revoke access locally.
 
-Iroh owns network reachability and encrypted transport. zuko owns the PTY,
-pairing, authorization, reconnect behavior, and clear operator feedback.
+Iroh owns encrypted reachability. Zuko owns authorization, PTY behavior, the
+terminal experience, recovery, packaging, and clear operator feedback.
 
-## Product tiers
+## Supported products
 
-| Tier | Meaning | Current surfaces |
-|------|---------|------------------|
-| **Core** | Primary maintained and release-gated workflow | Linux/macOS host and Rust CLI |
-| **Beta** | Intended for regular use, but availability or compatibility is not yet stable | iOS/iPadOS client |
-| **Labs** | Opt-in experiments used to learn; APIs and behavior may change | Android/browser clients and Linux `zuko app` |
+| Tier | Product | Surfaces |
+|------|---------|----------|
+| **Core** | Host and reference client | Linux/macOS host and Rust CLI |
+| **Beta** | Shared Flutter client | Android, iOS, macOS, web, Linux, and Windows |
+| **Labs** | Application streaming experiment | Linux `zuko app` |
 
-A surface moves up a tier only when it has a clear install path, recovery
-behavior, security boundary, automated coverage, and maintained documentation.
-Code existing in the repository is not by itself a support commitment.
+The former Compose Android client, TypeScript web client, and Relm4 Flatpak
+client and native Swift client were removed. They will not receive parallel
+feature work.
 
-## Current priority: make the core boring
+## Current priority: ship one credible Flutter client
 
-Work toward the next release should improve the host + CLI workflow before
-adding another client or transport:
+All Android, iOS, macOS, web, Linux, and Windows client work now lands in
+`flutter/`.
+Flutter shares navigation, saved-host behavior, pairing, framing, reconnect,
+terminal integration, and tests. Platform code is limited to transport,
+credential storage, deep links, lifecycle, and packaging where the operating
+system genuinely differs.
 
-- make service state and connection failures easy to diagnose;
-- test pairing, authorization, revocation, reconnect, and shell-exit behavior;
-- make install, upgrade, reset, and recovery steps predictable on Linux/macOS;
-- document version/protocol compatibility and return actionable errors;
-- keep queues, retries, handshakes, and detached leases bounded;
-- keep secret storage and the pairing trust boundary reviewable.
+Chosen foundations:
 
-Success means a user can recover from a stale pairing, lost client, relay
-change, service restart, or interrupted upgrade without understanding Iroh or
-reading source code.
+- **Terminal:** pinned `flterm` and `libghostty`; do not build another renderer.
+- **Native transport:** pinned `iroh_flutter` on Android, iOS, macOS, Linux, and
+  Windows.
+- **Web transport:** Zuko's relay-only Rust/Iroh WASM bridge behind Dart JS
+  interop until `iroh_flutter` has a production browser backend.
+- **Storage:** `flutter_secure_storage`, backed by Android Keystore, Apple
+  Keychain, Linux Secret Service, Windows protected storage, and browser-origin
+  storage.
+- **Versioning:** Cargo remains canonical; Flutter uses the same semantic
+  version and the existing monotonic Android version-code formula.
 
-### Completed foundations
+The old Labs clients do not have an in-place state migration guarantee. The
+Flutter Android package retains `dev.adonm.zuko` and the signing identity, but
+users should expect to pair again after this cutover. The web app remains at
+`/web/`, but old IndexedDB records are not imported automatically.
+The Flutter iOS replacement likewise retains `dev.adonm.zuko` but intentionally
+starts with new Keychain state and session-token derivation; pre-1.0 testers
+must pair again and revoke the old native client authorization when finished.
 
-- **0.8.5:** added one read-only `zuko doctor` path for service, host key,
-  ticket, local trust state, and bounded Iroh relay checks;
-- **0.8.5:** added live-network coverage proving revoked clients receive a
-  permanent authorization error instead of entering a reconnect loop;
-- **0.8.5:** documented the protocol compatibility boundary and aligned the
-  security model across native and browser clients.
+## Delivery plan
 
-## Toward 1.0
+### 1. Make the shared session trustworthy
 
-The core is ready for a 1.0 stability promise when all of these are true:
+Required before any Flutter target is promoted:
 
-- the host and CLI have a documented compatibility policy;
-- Linux and macOS install, upgrade, reset, and uninstall paths are exercised in
-  release checks;
-- end-to-end tests cover authorization failure and transient reconnects as well
-  as initial pairing and PTY I/O;
-- protocol fixtures are shared with non-Rust clients;
-- security documentation matches the implementation and has had focused review;
-- releases state supported platforms, known limitations, and migration steps.
+- validate endpoint tickets and host identity before dialing;
+- keep the Argon2 handoff KDF and host-scoped token fixtures identical to Rust
+  across Rust and Dart fixtures;
+- require `ATTACHED` before accepting terminal data or user input;
+- serialize writes and split data at the 65,535-byte frame limit;
+- reconnect transient failures with bounded 1/2/4/8/15-second backoff;
+- stop on authorization errors, protocol errors, clean shell exit, explicit
+  disconnect, or host switch;
+- bound terminal output and outbound work so a slow renderer cannot consume
+  unbounded memory;
+- add integration coverage for pairing, reconnect, revocation, malformed
+  frames, and persisted identity on native and browser transports.
 
-No calendar date is attached to 1.0. These outcomes are the gate.
+The shared Dart framing, pairing parser, KDF fixture, native transport, browser
+bridge, and reconnect loops now exist. Integration and long-session coverage
+remain release gates.
 
-## Beta and Labs promotion
+### 2. Reach terminal and lifecycle parity
 
-### iOS/iPadOS beta
+The Flutter client must provide:
 
-Promote to Core after there is a documented public install path, a sustainable
-deployment target, release compatibility checks, and parity for reconnect and
-authorization errors. Until then it remains a useful source-built/TestFlight
-beta rather than a generally available client.
+- correct styles, cursor, alternate screen, selection, clipboard, scrollback,
+  resize, keyboard/IME, mouse reporting, and supported Kitty graphics;
+- usable phone, tablet, desktop, and narrow-browser layouts;
+- QR pairing plus handled `zuko://pair` links;
+- explicit connecting, attached, retrying, rejected, ended, and disconnected
+  states;
+- foreground/background and network-change recovery on mobile targets;
+- screen-reader semantics and keyboard-only operation;
+- visible destructive reset behavior that rotates the client identity and
+  explains host-side revocation.
 
-### Browser Labs client
+`flterm` supplies the shared terminal surface. Typed recovery states, foreground
+redial, mobile shortcut controls, host management, themes, and font sizing now
+exist. Accessibility semantics, QR input, URI delivery, lifecycle tests, and
+representative physical-device coverage remain open.
 
-Keep in Labs until it has reconnect/backoff, browser-level tests, and storage on
-a dedicated hardened origin. Browser Iroh remains relay-only. If those costs do
-not justify the use case, keep it as a pairing/protocol demonstration rather
-than expanding the core promise.
+### 3. Ship each target through its normal channel
 
-### Android Labs client
+| Target | Release gate |
+|--------|--------------|
+| **Android** | Signed APK/AAB, Appetize preview, upgrade test, physical phone/tablet tests, Play-ready metadata |
+| **Web** | Chrome/Firefox/Safari tests, strict CSP, origin review, deployed `/web/` smoke test |
+| **Linux** | Reproducible Flatpak, Secret Service behavior, Wayland/X11 input tests, install/uninstall documentation |
+| **Windows** | Signed installer, Credential Manager behavior, URI registration, upgrade/uninstall tests |
+| **iOS/iPadOS** | Signed TestFlight build, physical-device Iroh/terminal/lifecycle tests, replacement migration decision |
+| **macOS** | Signed/notarized package, Keychain behavior, keyboard/accessibility and upgrade tests |
 
-Keep in Labs until the libghostty renderer covers styles, cursor, selection,
-mouse reporting, and accessibility; pairing includes QR; lifecycle reconnect is
-device-tested; and signed package distribution is documented. The initial API
-29+ app deliberately shares the audited protocol and Rust KDF while keeping its
-Android Keystore persistence and JNI boundary small.
+CI now analyzes and tests the shared client and builds all six target families.
+Tagged releases produce Android, Linux, and Windows artifacts; web remains part
+of the Pages deployment, while Apple builds remain validation artifacts.
+Promotion waits for package-level smoke tests and target-specific gates, not
+merely a successful compile.
 
-### `zuko app` Labs feature
+## Core and shared-client policy
 
-Keep the Kitty/cage path opt-in. Promote only if terminal compatibility,
-failure recovery, runtime dependencies, and interactive performance are
-reliable enough to support. Native video or a separate remote-desktop protocol
-is not on the active roadmap.
+Flutter work must not regress host authorization, revocation, PTY correctness,
+protocol compatibility, service recovery, or secret handling. Before 1.0, keep
+one maintained cross-platform client rather than parallel implementations.
 
-## Explicitly deferred
+Host and CLI reach a 1.0 stability promise when install, upgrade, reset,
+uninstall, compatibility, authorization/reconnect, security review, and state
+migration are release-gated. There is no calendar promise for 1.0.
 
-These may be reconsidered when a demonstrated user need outweighs their ongoing
-cost, but they are not current goals:
+## Explicitly out of scope
 
-- additional native clients beyond iOS and Android;
-- durable PTY storage or output replay (use `tmux`, `zellij`, or `screen`);
-- full desktop streaming or a native video protocol;
-- centralized accounts, RBAC, audit pipelines, or enterprise fleet management;
-- zero-downtime daemon upgrades;
-- broad plugin or protocol-negotiation frameworks without a concrete client.
+- restoring the removed Compose, TypeScript, or Relm4 clients;
+- another terminal renderer or a local-PTY terminal dependency;
+- durable PTY output replay; use `tmux`, `zellij`, or `screen`;
+- full desktop streaming, centralized accounts, RBAC, or fleet management;
+- broad plugin or protocol frameworks without a concrete client need.
 
-## Decision filter
+## Decision order
 
-Prefer work that makes the core workflow safer, faster to understand, easier to
-recover, or easier to verify. A proposal that adds a platform, protocol, or
-long-running service should identify the core user problem, maintenance cost,
-security boundary, tests, and promotion tier before implementation.
+When work competes, choose in this order:
 
-When priorities conflict, use this order:
-
-1. prevent unauthorized shell access or secret loss;
-2. preserve shell correctness and recoverability;
-3. improve pairing, diagnostics, and trust management;
-4. improve resource use and maintainability;
-5. expand Beta or Labs capabilities.
+1. prevent unauthorized shell access, identity loss, or weaker secret storage;
+2. preserve framing, terminal correctness, reconnect, and recovery;
+3. close shared Flutter terminal, accessibility, and lifecycle gaps;
+4. make signed packages, upgrades, and releases repeatable;
+5. add new features or platforms.

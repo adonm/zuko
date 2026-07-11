@@ -1,0 +1,47 @@
+name: zuko
+description: Private remote shells over Iroh for Android, Apple platforms, web, Linux, and Windows.
+publish_to: 'none'
+version: 0.9.9+9009
+
+environment:
+  sdk: ^3.12.2
+
+dependencies:
+  flutter:
+    sdk: flutter
+  crypto: 3.0.7
+  cupertino_icons: 1.0.8
+  flterm:
+    path: packages/flterm
+  flutter_secure_storage: 10.3.1
+  iroh_flutter: 1.0.1
+  libghostty: 0.0.11
+  pointycastle: 4.0.0
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^6.0.0
+
+flutter:
+  config:
+    enable-swift-package-manager: false
+  uses-material-design: true
+  assets:
+    - assets/zuko-logo.png
+    - assets/fonts/
+  fonts:
+    - family: JetBrains Mono
+      fonts:
+        - asset: assets/fonts/JetBrainsMono-Regular.ttf
+        - asset: assets/fonts/JetBrainsMono-Bold.ttf
+          weight: 700
+    - family: Noto Sans Mono
+      fonts:
+        - asset: assets/fonts/NotoSansMono.ttf
+    - family: Noto Emoji
+      fonts:
+        - asset: assets/fonts/NotoEmoji-Regular.ttf
+    - family: Noto Sans Symbols 2
+      fonts:
+        - asset: assets/fonts/NotoSansSymbols2-Regular.ttf

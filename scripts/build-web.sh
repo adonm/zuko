@@ -2,9 +2,9 @@
 set -eu
 
 ROOT="$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)"
-WEB="$ROOT/web"
-WASM="$WEB/wasm"
-OUT="$WEB/src/wasm"
+CLIENT="$ROOT/flutter"
+WASM="$CLIENT/rust/web_transport"
+OUT="$CLIENT/web/wasm"
 WASM_BINDGEN_VERSION="0.2.122"
 
 cd "$ROOT"
@@ -27,5 +27,13 @@ wasm-bindgen \
   --target web \
   --weak-refs
 
-cd "$WEB"
-deno task build:app
+cd "$CLIENT"
+rm -rf "$ROOT/target/book/web"
+mise exec -- flutter build web \
+  --release \
+  --wasm \
+  --no-web-resources-cdn \
+  --base-href /web/ \
+  --output "$ROOT/target/book/web"
+
+python3 "$ROOT/scripts/finalize-web-build.py"

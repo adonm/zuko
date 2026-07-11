@@ -2,13 +2,13 @@
 
 ## Model
 
-- Host identity: `~/.config/zuko/key`.
+- Host identity: `${XDG_CONFIG_HOME:-$HOME/.config}/zuko/key`.
 - Host ticket: `endpointa…`, sensitive dial information containing the host
   public key and current addresses.
-- Client allow-list: `~/.config/zuko/authorized_clients`.
+- Client allow-list: `${XDG_CONFIG_HOME:-$HOME/.config}/zuko/authorized_clients`.
 - Client identity: a private local key used to derive a host-scoped token.
-- Saved connection state: `~/.config/zuko/hosts`, iOS Keychain, or browser
-  IndexedDB.
+- Saved connection state: `${XDG_CONFIG_HOME:-$HOME/.config}/zuko/hosts`, iOS Keychain, or the Flutter
+  target's protected storage.
 
 Connections are Iroh QUIC and end-to-end encrypted. Public relays see encrypted
 payloads but can observe connection metadata and traffic volume.
@@ -64,4 +64,4 @@ Use GitHub Security Advisories:
 
 Use private advisories for vulnerabilities.
 
-Scope: `src/`, `web/`, wire protocol, handoff, service installer, and iOS app.
+Scope: `src/`, `flutter/`, wire protocol, handoff, service installer, and iOS app.

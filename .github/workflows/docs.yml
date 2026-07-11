@@ -1,8 +1,8 @@
 name: docs
 
 # Builds the mdBook site from `docs/` (config in `book.toml`) and publishes
-# it to GitHub Pages. Source of truth for tooling is `mise.toml`, so this
-# workflow just runs `mise install` + `mise run build-docs` — same as local.
+# it to GitHub Pages. mise installs pinned tools and the compatibility task
+# delegates to the same Justfile recipe used locally.
 #
 # Pages must be configured in the repo settings: Settings → Pages →
 # "Build and deployment" → Source = "GitHub Actions" (not "Deploy from a
@@ -14,9 +14,11 @@ on:
     paths:
       - "docs/**"
       - "book.toml"
+      - "Justfile"
       - "mise.toml"
       - "scripts/build-web.sh"
-      - "web/**"
+      - "scripts/finalize-web-build.py"
+      - "flutter/**"
       - ".github/workflows/docs.yml"
   workflow_dispatch:
 
@@ -37,27 +39,20 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          submodules: recursive
 
       - name: mise install
         uses: jdx/mise-Action@e6a8b3978addb5a52f2b4cd9d91eafa7f0ab959d # v4.2.0
         with:
           cache: true
+          install_args: flutter rust just mdbook lychee
 
       - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
         with:
-          key: web-wasm
+          shared-key: flutter-web
           workspaces: |
-            web/wasm -> ../../target/web-wasm
-
-      - name: Cache Deno/npm packages
-        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
-        with:
-          path: |
-            ~/.cache/deno
-            web/node_modules
-          key: ${{ runner.os }}-deno-${{ hashFiles('web/deno.json', 'web/deno.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-deno-
+            flutter/rust/web_transport -> ../../../target/web-wasm
 
       - name: Lint markdown links
         # Gate the deploy on link health (config in .lychee.toml). GITHUB_TOKEN
@@ -66,11 +61,17 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: mise run lint-md
 
+      - name: Test curl installer
+        run: just test-installer
+
       - name: Install web build system deps
         run: sudo apt-get update && sudo apt-get install -y clang
 
       - name: Build site
         run: mise run build-docs
+
+      - name: Verify installer is published
+        run: test -f target/book/install.sh
 
       - name: Build web client
         run: mise run build-web

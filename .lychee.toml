@@ -28,12 +28,9 @@ include_fragments = "none"
 # toolchain dirs, generated iOS artifacts).
 exclude_path = [
   "target/",
+  "build/",
+  "flutter/build/",
   ".tmp/",
   ".git/",
   "ios/.build/",
-  "ios/xtool/",
-  "ios/ZukoFFI/ZukoRust.xcframework/",
-  "ios/ZukoFFI/Generated/",
-  "ios/Zuko/Zuko.xcodeproj/",
-  "web/node_modules/",
 ]

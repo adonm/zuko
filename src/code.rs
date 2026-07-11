@@ -29,7 +29,6 @@
 
 use anyhow::Result;
 use argon2::{Algorithm, Argon2, Params, Version};
-#[cfg(not(any(target_os = "ios", target_os = "android")))]
 use iroh::SecretKey;
 
 /// Fixed, non-secret Argon2 salt. Tied to the protocol version so a future
@@ -73,11 +72,7 @@ pub fn normalize_code(code: &str) -> String {
 /// beyond reach for **online** guessing during the minutes-long share window,
 /// and the Argon2id KDF raises each **offline** guess to ~200 ms.
 ///
-/// Pure Argon2id — no `iroh` dependency. The iOS staticlib cfg-excludes
-/// `iroh` (it ships the same seed bytes to Swift, which wraps them via
-/// `IrohLib.SecretKey.fromBytes`), and excluding `iroh` from the iOS
-/// build sidesteps the transitive `ring` (C/asm) dependency that would
-/// otherwise need `xcrun` to cross-compile from Linux.
+/// Pure Argon2id so Dart and Rust can share stable fixture bytes.
 pub fn derive_seed(code: &str) -> Result<[u8; 32]> {
     let material = normalize_code(code);
     let mut seed = [0u8; 32];
@@ -95,11 +90,6 @@ pub fn derive_seed(code: &str) -> Result<[u8; 32]> {
 /// for CLI convenience (the handoff code passes the key straight into
 /// iroh's `Endpoint::builder`).
 ///
-/// Not built on iOS — the iOS FFI exposes [`derive_seed`] and the Swift
-/// side constructs the SecretKey via `IrohLib.SecretKey.fromBytes(seed)`.
-/// Keeping `iroh` out of the iOS staticlib in turn keeps `ring` (C/asm)
-/// out — that's the cross-compile blocker on Linux CI.
-#[cfg(not(any(target_os = "ios", target_os = "android")))]
 pub fn derive_key(code: &str) -> Result<SecretKey> {
     let seed = derive_seed(code)?;
     Ok(SecretKey::from_bytes(&seed))
@@ -109,9 +99,6 @@ pub fn derive_key(code: &str) -> Result<SecretKey> {
 /// wordlists (~37K adjectives × ~6K nouns ≈ 28 bits of entropy). Example:
 /// `iridescent-sardine`.
 ///
-/// Desktop-only (the iOS app never generates codes — it only claims with
-/// `derive_handoff_key`).
-#[cfg(not(any(target_os = "ios", target_os = "android")))]
 pub fn generate_code() -> String {
     let pn = petname::Petnames::large();
     let mut buf = String::new();
@@ -125,8 +112,6 @@ pub fn generate_code() -> String {
 /// in petname's adjective list and the second is in the noun list. Real
 /// saved-host names effectively never match.
 ///
-/// Desktop-only (the iOS app has a dedicated code-entry field).
-#[cfg(not(any(target_os = "ios", target_os = "android")))]
 pub fn looks_like_code(s: &str) -> bool {
     let pn = petname::Petnames::large();
     let Some((adj, noun)) = s.trim().split_once('-') else {
@@ -217,8 +202,7 @@ mod tests {
         assert_eq!(sanitize_label("plain"), "plain");
     }
 
-    // --- generate_code / looks_like_code tests (desktop only) ---
-    #[cfg(not(any(target_os = "ios", target_os = "android")))]
+    // --- generate_code / looks_like_code tests ---
     #[test]
     fn generate_code_is_well_formed() {
         for _ in 0..32 {
@@ -234,7 +218,6 @@ mod tests {
         let _ = derive_key(&generate_code()).unwrap().public();
     }
 
-    #[cfg(not(any(target_os = "ios", target_os = "android")))]
     #[test]
     fn looks_like_code_accepts_real_codes() {
         // Known adjective-noun combos from petname's large wordlists.
@@ -243,7 +226,6 @@ mod tests {
         assert!(looks_like_code("LANGUOROUS-DAVIS")); // case-insensitive
     }
 
-    #[cfg(not(any(target_os = "ios", target_os = "android")))]
     #[test]
     fn looks_like_code_rejects_non_codes() {
         // Single word, three words, empty.
@@ -256,7 +238,6 @@ mod tests {
         assert!(!looks_like_code("foo-bar"));
     }
 
-    #[cfg(not(any(target_os = "ios", target_os = "android")))]
     #[test]
     fn generated_codes_are_detected_as_codes() {
         // Round-trip: a freshly-generated code must look like one.

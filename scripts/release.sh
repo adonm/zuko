@@ -2,13 +2,12 @@
 # Cut a zuko release by tagging `v<version>` and pushing it.
 #
 # The tag push triggers .github/workflows/release.yml, which cross-compiles
-# zuko for linux/{x86_64,aarch64} + macos/{x86_64,aarch64}, packages each as
-# zuko-<target>.tar.gz, and attaches them to a GitHub Release — which is what
-# `mise use --global github:adonm/zuko` consumes. The end user then runs
-# `zuko install` to set up the host daemon as a user service.
+# the CLI for Linux/macOS and the Flutter client for Android/Linux/Windows.
+# CLI tarballs are what `mise use --global github:adonm/zuko` consumes. The end
+# user then runs `zuko install` to set up the host daemon as a user service.
 #
 # Usage:
-#   mise run release v0.1.0
+#   just release v0.1.0
 #   sh scripts/release.sh v0.1.0
 #
 # What this does, in order:
@@ -80,8 +79,8 @@ if [ -n "$(git status --porcelain)" ]; then
 
 Bundle pending work for the $TAG release. Cut by scripts/release.sh;
 the tag push triggers .github/workflows/release.yml, which publishes
-linux/{x86_64,aarch64} + macos/{x86_64,aarch64} binaries to the GitHub
-Release attached to $TAG."
+CLI binaries plus Flutter Android/Linux/Windows clients to the GitHub Release
+attached to $TAG."
 fi
 
 # Make sure the branch (and any commit we just made) is on the remote before
@@ -96,8 +95,8 @@ echo "==> creating annotated tag $TAG at $SHA (Cargo.toml version $CARGO_VERSION
 git tag -a "$TAG" -m "zuko $TAG
 
 Cut from $SHA. The tag push triggers .github/workflows/release.yml, which
-publishes linux/{x86_64,aarch64} + macos/{x86_64,aarch64} binaries to the
-GitHub Release attached to this tag."
+publishes CLI binaries plus Flutter Android/Linux/Windows clients to the GitHub
+Release attached to this tag."
 
 echo "==> pushing $TAG to origin"
 git push origin "$TAG"

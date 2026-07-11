@@ -1,28 +1,45 @@
 # Contributing
 
-Use `mise`; CI uses the same tasks.
+Use `mise` for managed tools and `just` for recipes. CI enters through the same
+mise environment and recipe graph. The existing `mise run <name>` aliases are
+kept for compatibility, but new commands and documentation should prefer
+`just <name>`.
 
 ```sh
+git submodule update --init --recursive
 mise install
-mise run check       # fmt --check + clippy + tests + swiftlint
-mise run test        # Rust clippy + unit tests
-mise run test-e2e    # live Iroh network + PTY
-mise run preflight   # CI-ish, includes iOS build
-mise run build
+just                 # grouped recipe list
+just check           # Rust + Flutter + release metadata
+just test            # Rust clippy + unit tests
+just test-e2e        # live Iroh network + PTY
+just preflight       # full local CI mirror
+just build
 ```
 
-iOS:
+Flutter terminal changes live in the pinned `flutter/packages/flterm`
+submodule. Commit and push them in `adonm/flterm` first, then update the Zuko
+gitlink; do not vendor the package source or generated binary test fixtures.
+
+`Justfile` contains commands and dependencies between recipes. `mise.toml`
+contains tool versions, OS packages, environment, and thin task aliases. Put
+multi-step platform logic in `scripts/` rather than inline workflow YAML.
+
+Apple targets (macOS/Xcode):
 
 ```sh
-mise run setup-ios
-mise run build-ios
-swift test --package-path ios/ZukoWire
+just build-flutter-ios
+just build-flutter-macos
 ```
+
+Platform prerequisites, output paths, and the native Windows PowerShell build
+are in [Building clients](building-clients.md). The Justfile requires Bash;
+Windows CI therefore invokes Flutter directly from PowerShell.
 
 Before PR:
 
-- `mise run check` is green.
-- If iOS Swift/build config changed, run `mise run preflight` where possible.
+- `just check` is green.
+- If Flutter changed, keep shared logic in `flutter/lib/src/` and run
+  `just flutter-check`; do not create a target-specific second implementation.
 - Keep commits terse and imperative.
 - Update `docs/protocol.md` for wire changes.
 - Update `docs/host.md` for CLI/state changes.

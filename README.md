@@ -1,8 +1,11 @@
-# zuko
+<p align="center">
+  <img src="zuko-logo.svg" width="128" height="128" alt="Zuko logo">
+</p>
+
+<h1 align="center">zuko</h1>
 
 [![build](https://github.com/adonm/zuko/actions/workflows/build.yml/badge.svg)](https://github.com/adonm/zuko/actions/workflows/build.yml)
-[![ios](https://github.com/adonm/zuko/actions/workflows/build-ios.yml/badge.svg)](https://github.com/adonm/zuko/actions/workflows/build-ios.yml)
-[![android](https://github.com/adonm/zuko/actions/workflows/build-android.yml/badge.svg)](https://github.com/adonm/zuko/actions/workflows/build-android.yml)
+[![flutter](https://github.com/adonm/zuko/actions/workflows/build-flutter.yml/badge.svg)](https://github.com/adonm/zuko/actions/workflows/build-flutter.yml)
 [![docs](https://github.com/adonm/zuko/actions/workflows/docs.yml/badge.svg)](https://zuko.adonm.dev/)
 [![release](https://github.com/adonm/zuko/actions/workflows/release.yml/badge.svg)](https://github.com/adonm/zuko/releases/latest)
 [![license](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
@@ -18,86 +21,48 @@ Rust CLI, explicit device authorization, and short reconnects.
 
 ## Quick start
 
-Install the zuko binary on the host and client:
+Install the CLI on a Linux or macOS host:
 
 ```sh
-curl https://mise.run | sh
-mise use --global github:adonm/zuko
-```
-
-On the host, install and start the user service:
-
-```sh
+curl --proto '=https' --tlsv1.2 -LsSf https://zuko.adonm.dev/install.sh | sh
+# Relaunch your shell here if the installer asks.
 zuko install
 ```
 
-Linux service logs:
-
-```sh
-journalctl --user -u zuko-host -f
-```
-
-Or run the host in the foreground:
-
-```sh
-zuko host
-```
-
-Pair one client:
+Pair from another machine with the CLI installed:
 
 ```sh
 # host: prints a one-time two-word code
 zuko share
-# iridescent-hilton
 
 # client: claims, saves, and connects
 zuko iridescent-hilton
 
-# future connections
-zuko ls
+# later
 zuko home
 ```
 
-Pairing needs a running host; interactively, `zuko share` offers to install and
-start one if needed. Pairing registers that client in the host allow-list; the
-saved name is used for later connections. See
-[`docs/host.md`](docs/host.md) for service setup, macOS logs, trust management,
-and troubleshooting.
+The installer bootstraps and activates mise when needed, then installs Zuko as a
+mise-managed global tool. Relaunch your shell first if it asks. See
+[Getting started](docs/getting-started.md) for mise, version selection, service
+logs, and first connection. Windows hosts can use the documented
+[WSL2 setup](docs/windows-wsl2.md), with lifecycle limitations.
 
 ## Product scope
 
 | Tier | Surface | Commitment |
 |------|---------|------------|
 | **Core** | Linux/macOS host and Rust CLI | Primary supported workflow |
-| **Beta** | iOS/iPadOS client | Built and tested; distribution and OS support are still limited |
-| **Labs** | Android/browser clients and Linux `zuko app` | Useful experiments; expect gaps and change |
+| **Beta** | Shared Flutter client (Android/iOS/macOS/web/Linux/Windows) | One cross-platform graphical client in active validation |
+| **Labs** | Linux `zuko app` | Optional GUI-over-terminal experiment |
 
-The current priority is to make pairing, connecting, reconnecting, diagnostics,
-and trust management boringly reliable. New platforms and richer streaming do
-not take priority over the core shell path. See the [roadmap](docs/roadmap.md)
-for promotion criteria and explicitly deferred work.
+See [Clients](docs/clients.md) for downloads and the
+[client build guide](docs/building-clients.md) for fresh Android, Apple, web,
+Linux, and Windows builds.
 
 zuko is not a durable session manager, full remote desktop, or centralized
 fleet-access system. Use `tmux`, `zellij`, or `screen` for work that must survive
 disconnects and host restarts.
-
-State:
-
-| Path | Meaning |
-|------|---------|
-| `~/.config/zuko/key` | host identity |
-| `~/.config/zuko/current_ticket` | host's current dial ticket, read by `zuko share` |
-| `~/.config/zuko/authorized_clients` | host allow-list |
-| `~/.config/zuko/hosts` | client-side saved hosts |
-| `~/.config/zuko/client_key` | CLI client's stable token seed |
-
-Manage host trust:
-
-```sh
-zuko ls          # saved hosts + authorised clients
-zuko rm ipad     # remove saved host and/or authorised client named ipad
-zuko reset       # rotate host key, clear authorised clients; restart host after
-```
 
 ## Use
 
@@ -107,7 +72,6 @@ zuko                     # TTY picker / non-TTY list
 zuko share               # authorise a new client
 zuko claim <code> --as x # explicit claim form
 zuko doctor              # check service, ticket, state, and network
-zuko upgrade --check     # mise-managed upgrade plan
 ```
 
 Session notes:
@@ -131,59 +95,29 @@ zuko app --doctor
 
 See [`docs/app.md`](docs/app.md).
 
-## Clients
-
-| Client | Status | Source |
-|--------|--------|--------|
-| Rust CLI | Core | Linux/macOS release binaries; `src/client.rs` |
-| iOS/iPadOS | Beta | iOS/iPadOS 26.5; source and TestFlight pipeline in `ios/` |
-| Android | Labs | API 29+ APK/AAB; native Compose, Iroh 1.0, and libghostty-vt in `android/` |
-| Web | Labs | [Open web client](https://zuko.adonm.dev/web/); relay-only |
-
-Protocol: [`docs/protocol.md`](docs/protocol.md). Client notes:
-[`docs/clients.md`](docs/clients.md).
-
-The web client is a static Pages app using Iroh WASM (relay-only, still E2E
-encrypted) and a Ghostty-derived terminal core via wterm. It does not yet
-reconnect and stores sensitive connection state (host ticket and client key) in
-browser IndexedDB, so treat that browser profile and origin as sensitive.
-
 ## Build/test
 
 ```sh
 mise install
-mise run test
-mise run test-e2e      # live Iroh network + PTY
+just check
+just test-e2e      # live Iroh network + PTY
 cargo build --release
 ```
 
-iOS:
-
-```sh
-mise run setup-ios
-mise run build-ios
-swift test --package-path ios/ZukoWire
-```
-
-Android (JDK/SDK/NDK are opt-in; see [`android/NATIVE.md`](android/NATIVE.md)):
-
-```sh
-mise run test-android-core
-export ANDROID_NDK_HOME="$ANDROID_HOME/ndk/29.0.14206865"
-mise run android-ci
-```
+Platform prerequisites, Windows PowerShell commands, signing behavior, and
+artifact paths are in [Building clients](docs/building-clients.md).
 
 ## Repo map
 
 | Path | Contents |
 |------|----------|
-| `src/` | Rust crate: host, CLI client, handoff, service, app streaming, FFI |
-| `ios/Zuko/` | iOS/iPadOS app |
-| `ios/ZukoWire/` | Swift wire-framing package |
-| `android/` | Android app, pure Kotlin protocol core, and libghostty JNI bridge |
+| `src/` | Rust crate: host, CLI client, handoff, service, and app streaming |
+| `flutter/` | Shared Android, iOS, macOS, web, Linux, and Windows client |
+| `Justfile` | Human-facing build, test, package, and release recipes |
+| `mise.toml` | Managed tools, system dependencies, and compatibility task aliases |
 | `docs/` | mdBook docs |
 | `tests/e2e.rs` | ignored live-network integration test |
-| `.github/workflows/` | build, release, iOS, docs CI |
+| `.github/workflows/` | Rust, Flutter, release, TestFlight, and docs CI |
 
 ## Security
 

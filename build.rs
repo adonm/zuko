@@ -8,7 +8,7 @@
 // when a dev symlink is missing we create one in OUT_DIR pointing at the
 // runtime lib and add OUT_DIR to the native link search path. This lets
 // `cargo build/run` work on the host without setting
-// LIBRARY_PATH (or building inside the Flatpak SDK). Hosts that already ship
+// LIBRARY_PATH or installing a full development SDK. Hosts that already ship
 // the dev packages are unaffected: the symlink is only created when the dev
 // file is absent, and an extra search path entry is harmless.
 fn main() {

@@ -24,9 +24,9 @@
 #   mise run setup-ios-signing
 #   sh scripts/setup-ios-signing.sh
 #
-# After it finishes, run the release-ios workflow with lane=build to verify
+# After it finishes, run the release-flutter-ios workflow with lane=build to verify
 # signing end-to-end (no TestFlight slot spent); then lane=beta for TestFlight.
-# See ios/DISTRIBUTION.md.
+# See docs/releasing.md.
 set -eu
 
 # ─── pre-flight ────────────────────────────────────────────────────────────
@@ -235,7 +235,7 @@ base64 < Zuko_AppStore.mobileprovision | tr -d '\n' \
 gh secret set --repo "$REPO" TEAM_ID --body "$TEAM_ID"
 gh secret set --repo "$REPO" ASC_KEY_ID --body "$ASC_KEY_ID"
 gh secret set --repo "$REPO" ASC_ISSUER_ID --body "$ASC_ISSUER_ID"
-# Read the .p8 raw — GH preserves interior newlines, which fastlane needs.
+# Read the .p8 raw — GitHub preserves the interior newlines altool needs.
 gh secret set --repo "$REPO" ASC_KEY_CONTENT < "$P8_PATH"
 
 # ─── 7. verify + summary ───────────────────────────────────────────────────
@@ -256,9 +256,9 @@ Artifacts in $WORKDIR  (KEEP SAFE — back them up to a password manager):
   team-id / asc-key-id / asc-issuer-id / AuthKey_*.p8   API auth material
 
 Next: verify end-to-end WITHOUT spending a TestFlight slot —
-  GitHub → Actions → release-ios → Run workflow → lane: build
+  GitHub → Actions → release-flutter-ios → Run workflow → lane: build
 Then push to TestFlight:
   same flow, lane: beta.
 
-See ios/DISTRIBUTION.md for details.
+See docs/releasing.md for details.
 EOF

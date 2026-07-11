@@ -19,7 +19,7 @@ use crossterm::event::{
 use memmap2::MmapMut;
 use rustix::fs::{MemfdFlags, memfd_create};
 use wayland_client::{
-    Connection, Dispatch, EventQueue, QueueHandle,
+    Connection, Dispatch, EventQueue, Proxy, QueueHandle,
     globals::{GlobalListContents, registry_queue_init},
     protocol::{wl_buffer, wl_output, wl_pointer, wl_registry, wl_seat, wl_shm, wl_shm_pool},
 };
@@ -1896,8 +1896,20 @@ fn setup_input(state: &mut State, qh: &QueueHandle<State>) {
         tracing::debug!("virtual keyboard unavailable: missing manager or seat");
     }
     if let Some(mgr) = state.vp_manager.as_ref() {
-        state.vpointer = Some(mgr.create_virtual_pointer(state.seat.as_ref(), qh, ()));
-        tracing::debug!("virtual pointer created");
+        state.vpointer = Some(if mgr.version() >= 2 {
+            mgr.create_virtual_pointer_with_output(
+                state.seat.as_ref(),
+                state.output.as_ref(),
+                qh,
+                (),
+            )
+        } else {
+            mgr.create_virtual_pointer(state.seat.as_ref(), qh, ())
+        });
+        tracing::debug!(
+            mapped_to_output = mgr.version() >= 2,
+            "virtual pointer created"
+        );
     } else {
         tracing::debug!("virtual pointer unavailable: missing manager");
     }

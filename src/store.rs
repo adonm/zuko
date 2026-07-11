@@ -145,6 +145,17 @@ pub fn list() {
     }
 }
 
+/// Print saved host names as a machine-readable, newline-delimited list.
+///
+/// This is deliberately narrower than [`list`]: graphical clients need stable
+/// host identifiers for their picker, not human headings, authorised clients,
+/// or the sensitive tickets stored behind each name.
+pub fn list_saved() {
+    for name in saved_names() {
+        println!("{name}");
+    }
+}
+
 /// Remove a saved host by name. Succeeds whether or not it existed.
 pub fn remove(name: &str) -> Result<()> {
     let _ = remove_host(name)?;

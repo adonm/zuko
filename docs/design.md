@@ -28,7 +28,7 @@ When a design trades one property for another, prefer this order:
 - The base experience is a real PTY over Iroh.
 - A stock terminal and one binary must remain a useful client.
 - Pairing is explicit, short-lived, and separate from ordinary connections.
-- Host state remains inspectable under `~/.config/zuko`.
+- Host state remains inspectable under `${XDG_CONFIG_HOME:-$HOME/.config}/zuko`.
 - Handshakes, queues, retries, and detached leases are bounded.
 - A brief disconnect may reattach; detached output is not replayed.
 - Long-running work belongs in `tmux`, `zellij`, or `screen`.

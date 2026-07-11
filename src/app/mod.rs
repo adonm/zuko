@@ -564,7 +564,7 @@ fn app_env(software: bool, no_sandbox: bool, profile: DisplayProfile) -> Vec<(St
         // cage surface). NOTE: Flatpaks mandate the portal regardless, so
         // sandboxed apps still route dialogs to the host desktop.
         ("GTK_USE_PORTAL".to_string(), "0".to_string()), // GTK in-process dialogs
-        // The app runs in a private cage/D-Bus session where the host IBus/a11y
+        // The app runs under a private cage display where the host IBus/a11y
         // daemons are often unavailable. GTK text widgets otherwise pick IBus,
         // fail to create an input context, and can drop ordinary key input
         // (notably GNOME Text Editor). Use GTK's built-in simple IM instead.
@@ -579,6 +579,7 @@ fn app_env(software: bool, no_sandbox: bool, profile: DisplayProfile) -> Vec<(St
         // probing so startup doesn't depend on host desktop services.
         ("GSETTINGS_BACKEND".to_string(), "memory".to_string()),
         ("NO_AT_BRIDGE".to_string(), "1".to_string()),
+        ("GTK_A11Y".to_string(), "none".to_string()),
     ];
     if wayland {
         // Blank DISPLAY so a Wayland-mode app can't silently fall onto X11; in
@@ -805,6 +806,7 @@ mod tests {
         let env = vec![
             ("GDK_BACKEND".to_string(), "wayland".to_string()),
             ("DISPLAY".to_string(), String::new()),
+            ("GTK_A11Y".to_string(), "none".to_string()),
         ];
         let child_args = vec!["--new-window".to_string()];
         let args = flatpak_run_args(
@@ -824,6 +826,7 @@ mod tests {
         assert!(!args.contains(&"--socket=fallback-x11".to_string()));
         assert!(args.contains(&"--env=GDK_BACKEND=wayland".to_string()));
         assert!(args.contains(&"--env=DISPLAY=".to_string()));
+        assert!(args.contains(&"--env=GTK_A11Y=none".to_string()));
         assert_eq!(args[args.len() - 2], "org.example.App");
         assert_eq!(args[args.len() - 1], "--new-window");
     }
@@ -846,6 +849,9 @@ mod tests {
         assert_eq!(value("VDPAU_DRIVER"), "");
         assert_eq!(value("DISPLAY"), "");
         assert_eq!(value("ELECTRON_OZONE_PLATFORM_HINT"), "wayland");
+        assert_eq!(value("GSETTINGS_BACKEND"), "memory");
+        assert_eq!(value("NO_AT_BRIDGE"), "1");
+        assert_eq!(value("GTK_A11Y"), "none");
     }
 
     #[test]

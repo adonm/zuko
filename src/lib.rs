@@ -1,51 +1,21 @@
 //! zuko — reach your machines over [Iroh](https://www.iroh.computer/).
 //!
-//! This crate is both a **library** (the host/client/handoff/protocol modules,
-//! plus an FFI surface for mobile clients) and a **binary** (`src/main.rs`,
-//! the `zuko` CLI). The binary is a thin dispatcher over the library; see
+//! This crate is both a **library** (the host/client/handoff/protocol modules)
+//! and a **binary** (`src/main.rs`, the `zuko` CLI). The binary is a thin
+//! dispatcher over the library; see
 //! [`main.rs`](../src/main.rs) for the command surface.
-//!
-//! # The FFI surface
-//!
-//! The crate also builds as a `staticlib`/`cdylib` with [uniffi] bindings that
-//! the iOS and Android apps consume. This lets
-//! the mobile app reuse the **exact same** key-derivation code
-//! (`code::derive_key`) as the CLI — no second Argon2id implementation to
-//! drift. Built with the same `uniffi` version (0.31) as `iroh-ffi`, so both
-//! XCFrameworks can link into the same app without runtime symbol conflicts.
-//!
-//! [uniffi]: https://mozilla.github.io/uniffi-rs/
 
-// uniffi scaffolding MUST live at the crate root — `#[uniffi::export]` in
-// submodules looks for `crate::UniFfiTag` which the macro generates here.
-uniffi::setup_scaffolding!();
-
-// `code` and `ffi` are the only modules mobile FFI builds need. Everything
-// else (host/client/handoff/service/store) pulls in desktop-only deps
-// (portable-pty, crossterm, clap, inquire, etc.) that either don't compile
-// for mobile or are pointless there. Target-cfg'ing them keeps the CLI build
-// unchanged while letting iOS and Android library targets compile with just
-// the key-derivation surface.
 pub mod code;
-pub mod ffi;
 
 #[cfg(target_os = "linux")]
 pub mod app;
-#[cfg(not(any(target_os = "ios", target_os = "android")))]
 pub mod client;
-#[cfg(not(any(target_os = "ios", target_os = "android")))]
 pub mod handoff;
-#[cfg(not(any(target_os = "ios", target_os = "android")))]
 pub mod host;
-#[cfg(not(any(target_os = "ios", target_os = "android")))]
 pub mod secret;
-#[cfg(not(any(target_os = "ios", target_os = "android")))]
 pub mod service;
-#[cfg(not(any(target_os = "ios", target_os = "android")))]
 pub mod store;
-#[cfg(not(any(target_os = "ios", target_os = "android")))]
 pub mod ticket_file;
-#[cfg(not(any(target_os = "ios", target_os = "android")))]
 pub mod wire;
 
 use std::path::PathBuf;
@@ -64,8 +34,7 @@ pub fn config_dir() -> PathBuf {
 
 /// `zuko share` configuration. Lives in the library (not just the CLI) because
 /// [`handoff::share`] consumes it directly — the binary passes clap-parsed
-/// args straight through. Desktop-only (clap is target-cfg'd out of iOS).
-#[cfg(not(any(target_os = "ios", target_os = "android")))]
+/// args straight through.
 #[derive(clap::Args, Clone)]
 pub struct ShareArgs {
     /// Use this ticket instead of reading `~/.config/zuko/current_ticket`
@@ -89,8 +58,7 @@ pub struct ShareArgs {
 }
 
 /// `zuko host` configuration. Lives in the library because [`host::run`]
-/// consumes it directly. Desktop-only (same target-cfg reason as `ShareArgs`).
-#[cfg(not(any(target_os = "ios", target_os = "android")))]
+/// consumes it directly.
 #[derive(clap::Args, Clone)]
 pub struct HostArgs {
     /// Path to the persistent secret key file. A stable key keeps the node id

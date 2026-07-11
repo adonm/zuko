@@ -104,7 +104,12 @@ enum Command {
     Upgrade(service::UpgradeArgs),
 
     /// List saved hosts and authorised clients.
-    Ls,
+    Ls {
+        /// Print saved host names only, one per line. Intended for graphical
+        /// clients; tickets and authorised-client entries are never included.
+        #[arg(long)]
+        saved_only: bool,
+    },
 
     /// Remove a saved host and/or authorised client by name.
     Rm { name: String },
@@ -213,8 +218,12 @@ async fn main() -> Result<()> {
             service::upgrade(&args)?;
             Ok(())
         }
-        Some(Command::Ls) => {
-            store::list();
+        Some(Command::Ls { saved_only }) => {
+            if saved_only {
+                store::list_saved();
+            } else {
+                store::list();
+            }
             Ok(())
         }
         Some(Command::Rm { name }) => {

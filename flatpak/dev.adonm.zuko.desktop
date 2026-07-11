@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Zuko
+Comment=Private remote shells over Iroh
+Exec=zuko
+Icon=dev.adonm.zuko
+Terminal=false
+Categories=Network;
+Keywords=remote;shell;terminal;Iroh;
+StartupNotify=true
+StartupWMClass=dev.adonm.zuko

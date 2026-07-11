@@ -1,37 +1,29 @@
-# Single source of truth for tools, system deps, and tasks.
-# Local dev:   `mise install`  then  `mise run <task>`
-# CI:          `jdx/mise-action` (runs `mise install`) then `mise run <task>`
-#
-# iOS local builds use xtool. Fastlane/XcodeGen are kept only for the signed
-# App Store/TestFlight workflow until xtool grows an App Store export path.
+# Single source of truth for tools and system dependencies. Human-facing
+# recipes live in Justfile; compatibility `mise run <task>` entries delegate
+# to those recipes. CI uses the same mise environment and recipe graph.
+# Local dev:   `mise install` then `just <recipe>`
+# CI/compat:   `mise run <task>`
 
 [tools]
-# iroh 1.0's dependency tree needs edition2024 (Rust 1.85+); track latest stable.
+# iroh 1.0's dependency tree needs edition2024 (Rust 1.85+).
 # `components` explicitly pins clippy + rustfmt (CI runners default to the
 # 'minimal' profile, and `Swatinem/rust-cache` can restore a toolchain without
 # them — see the matching `rustup component add` step in the workflows).
-rust = { version = "latest", components = "clippy,rustfmt" }
-# SwiftLint for the iOS app. Installed + shimmed by mise on Linux (static
-# binary from realm/SwiftLint releases) and macOS. `mise run lint` uses it.
-swiftlint = "latest"
+rust = { version = "1.96.1", components = "clippy,rustfmt" }
+# Shared Android, Apple, web, Linux, and Windows client.
+flutter = "3.44.6"
+# `just` owns the human-facing recipe graph; mise remains the source of pinned
+# tools and optional per-task SDKs. `mise run …` delegates to the same recipes.
+just = "1.55.1"
 # mdBook for the docs site (published to GitHub Pages via docs.yml). Prebuilt
 # binary via mise's aqua backend — no compile. `mise run build-docs` builds.
-mdbook = "latest"
-# Deno drives the static browser client build; Vite still bundles npm deps.
-deno = "latest"
+mdbook = "0.5.4"
 # Link/URL checker for markdown (the sensible md lint for this repo — no
 # node/ruby style linter, on purpose). Prebuilt binary via aqua.
-lychee = "latest"
+lychee = "0.24.2"
 # Linter for .github/workflows/*.yml: validates syntax, action SHAs/versions,
 # permissions, expression contexts, job needs. `mise run lint-ci` runs it.
-actionlint = "latest"
-
-# Swift is deliberately NOT in [tools]: mise installs every [tools] entry on
-# every `mise install` (every contributor + every CI leg), and Swift is ~1.5 GB
-# that only the iOS workflow needs. It's pinned to 6.2.4 and installed from
-# swift.org by the `setup-ios` task (opt-in). See that task for the pin
-# rationale. mise's `core:swift` backend also maps Bluefin -> a tarball
-# swift.org doesn't ship, so [tools] would break local Bluefin `mise install`.
+actionlint = "1.7.12"
 
 # System-level deps used by builds. `mise bootstrap packages install` installs
 # only the ones for the current OS/package manager. Just the linux/arm64
@@ -40,10 +32,6 @@ actionlint = "latest"
 "apt:gcc-aarch64-linux-gnu" = "latest" # cross linker for aarch64-unknown-linux-gnu
 # ring's wasm32 build (pulled by browser Iroh's tls-ring feature) needs clang.
 "apt:clang" = "latest"
-# Swiftly (and the Swift toolchain it installs) needs libcurl at runtime on
-# ubuntu-latest; Swiftly prints this as the fix hint when it's missing and
-# aborts the install. Lives in bootstrap (not [tools]) so only iOS work pulls it.
-"apt:libcurl4-openssl-dev" = "latest"
 
 [settings]
 # `mise bootstrap` (used for [bootstrap.packages]) is still experimental.
@@ -56,179 +44,42 @@ CARGO_TERM_COLOR = "always"
 
 [tasks.build]
 description = "Build the zuko release binary (native target)"
-run = "cargo build --release"
+run = "just build"
 
 [tasks.test]
 description = "Clippy + unit tests for zuko (host + client + share/claim). Skips the network-gated e2e test (run `mise run test-e2e` for that)."
-run = [
-    "cargo clippy --all-targets -- -D warnings",
-    "cargo test",
-]
+run = "just test"
 
 [tasks.test-e2e]
 description = "End-to-end PTY harness (host<->connect + share<->claim) against the live Iroh network. Needs network. Runs the #[ignore] e2e integration test in tests/e2e.rs."
-run = "cargo test --release --test e2e -- --ignored --nocapture"
+run = "just test-e2e"
 
-[tasks.build-ffi]
-description = "Build ZukoRust.xcframework + regenerate Swift bindings for the iOS app. Set ZUKO_FFI_DEVICE_ONLY=1 for xtool's default device-only build."
-run = "sh scripts/build-ffi.sh"
+[tasks.flutter-check]
+description = "Resolve, format-check, analyze, and test the shared Flutter client."
+run = "just flutter-check"
 
-[tasks.build-android-native]
-description = "Build pinned libghostty-vt, iroh-ffi, and Zuko JNI libraries for Android. Requires ANDROID_NDK_HOME (r29)."
-tools = { zig = "0.15.2", "cargo:cargo-ndk" = "3.5.4" }
-run = "sh scripts/build-android-native.sh"
+[tasks.build-flutter-android]
+description = "Build the shared Flutter client as Android release APK and AAB packages."
+run = "just build-flutter-android"
 
-[tasks.test-android-core]
-description = "Run the pure Kotlin Android protocol/session tests (no SDK or NDK needed)."
-tools = { java = "temurin-21", gradle = "8.14.3" }
-run = "gradle -p android -Pzuko.skipAndroidApp=true :core:test --no-daemon --console=plain"
+[tasks.build-flutter-linux]
+description = "Build the shared Flutter Linux desktop client."
+run = "just build-flutter-linux"
 
-[tasks.gradle-android-ci]
-description = "Run Android unit tests/lint and produce debug/release APK and AAB packages."
-tools = { java = "temurin-21" }
-run = """
-./android/gradlew -p android --no-daemon --stacktrace \
-  :core:test \
-  :app:testDebugUnitTest \
-  :app:lintDebug \
-  :app:assembleDebug \
-  :app:assembleRelease \
-  :app:bundleRelease
-"""
+[tasks.build-flutter-windows]
+description = "Build the shared Flutter Windows desktop client."
+run = "just build-flutter-windows"
 
-[tasks.android-ci]
-description = "Full Android CI: native libraries, tests, lint, APK, and AAB."
-depends = ["build-android-native"]
-run = "mise run gradle-android-ci"
+[tasks.build-flutter-ios]
+description = "Build the shared Flutter iOS Simulator client (macOS/Xcode only)."
+run = "just build-flutter-ios"
 
-[tasks.build-ios]
-description = "Build the iOS app with xtool. One command for local dev and CI: builds FFI, patches plist/frameworks, emits ios/xtool/Zuko.app."
-run = "sh scripts/build-ios-xtool.sh"
-
-[tasks.setup-ios-sdk]
-description = "Install the cached Darwin Swift SDK bundle for Linux xtool iOS builds. Idempotent; build-ios runs this automatically when needed."
-run = "sh scripts/setup-ios-sdk.sh"
-
-[tasks.setup-ios]
-description = "Install local iOS build tooling: Swift 6.2.4 (via Swiftly when missing — pins to match the cached xtoolsdk bundle, which 6.3 can't compile) + libxml2 from Homebrew + xtool."
-run = """
-case "$(uname -s)" in
-    Linux)
-        if command -v mise >/dev/null 2>&1; then
-            if command -v apt-get >/dev/null 2>&1; then
-                sudo apt-get update
-            fi
-            mise bootstrap packages install --yes
-        fi
-        BREW="$(command -v brew || command -v /home/linuxbrew/.linuxbrew/bin/brew || true)"
-        if [ -z "$BREW" ]; then
-            echo "setup-ios: Homebrew is required for libxml2 on Linux" >&2
-            exit 1
-        fi
-
-        # Swift 6.2.4 (pinned to match the cached xtoolsdk bundle, built
-        # against Apple Swift 6.2.3.3.2 — Swift 6.3 can't compile its
-        # SwiftUI/Spatial modules: "this SDK is not supported by the
-        # compiler"). Homebrew's `swift` formula drifts to 6.3 and mise's
-        # core:swift backend maps Bluefin to a tarball swift.org doesn't
-        # ship, so neither is reliable. Swiftly is Apple's official
-        # version-pinned Swift installer — `swiftly install 6.2.4` fetches
-        # the exact toolchain, and its platform auto-detection works on
-        # ubuntu-latest (the CI runner). Unpin only after the xtoolsdk
-        # bundle is rebuilt against 6.3.
-        if ! command -v swift >/dev/null 2>&1 || ! swift --version 2>/dev/null | head -1 | grep -q '^Swift version 6[.]2'; then
-            export SWIFTLY_HOME_DIR="$HOME/.local/share/swiftly"
-            export SWIFTLY_BIN_DIR="$SWIFTLY_HOME_DIR/bin"
-            if ! [ -x "$SWIFTLY_BIN_DIR/swiftly" ]; then
-                echo "setup-ios: installing Swiftly"
-                tmp="$(mktemp -d)"
-                curl -fsSL "https://download.swift.org/swiftly/linux/swiftly-$(uname -m).tar.gz" -o "$tmp/swiftly.tar.gz"
-                tar zxf "$tmp/swiftly.tar.gz" -C "$tmp"
-                "$tmp/swiftly" init --skip-install --assume-yes --no-modify-profile --quiet-shell-followup
-            fi
-            "$SWIFTLY_BIN_DIR/swiftly" install 6.2.4 --use --no-verify --assume-yes
-            "$SWIFTLY_BIN_DIR/swiftly" link --assume-yes 2>/dev/null || true
-            # shellcheck disable=SC1091
-            . "$SWIFTLY_HOME_DIR/env.sh"
-        fi
-
-        # libxml2: Homebrew-only, no drift risk.
-        "$BREW" install libxml2
-        "$BREW" link --overwrite --force libxml2 || true
-        BREW_PREFIX="$($BREW --prefix)"
-        export PATH="$BREW_PREFIX/bin:$BREW_PREFIX/sbin:$PATH"
-
-        ld_libs=""
-        for d in "$BREW_PREFIX"/opt/*/lib; do
-            [ -d "$d" ] || continue
-            if [ -z "$ld_libs" ]; then ld_libs="$d"; else ld_libs="$ld_libs:$d"; fi
-        done
-        export LD_LIBRARY_PATH="${ld_libs}${LD_LIBRARY_PATH+:${LD_LIBRARY_PATH}}"
-        if [ -n "${GITHUB_PATH:-}" ]; then
-            echo "$SWIFTLY_BIN_DIR" >> "$GITHUB_PATH"
-            {
-                echo "$BREW_PREFIX/bin"
-                echo "$BREW_PREFIX/sbin"
-            } >> "$GITHUB_PATH"
-        fi
-        if [ -n "${GITHUB_ENV:-}" ]; then
-            echo "LD_LIBRARY_PATH=$LD_LIBRARY_PATH" >> "$GITHUB_ENV"
-        fi
-        ;;
-esac
-
-mise run setup-xtool
-swift --version
-"""
-
-[tasks.setup-ios-release]
-description = "Install legacy signed-release tooling (xcodegen + fastlane). Used only by release-ios.yml."
-run = "brew install xcodegen fastlane"
-
-[tasks.setup-xtool]
-description = "Install xtool (cross-platform Xcode replacement). macOS: via the xtool-org Homebrew tap. Linux: the AppImage from GitHub releases. Swift itself comes from mise [tools], not Homebrew."
-run = """
-case "$(uname -s)" in
-    Darwin)
-        brew install xtool-org/tap/xtool
-        ;;
-    Linux)
-        mkdir -p "$HOME/.local/bin"
-        curl -fL "https://github.com/xtool-org/xtool/releases/latest/download/xtool-$(uname -m).AppImage" \
-            -o "$HOME/.local/bin/xtool"
-        chmod +x "$HOME/.local/bin/xtool"
-        export PATH="$HOME/.local/bin:$PATH"
-        if [ -n "${GITHUB_PATH:-}" ]; then
-            echo "$HOME/.local/bin" >> "$GITHUB_PATH"
-        fi
-        ;;
-    *)
-        echo "setup-xtool: unsupported OS $(uname -s)" >&2
-        exit 2
-        ;;
-esac
-xtool --version
-"""
-
-[tasks.lint]
-description = "Run SwiftLint on the iOS Swift sources (app + ZukoWire). Works on Linux (swiftlint-static, no SourceKit needed) and macOS (swiftlint from brew/mise). `mise install` brings the tool."
-# Lint the whole `ios` tree so the ZukoWire package is covered too; the
-# generated ZukoFFI bindings and SwiftPM `.build` dirs are excluded in
-# .swiftlint.yml.
-run = """
-if command -v swiftlint-static >/dev/null 2>&1; then
-    swiftlint-static --config .swiftlint.yml ios
-else
-    swiftlint --config .swiftlint.yml ios
-fi
-"""
-
-[tasks.test-ios-wire]
-description = "Run the ZukoWire wire-protocol Swift unit tests. Foundation-only, so it runs on Linux/CI just like the Rust `src/wire.rs` tests. Needs Swift (mise run setup-ios installs it on Linux)."
-run = "swift test --package-path ios/ZukoWire"
+[tasks.build-flutter-macos]
+description = "Build the shared Flutter macOS desktop client."
+run = "just build-flutter-macos"
 
 [tasks.setup-ios-signing]
-description = "One-time Apple signing setup for the iOS TestFlight pipeline. Generates cert+profile material, walks you through the developer-portal dance, and pushes the 7 GH Actions secrets via `gh`. No Mac needed. See ios/DISTRIBUTION.md."
+description = "One-time Apple signing setup for the Flutter TestFlight pipeline. Generates cert+profile material and pushes the 7 GitHub Actions secrets via gh."
 run = "sh scripts/setup-ios-signing.sh"
 
 [tasks.ios-signing-status]
@@ -259,11 +110,11 @@ fi
 
 [tasks.run-host]
 description = "Run `zuko host` in the foreground (mise shim or local debug build)"
-run = "sh scripts/zuko-host.sh"
+run = "just run-host"
 
 [tasks.release]
 description = "Cut a release: commit pending work, push, tag vX.Y.Z, push tag (triggers release.yml). Pass the version, e.g. `mise run release v0.1.0`."
-run = "sh scripts/release.sh ${@}"
+run = "just release ${@}"
 
 # ───────────────────────── docs (mdBook) ────────────────────────────
 # Source lives in `docs/` (see `book.toml`); the built site lands under
@@ -272,27 +123,35 @@ run = "sh scripts/release.sh ${@}"
 
 [tasks.build-docs]
 description = "Build the mdBook docs site into target/book/ (config in book.toml, source in docs/)."
-run = "mdbook build"
+run = "just build-docs"
 
 [tasks.build-web]
-description = "Build the static browser client into target/book/web/ (Iroh WASM + wterm Ghostty)."
-run = "scripts/build-web.sh"
+description = "Build the Flutter web client into target/book/web/ (Iroh WASM + libghostty)."
+run = "just build-web"
+
+[tasks.test-web]
+description = "Build the Flutter browser client after shared Dart checks."
+run = "just test-web"
 
 [tasks.serve-docs]
 description = "Build + serve the mdBook docs site on http://localhost:3000 with live reload. Open in a browser."
-run = "mdbook serve --open"
+run = "just serve-docs"
 
 [tasks.serve-web]
-description = "Run the static browser client dev server (web/)."
-run = "deno task --cwd web dev"
+description = "Run the Flutter browser client dev server."
+run = "just serve-web"
 
 [tasks.lint-md]
 description = "Lint markdown links with lychee (config in .lychee.toml). Checks all repo .md except generated/build dirs. Network-enabled for external URLs."
-run = "lychee --config .lychee.toml --root-dir . '**/*.md'"
+run = "just lint-md"
 
 [tasks.lint-ci]
 description = "Lint .github/workflows/*.yml with actionlint (syntax, action versions/SHAs, permissions, expression contexts, job needs)."
-run = "actionlint .github/workflows/*.yml"
+run = "just lint-ci"
+
+[tasks.check-release-metadata]
+description = "Verify CLI and Flutter versions share the workspace release version."
+run = "just check-release-metadata"
 
 # ──────────────────────────── hooks ─────────────────────────────────
 # See https://mise.jdx.dev/hooks.html. All hooks fire only when
@@ -301,37 +160,17 @@ run = "actionlint .github/workflows/*.yml"
 #
 # Design:
 #   - `enter` is a one-shot status snapshot (cheap, no builds).
-#   - `watch_files` runs *fast* checks on save: cargo fmt + clippy
-#     (Rust), swiftlint (Swift). Output is short — keeps the editor
-#     pane readable.
-#   - The slow full xtool iOS build is NOT in watch_files — it's too
-#     disruptive for iterative dev. Run `mise run preflight` manually
-#     before pushing if you've touched iOS build config.
+#   - `watch_files` runs fast Rust checks on save.
 
 [hooks.enter]
 # Run once when entering the project. Quick environment snapshot only —
 # no builds, no tests, no network. Surfaces:
 #   - rust toolchain version (always)
-#   - swift + xtool versions (if present; iOS dev is opt-in)
-#   - whether the .xtoolsdk is installed (on Linux; gates xtool dev build)
 # The goal is a glance-able status line so you immediately know if
 # something's off before you start a build.
 run = """
 echo "zuko dev env:"
 echo "  rust:   $(cargo --version 2>/dev/null || echo 'missing — run mise install')"
-if command -v xtool >/dev/null 2>&1; then
-    echo "  xtool:  $(xtool --version 2>/dev/null)"
-fi
-if command -v swift >/dev/null 2>&1; then
-    echo "  swift:  $(swift --version 2>/dev/null | head -1)"
-    sdk_status="$(xtool sdk status 2>&1 || true)"
-    if printf '%s\n' "$sdk_status" | grep -qi 'not installed'; then
-        echo "  ios SDK: not installed (run 'mise run setup-ios' on macOS,"
-        echo "           or install the SDK bundle from bootstrap-xtoolsdk.yml on Linux)"
-    else
-        echo "  ios SDK: $(printf '%s\n' "$sdk_status" | head -1)"
-    fi
-fi
 signing_dir="${ZUKO_IOS_SIGNING_DIR:-$HOME/.config/zuko/ios-signing}"
 if [ -d "$signing_dir" ]; then
     if [ -f "$signing_dir/zuko.p12" ] && [ -f "$signing_dir/Zuko_AppStore.mobileprovision" ] && ls "$signing_dir"/AuthKey_*.p8 >/dev/null 2>&1; then
@@ -350,7 +189,7 @@ fi
 # cargo fmt is instant and runs unconditionally on every Rust save.
 # Auto-fixes in place; noisy diffs print to the editor pane so you see
 # what changed.
-patterns = ["src/**/*.rs", "tests/**/*.rs", "uniffi-bindgen.rs"]
+patterns = ["src/**/*.rs", "tests/**/*.rs"]
 run = "cargo fmt"
 
 [[watch_files]]
@@ -361,55 +200,15 @@ run = "cargo fmt"
 patterns = ["src/**/*.rs", "Cargo.toml", "Cargo.lock"]
 run = "cargo clippy --quiet --message-format=short 2>&1 | tail -5"
 
-[[watch_files]]
-# SwiftLint is the iOS-side equivalent of cargo clippy — fast, no build.
-# Runs against the same config CI uses (.swiftlint.yml), so warnings
-# match what PR check will flag.
-patterns = ["ios/Zuko/Zuko/**/*.swift", ".swiftlint.yml"]
-run = """
-if command -v swiftlint >/dev/null 2>&1; then
-    swiftlint --config .swiftlint.yml ios/Zuko --quiet
-else
-    echo "(swiftlint not installed — run 'mise install')"
-fi
-"""
-
 # ──────────────────── explicit check / preflight tasks ──────────────
 # These don't auto-run; they're what you call before `git push` to
 # mirror what CI is going to do. `check` is the fast subset (~10s);
 # `preflight` is everything CI runs including the iOS build (~3 min).
 
 [tasks.check]
-description = "Fast pre-push checks: cargo fmt --check + clippy + tests + swiftlint. ~10-30s. Mirrors what the build.yml job runs."
-run = [
-    "cargo fmt --check",
-    "cargo clippy --all-targets -- -D warnings",
-    "cargo test",
-    """
-if command -v swiftlint >/dev/null 2>&1; then
-    swiftlint --config .swiftlint.yml ios/Zuko --strict
-else
-    echo "(skipping swiftlint — not installed)"
-fi
-""",
-]
+description = "Fast pre-push checks: Rust format/clippy/tests plus shared Flutter checks."
+run = "just check"
 
 [tasks.preflight]
-description = "Full local CI mirror: 'mise run check' + 'mise run build-ios' (xtool build). ~3 min. Run before pushing if you've touched iOS code."
-depends = ["check"]
-run = """
-if ! command -v xtool >/dev/null 2>&1; then
-    echo "preflight: xtool not installed — skipping iOS build (run 'mise run setup-xtool' to enable)"
-    exit 0
-fi
-sdk_status="$(xtool sdk status 2>&1 || true)"
-if printf '%s\n' "$sdk_status" | grep -qi 'not installed'; then
-    if [ "$(uname -s)" = "Linux" ]; then
-        mise run setup-ios-sdk
-    else
-        echo "preflight: iOS SDK not installed — skipping iOS build"
-        exit 0
-    fi
-fi
-mise run build-ios
-"""
+description = "Full local CI mirror."
+run = "just preflight"

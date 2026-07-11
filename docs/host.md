@@ -1,7 +1,10 @@
-# Host & CLI
+# Host operations
 
 `zuko` is one binary: host daemon, CLI client, pairing helper, service installer,
 upgrader, and Linux `zuko app` launcher.
+
+For binary installation, first service setup, and pairing, start with
+[Install and connect](getting-started.md).
 
 ## Commands
 
@@ -30,25 +33,25 @@ zuko app <command>     # Linux GUI app over Kitty graphics
 
 | Path | Role |
 |------|------|
-| `~/.config/zuko/key` | host identity |
-| `~/.config/zuko/current_ticket` | live dial ticket, refreshed by host |
-| `~/.config/zuko/authorized_clients` | host allow-list |
-| `~/.config/zuko/hosts` | client-side saved hosts |
-| `~/.config/zuko/client_key` | CLI client token seed |
+| `$ZUKO_CONFIG/key` | host identity |
+| `$ZUKO_CONFIG/current_ticket` | live dial ticket, refreshed by host |
+| `$ZUKO_CONFIG/authorized_clients` | host allow-list |
+| `$ZUKO_CONFIG/hosts` | client-side saved hosts |
+| `$ZUKO_CONFIG/client_key` | CLI client token seed |
 
-All secret state is user-local and written `0600` where Unix permissions apply.
+Here `$ZUKO_CONFIG` means `${XDG_CONFIG_HOME:-$HOME/.config}/zuko`. All secret
+state is user-local and written `0600` where Unix permissions apply.
 
-## Install service
+## Service control
 
-```sh
-curl https://mise.run | sh
-mise use --global github:adonm/zuko
-zuko install
-```
+`zuko install` writes `~/.local/bin/zuko-host-run`, installs the platform user
+service, and enables and starts it. Rerunning it updates that configuration.
 
 Linux:
 
 ```sh
+systemctl --user status zuko-host
+systemctl --user restart zuko-host
 journalctl --user -u zuko-host -f
 sudo loginctl enable-linger "$USER"   # servers that must run without login
 ```
@@ -56,7 +59,7 @@ sudo loginctl enable-linger "$USER"   # servers that must run without login
 macOS:
 
 ```sh
-tail -f ~/.config/zuko/zuko-host.err.log
+tail -f "${XDG_CONFIG_HOME:-$HOME/.config}/zuko/zuko-host.err.log"
 ```
 
 Install flags:
@@ -64,7 +67,7 @@ Install flags:
 | Flag | Default |
 |------|---------|
 | `--prefix` | `~/.local` |
-| `--key` | `~/.config/zuko/key` |
+| `--key` | `$ZUKO_CONFIG/key` |
 | `--shell` | `$SHELL` |
 | `--no-start` | disabled |
 
@@ -115,7 +118,8 @@ zuko reset --yes
 - Shell exit ends the session and kills the PTY.
 - Network/client drop detaches the PTY for 5 minutes.
 - Detached output is discarded.
-- CLI reconnects while the process is alive; iOS redials while screen is active.
+- CLI reconnects while the process is alive; Flutter redials while its screen
+  is active; Flutter clients use bounded reconnect while their session is open.
 - Use `tmux`, `zellij`, or `screen` for durable work.
 
 Force-exit a stuck CLI: Ctrl-C three times within ~1s with no remote output.
@@ -139,14 +143,17 @@ the service when that file is unavailable, while non-interactive use fails.
 
 ## Upgrade
 
+Mise-managed install:
+
 ```sh
 zuko upgrade --check
 zuko upgrade
-zuko upgrade --version 0.8.0
+zuko upgrade --version 0.9.9
 zuko upgrade --no-restart
 ```
 
-Only works for mise-managed installs. Restarting the service kills in-memory PTYs.
+The curl installer creates this mise-managed installation, so the same upgrade
+commands apply. Restarting the service kills in-memory PTYs.
 
 ## Debug
 
@@ -156,7 +163,7 @@ RUST_LOG=iroh=debug zuko home
 ```
 
 Host logs are stderr in foreground, systemd journal on Linux, and
-`~/.config/zuko/zuko-host.err.log` on macOS.
+`$ZUKO_CONFIG/zuko-host.err.log` on macOS.
 
 ## Troubleshooting
 
@@ -199,9 +206,10 @@ If the link is wedged, use the CLI force-exit sequence and reconnect.
 ## Build/test
 
 ```sh
-cargo build --release
-cargo test
-cargo test --release --test e2e -- --ignored --nocapture
+mise install
+just test
+just test-e2e
 ```
 
-The ignored e2e test uses a real PTY and the live Iroh network.
+The e2e test uses a real PTY and the live Iroh network. See
+[Contributing](contributing.md) for the full check graph.

@@ -114,7 +114,8 @@ Rust CLI:
 SHA256("zuko-session-token-v1" || client_key_bytes || host_id_bytes)[0..16]
 ```
 
-The browser client uses the same derivation with its IndexedDB client key.
+The Flutter client uses the same derivation with its protected client key on
+Android, iOS, macOS, web, Linux, and Windows.
 
 iOS:
 
@@ -128,11 +129,11 @@ Tokens must be non-zero.
 
 - A shell connection requires host dial information plus a token in the host's
   authorized-client list.
-- Host key stays on host at `~/.config/zuko/key`.
+- Host key stays on host at `${XDG_CONFIG_HOME:-$HOME/.config}/zuko/key`.
 - Host admits only authorised client tokens.
 - Iroh provides transport encryption; relays see encrypted traffic.
 - Rotate host trust with `zuko reset`, restart, then re-pair clients.
 
 Reference implementations: `src/wire.rs`, `src/client.rs`, `src/host.rs`,
-`src/handoff.rs`, `ios/ZukoWire/`, `ios/Zuko/Zuko/Net/`, and
-`web/wasm/src/lib.rs`.
+`src/handoff.rs`, `flutter/lib/src/`, and
+`flutter/rust/web_transport/src/lib.rs`.
