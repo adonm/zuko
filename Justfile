@@ -54,7 +54,7 @@ flutter-get:
 
 [group('flutter')]
 flutter-vendor-get:
-    mise exec -C flutter/packages/flterm -- flutter pub get --enforce-lockfile
+    mise exec -C flutter/packages/flterm -- flutter pub get
 
 [group('flutter')]
 flutter-vendor-check: flutter-vendor-get

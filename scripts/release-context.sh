@@ -2,7 +2,7 @@
 set -euo pipefail
 
 if [ "$#" -lt 1 ] || [ "$#" -gt 2 ]; then
-  echo "usage: release-context.sh <vX.Y.Z> [apple-build-number]" >&2
+  echo "usage: release-context.sh <vX.Y.Z> [android-build-number|apple-build-number]" >&2
   exit 2
 fi
 

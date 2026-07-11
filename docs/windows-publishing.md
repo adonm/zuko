@@ -16,3 +16,8 @@ draft in Partner Center, then dispatch `lane=submit` through the protected
 `microsoft-store-submit` environment. Store listing metadata, age ratings,
 privacy declarations, agreements, and the initial Partner Center submission
 remain maintainer-owned portal work.
+
+Same-version runs can replace work before certification. After Partner Center
+accepts a package version, increment the Zuko release version for the next
+submission; Microsoft does not accept a second package with the published
+version.

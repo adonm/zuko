@@ -84,6 +84,8 @@ the CLI does not create the first loose-MSIX submission.
 The second run rebuilds and reuploads the then-current `main` source before
 approval; it never commits a draft from an unrelated run. Concurrency prevents
 two Store publishing runs from changing the app draft at the same time.
+Once Partner Center accepts the package version, cut a new Zuko version rather
+than trying to replace the published package.
 
 Before enabling submission, run the generated package through the Windows App
 Certification Kit and confirm launch/install behavior on supported Windows 10
