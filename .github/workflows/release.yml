@@ -10,17 +10,12 @@ on:
   push:
     tags:
       - 'v*'
-  workflow_dispatch:
-    inputs:
-      tag:
-        description: 'Tag to publish (e.g. v0.1.0)'
-        required: true
 
 permissions:
   contents: read
 
 concurrency:
-  group: release-${{ inputs.tag || github.ref_name }}
+  group: release-${{ github.ref_name }}
   cancel-in-progress: false
 
 jobs:
@@ -38,7 +33,7 @@ jobs:
       - name: Resolve release version and source
         id: identity
         env:
-          TAG: ${{ inputs.tag || github.ref_name }}
+          TAG: ${{ github.ref_name }}
         run: scripts/release-context.sh "$TAG"
 
   build:
@@ -77,13 +72,13 @@ jobs:
         uses: jdx/mise-action@e6a8b3978addb5a52f2b4cd9d91eafa7f0ab959d # v4.2.0
         with:
           cache: true
-          cache_save: ${{ github.event_name == 'workflow_dispatch' }}
+          cache_save: false
           install_args: rust
 
       - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
         with:
           key: ${{ matrix.target }}
-          save-if: ${{ github.event_name == 'workflow_dispatch' }}
+          save-if: false
 
       - name: Add rust target
         run: rustup target add "${ZUKO_TARGET}"
@@ -172,7 +167,7 @@ jobs:
         uses: jdx/mise-action@e6a8b3978addb5a52f2b4cd9d91eafa7f0ab959d # v4.2.0
         with:
           cache: true
-          cache_save: ${{ github.event_name == 'workflow_dispatch' }}
+          cache_save: false
           install_args: rust just
 
       - uses: ./.github/actions/setup-flutter
@@ -180,7 +175,7 @@ jobs:
       - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
         with:
           key: flutter-android-release
-          save-if: ${{ github.event_name == 'workflow_dispatch' }}
+          save-if: false
 
       - name: Set up Android SDK
         uses: android-actions/setup-android@40fd30fb8d7440372e1316f5d1809ec01dcd3699 # v4.0.1
@@ -284,7 +279,7 @@ jobs:
       - uses: jdx/mise-action@e6a8b3978addb5a52f2b4cd9d91eafa7f0ab959d # v4.2.0
         with:
           cache: true
-          cache_save: ${{ github.event_name == 'workflow_dispatch' }}
+          cache_save: false
           install_args: rust
 
       - uses: ./.github/actions/setup-flutter
@@ -297,7 +292,7 @@ jobs:
       - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
         with:
           key: flutter-ios-appetize
-          save-if: ${{ github.event_name == 'workflow_dispatch' }}
+          save-if: false
 
       - name: Build locked ARM iOS Simulator client
         env:
@@ -360,7 +355,7 @@ jobs:
       - uses: jdx/mise-action@e6a8b3978addb5a52f2b4cd9d91eafa7f0ab959d # v4.2.0
         with:
           cache: true
-          cache_save: ${{ github.event_name == 'workflow_dispatch' }}
+          cache_save: false
           install_args: rust
 
       - uses: ./.github/actions/setup-flutter
@@ -368,7 +363,7 @@ jobs:
       - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
         with:
           key: flutter-linux-release
-          save-if: ${{ github.event_name == 'workflow_dispatch' }}
+          save-if: false
 
       - name: Install pinned LLVM toolchain
         run: |
@@ -448,7 +443,7 @@ jobs:
       - uses: jdx/mise-action@e6a8b3978addb5a52f2b4cd9d91eafa7f0ab959d # v4.2.0
         with:
           cache: true
-          cache_save: ${{ github.event_name == 'workflow_dispatch' }}
+          cache_save: false
           install_args: rust
 
       - uses: ./.github/actions/setup-flutter
@@ -456,7 +451,7 @@ jobs:
       - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
         with:
           key: flutter-windows-release
-          save-if: ${{ github.event_name == 'workflow_dispatch' }}
+          save-if: false
 
       - name: Build and package Windows client
         shell: pwsh

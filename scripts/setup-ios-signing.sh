@@ -24,8 +24,8 @@
 #   mise run setup-ios-signing
 #   sh scripts/setup-ios-signing.sh
 #
-# After it finishes, run the release-flutter-ios workflow with lane=build to verify
-# signing end-to-end (no TestFlight slot spent); then lane=beta for TestFlight.
+# After it finishes, manually run release-flutter-ios to verify signing without
+# uploading. Only a new immutable release tag uploads to TestFlight.
 # See docs/releasing.md.
 set -eu
 
@@ -256,9 +256,8 @@ Artifacts in $WORKDIR  (KEEP SAFE — back them up to a password manager):
   team-id / asc-key-id / asc-issuer-id / AuthKey_*.p8   API auth material
 
 Next: verify end-to-end WITHOUT spending a TestFlight slot —
-  GitHub → Actions → release-flutter-ios → Run workflow → lane: build
-Then push to TestFlight:
-  same flow, lane: beta.
+  GitHub → Actions → release-flutter-ios → Run workflow
+Then cut a new immutable release tag to upload to TestFlight.
 
 See docs/releasing.md for details.
 EOF

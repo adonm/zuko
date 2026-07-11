@@ -144,8 +144,8 @@ runs. It uploads the simulator and macOS ZIP artifacts only for `main` and
 manual runs; those development artifacts are retained for seven days and are
 not GitHub Release assets. Every release tag separately runs
 `release-flutter-ios`, producing a signed IPA and uploading it to internal
-TestFlight. Maintainers can still dispatch `lane=build` to stop after signed IPA
-validation or `lane=beta` to upload manually. Apple builds use bundle ID
+TestFlight. Maintainers can manually dispatch the workflow for signed IPA
+validation, but manual runs never upload to TestFlight. Apple builds use bundle ID
 `dev.adonm.zuko` and the protected `apple-store` environment.
 
 ## Matching CI

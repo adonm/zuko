@@ -32,9 +32,13 @@ def main() -> None:
         fail(f"Flutter version must be {version}+<build number>")
 
     major, minor, patch = (int(part) for part in version.split("."))
-    expected_build = major * 1_000_000 + minor * 1_000 + patch
+    # The baseline keeps deterministic builds above the timestamp identifiers
+    # used before v0.9.12 while remaining below Google Play's 2.1B limit.
+    expected_build = 1_800_000_000 + major * 1_000_000 + minor * 1_000 + patch
+    if expected_build > 2_100_000_000:
+        fail("release version no longer fits the Google Play build-number range")
     if int(flutter_match.group(2)) != expected_build:
-        fail(f"Flutter build number must be {expected_build} for Android upgrade continuity")
+        fail(f"Flutter build number must be {expected_build} for store upgrade continuity")
 
     metainfo = ET.parse(ROOT / "flatpak/dev.adonm.zuko.metainfo.xml").getroot()
     releases = metainfo.find("releases")

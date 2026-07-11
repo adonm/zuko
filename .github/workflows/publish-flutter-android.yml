@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: "Release version to publish from main (vX.Y.Z)"
+        description: "Immutable release tag to publish (vX.Y.Z)"
         required: true
         type: string
       track:
@@ -49,13 +49,14 @@ jobs:
       - name: Check out current release source
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
+          ref: ${{ inputs.tag }}
           fetch-depth: 0
 
       - name: Resolve release context
         id: identity
         env:
           TAG: ${{ inputs.tag }}
-        run: scripts/release-context.sh "$TAG" android-build-number
+        run: scripts/release-context.sh "$TAG"
 
   package:
     name: rebuild Android bundle
@@ -100,7 +101,7 @@ jobs:
             build-tools;36.0.0
             ndk;28.2.13676358
 
-      - name: Natively rebuild unsigned AAB from main
+      - name: Natively rebuild unsigned AAB from release tag
         env:
           VERSION: ${{ needs.prepare.outputs.version }}
           VERSION_CODE: ${{ needs.prepare.outputs.version_code }}

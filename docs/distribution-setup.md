@@ -7,8 +7,9 @@ inputs.
 
 ## Common release controls
 
-- [ ] Keep Cargo and Flutter versions aligned (`0.9.11` and `0.9.11+9011` at the
-  time of writing); run `just check-release-metadata`.
+- [ ] Keep Cargo and Flutter versions aligned (`0.9.12` and
+  `0.9.12+1800009012` at the time of writing); run
+  `just check-release-metadata`.
 - [ ] Use application/package/bundle ID `dev.adonm.zuko` everywhere except the
   Partner Center-assigned Microsoft package identity.
 - [ ] Keep `https://adonm.dev` reachable and visibly associated with Zuko so
@@ -57,10 +58,10 @@ Details: [Android store publishing](android-publishing.md).
   Distribution, Mac Installer Distribution, and a Mac App Store profile.
 - [ ] Create a dedicated App Store Connect App Manager API key and retain its
   issuer ID, key ID, and one-time `.p8` securely.
-- [ ] Run iOS `lane=build` and macOS `lane=build` first. A release tag uploads
-  iOS to internal TestFlight automatically; reserve manual iOS `lane=beta` for
-  an intentional retry, and use macOS `lane=upload` only after inspecting its
-  signed package.
+- [ ] Run the manual iOS signing smoke test and macOS `lane=build` first. A
+  release tag uploads iOS to internal TestFlight automatically; the manual iOS
+  run never uploads. Use macOS `lane=upload` only after inspecting its signed
+  package.
 
 Details: [Apple store publishing](apple-publishing.md).
 
@@ -118,7 +119,7 @@ Details: [Flatpak packaging](../flatpak/README.md).
    Mac App Store, and Microsoft draft builds through their protected workflows.
 5. Review each portal's retained artifact, metadata, policy answers, and human approval before production submission.
 
-Tags start a release and provide its version label. If release automation needs
-a fix, dispatch the workflow again from `main` with the same version. Recovery
-runs build the current `main` commit and may replace same-version GitHub Release
-assets; workflow artifacts and package metadata retain the exact source SHA.
+Tags are immutable release source identities. Re-run failed jobs only when the
+source and workflow are unchanged. If automation or packaging needs a code
+change, increment the patch version and cut a new tag; never publish current
+`main` under an older tag.

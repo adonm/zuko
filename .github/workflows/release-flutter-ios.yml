@@ -5,18 +5,6 @@ on:
     tags:
       - 'v*'
   workflow_dispatch:
-    inputs:
-      tag:
-        description: "Release version to build from main (vX.Y.Z)"
-        required: true
-        type: string
-      lane:
-        description: "Build a signed artifact or upload it to TestFlight"
-        type: choice
-        default: build
-        options:
-          - build
-          - beta
 
 permissions:
   contents: read
@@ -27,7 +15,7 @@ concurrency:
 
 jobs:
   build:
-    name: signed Flutter iOS (${{ github.event_name == 'push' && 'beta' || inputs.lane }})
+    name: signed Flutter iOS (${{ github.event_name == 'push' && 'TestFlight' || 'validation only' }})
     runs-on: macos-latest
     timeout-minutes: 120
     environment: apple-store
@@ -41,8 +29,13 @@ jobs:
 
       - name: Resolve release metadata
         env:
-          TAG: ${{ github.event_name == 'push' && github.ref_name || inputs.tag }}
-        run: scripts/release-context.sh "$TAG" apple-build-number
+          TAG: ${{ github.ref_name }}
+        run: |
+          if [ "$GITHUB_EVENT_NAME" = push ]; then
+            scripts/release-context.sh "$TAG"
+          else
+            scripts/release-context.sh
+          fi
 
       # Zig 0.15.2 cannot parse the arm64e-macos exports in Xcode 26.6's
       # macOS 26.5 libSystem.tbd while compiling Ghostty's host build runner.
@@ -125,9 +118,8 @@ jobs:
           retention-days: 7
 
       - name: Upload to TestFlight
-        # Release tags always upload. A manual run can still select `build` to
-        # validate signing without consuming a TestFlight build number.
-        if: ${{ github.event_name == 'push' || inputs.lane == 'beta' }}
+        # Manual dispatch is intentionally a non-publishing signing smoke test.
+        if: ${{ github.event_name == 'push' }}
         env:
           ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
           ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}

@@ -1,10 +1,10 @@
 # Microsoft Store publishing for Flutter Windows
 
-The manual `publish-flutter-windows` workflow packages the current Flutter
-Windows source from `main` for a `vX.Y.Z` release version. It records the source
-commit, creates signed MSIX and MSIXBundle artifacts, and uploads the bundle to
-a Partner Center draft. The `submit` lane requires a second protected environment
-before it commits that draft for certification.
+The manual `publish-flutter-windows` workflow packages the source identified by
+an immutable `vX.Y.Z` release tag. It records the source commit, creates signed
+MSIX and MSIXBundle artifacts, and uploads the bundle to a Partner Center draft.
+The `submit` lane requires a second protected environment before it commits that
+draft for certification.
 
 ## Package mapping
 
@@ -23,10 +23,10 @@ vX.Y.Z -> (X + 1).Y.Z.0
 ```
 
 The workflow still validates Flutter's canonical `X.Y.Z+build`, where `build`
-is the existing `X * 1,000,000 + Y * 1,000 + Z` Android mapping. The Windows
-executable is built as `X.Y.Z.0`, because each Windows file-version component is
-16-bit and the Android build-number stream will exceed that range at `v1.0.0`.
-All Store package-version components must fit the 0-65535 range.
+is the repository's deterministic store build number. The Windows executable is
+built as `X.Y.Z.0`, because each Windows file-version component is 16-bit and
+cannot contain that build number. All Store package-version components must fit
+the 0-65535 range.
 
 ## Protected environments
 
@@ -74,16 +74,16 @@ the CLI does not create the first loose-MSIX submission.
 
 ## Run
 
-1. Run `publish-flutter-windows` from `main` with the release version and
+1. Run `publish-flutter-windows` from `main` with the immutable release tag and
    `lane=draft`.
 2. Download and retain the signed workflow artifact, then review the draft and
    certification inputs in Partner Center.
-3. Run the workflow for the same release version with `lane=submit`. Approve
+3. Run the workflow for the same release tag with `lane=submit`. Approve
    `microsoft-store-submit` only after reviewing the newly uploaded draft.
 
-The second run rebuilds and reuploads the then-current `main` source before
-approval; it never commits a draft from an unrelated run. Concurrency prevents
-two Store publishing runs from changing the app draft at the same time.
+The second run rebuilds and reuploads the same tagged source before approval;
+it never commits a draft from an unrelated run. Concurrency prevents two Store
+publishing runs from changing the app draft at the same time.
 Once Partner Center accepts the package version, cut a new Zuko version rather
 than trying to replace the published package.
 

@@ -1,7 +1,7 @@
 # Microsoft Store publishing
 
 The manual `publish-flutter-windows.yml` workflow builds the Flutter Windows
-client from current `main` for a `vX.Y.Z` release version, packages and signs
+client from an immutable `vX.Y.Z` release tag, packages and signs
 MSIX/MSIXBundle artifacts, uploads a Partner Center draft, and separates final
 submission behind a second protected approval.
 
@@ -17,7 +17,7 @@ draft in Partner Center, then dispatch `lane=submit` through the protected
 privacy declarations, agreements, and the initial Partner Center submission
 remain maintainer-owned portal work.
 
-Same-version runs can replace work before certification. After Partner Center
-accepts a package version, increment the Zuko release version for the next
-submission; Microsoft does not accept a second package with the published
-version.
+Repeated runs use the same tagged source and package version before
+certification. After Partner Center accepts a package version, increment the
+Zuko release version for the next submission; Microsoft does not accept a
+second package with the published version.

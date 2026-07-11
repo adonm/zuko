@@ -4,17 +4,12 @@ on:
   push:
     tags:
       - 'v*'
-  workflow_dispatch:
-    inputs:
-      tag:
-        description: 'Existing release tag to publish (vX.Y.Z)'
-        required: true
 
 permissions:
   contents: read
 
 concurrency:
-  group: publish-crate-${{ inputs.tag || github.ref_name }}
+  group: publish-crate-${{ github.ref_name }}
   cancel-in-progress: false
 
 jobs:
@@ -31,7 +26,7 @@ jobs:
       - name: Resolve crate version and source
         id: identity
         env:
-          TAG: ${{ inputs.tag || github.ref_name }}
+          TAG: ${{ github.ref_name }}
         run: scripts/release-context.sh "$TAG"
 
       - name: Install pinned Rust toolchain

@@ -3,9 +3,10 @@
 Android compilation remains a native Flutter/Gradle build. The manual
 `publish-flutter-android.yml` workflow uses pinned Codemagic CLI Tools only at
 the signing, bundle validation, Google Play API validation, and upload boundary.
-It must be dispatched from `main` with a `vX.Y.Z` release version.
+Dispatch the workflow definition from `main` and supply an existing immutable
+`vX.Y.Z` release tag.
 
-The workflow checks out the selected `main` commit, runs a normal unsigned
+The workflow checks out the selected immutable release tag, runs a normal unsigned
 `flutter build appbundle`, and signs that output with Codemagic inside the
 protected publishing job. It validates and uploads the exact AAB retained as
 the final workflow artifact.
@@ -13,8 +14,8 @@ the final workflow artifact.
 The workflow verifies all of the following before upload:
 
 - the requested version matches the checked-out Cargo and Flutter metadata;
-- the Google Play version code is the dispatch timestamp, so a new recovery run
-  for the same version receives a higher code;
+- the Google Play version code is deterministically derived from the semantic
+  version as `1,800,000,000 + major * 1,000,000 + minor * 1,000 + patch`;
 - the package and namespace are `dev.adonm.zuko`;
 - Bundletool accepts the AAB and its manifest reports the expected package,
   version name, and version code;
@@ -66,7 +67,7 @@ plaintext.
 
 ## Dispatch and release
 
-Run **publish-flutter-android** manually, select the release version, Play track,
+Run **publish-flutter-android** manually, select the immutable release tag, Play track,
 and mode. `draft` uploads a draft release; `release` makes it
 available according to the selected track and Google Play review state. Use the
 internal track first. A production `release` is a full production release, so

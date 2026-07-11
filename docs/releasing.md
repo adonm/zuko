@@ -35,29 +35,31 @@ the platform guides provide deeper operational detail.
 mise bootstrap
 just check
 just test-e2e
-just release v0.9.11
+just release
 ```
 
-`scripts/release.sh` validates the version, commits requested pending work,
-pushes the branch, creates an annotated tag, and pushes it. The tag-triggered
-workflow validates that the tag, Cargo version, Flutter version, and checked-out
-source metadata agree before building any artifact.
+`scripts/release.sh` requires a clean `main` exactly matching `origin/main`,
+validates the committed package versions, creates the annotated `vX.Y.Z` tag,
+and pushes only that tag. It never stages files, creates a commit, pushes a
+branch, or moves an existing tag. Tag-triggered workflows verify that the tag
+resolves to their exact checkout before building anything.
 
-The tag starts the first build and names the release; it is not the permanent
-source identity for recovery builds. To rebuild after an automation or packaging
-fix, dispatch the release workflow from `main` with the same `vX.Y.Z` value. The
-workflow builds that `main` commit and replaces assets with matching names on the
-existing GitHub Release. Store workflows use the same version-label model and
-retain the selected source SHA in workflow artifacts or package metadata.
+A release tag is the permanent source identity for that release. Re-run a
+failed job only for transient runner, network, or approval failures. If source,
+packaging, or workflow code changes, increment the patch version, commit and
+push it, and cut a new tag. Never rebuild an old version from current `main`.
 
 Cargo `workspace.package.version` is canonical. Flutter must use the same
 semantic version plus this Android-compatible build number:
 
 ```text
-major * 1,000,000 + minor * 1,000 + patch
+1,800,000,000 + major * 1,000,000 + minor * 1,000 + patch
 ```
 
-Run `just check-release-metadata` after every version change.
+The baseline preserves ordering after the timestamp build numbers used before
+`v0.9.12` while remaining below Google Play's limit. Android and Apple use this
+same deterministic value. Run `just check-release-metadata` after every version
+change.
 
 ## crates.io
 
@@ -78,9 +80,8 @@ rxvt, SGR, and cursor-position underflow fixes.
 The `publish-crate.yml` workflow validates `vX.Y.Z` against the selected source
 before running the same fail-closed package check. Its `crates-io` GitHub
 environment must be protected with required reviewers and allow tag pushes plus
-manual recovery dispatches from `main`. The protected publish job is not reached
-when verification fails, and crates.io refuses replacement of an existing
-version.
+tag-triggered deployments. The protected publish job is not reached when
+verification fails, and crates.io refuses replacement of an existing version.
 
 The Zuko crate uses a crates.io trusted publisher for repository `adonm/zuko`,
 workflow `publish-crate.yml`, and environment `crates-io`. Publications use
@@ -125,15 +126,15 @@ non-PR runs. Store signing and upload are isolated in protected workflows:
 
 - every `vX.Y.Z` tag creates, validates, and uploads `Zuko-Flutter.ipa` for
   internal TestFlight processing;
-- a manual iOS `lane=build` creates and validates the IPA without uploading it,
-  while `lane=beta` performs the same TestFlight upload as a release tag;
+- a manual iOS workflow run creates and validates a signed IPA from the selected
+  branch without uploading it or claiming a release identity;
 - macOS `lane=build` creates and validates a signed, sandboxed Mac App Store
   installer package;
 - macOS `lane=upload` passes through the protected `apple-store` environment
   before validating and uploading that package.
 
-The Apple client uses bundle ID `dev.adonm.zuko` and a monotonically increasing
-build-number stream. Pinned Codemagic CLI Tools own keychain, certificate,
+The Apple client uses bundle ID `dev.adonm.zuko` and the same deterministic
+semantic build number as Android. Pinned Codemagic CLI Tools own keychain, certificate,
 profile, package-validation, and App Store Connect upload operations at this
 boundary. Portal records, secrets, certificate types, sandbox requirements, and
 final submission steps are documented in [Apple store publishing](apple-publishing.md).

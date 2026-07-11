@@ -154,5 +154,5 @@ upload-appetize platform file public_key note='manual upload':
     sh scripts/upload-appetize.sh "{{ platform }}" "{{ file }}" "{{ public_key }}" "{{ note }}"
 
 [group('release')]
-release version: check-release-metadata
-    sh scripts/release.sh "{{ version }}"
+release: check-release-metadata
+    sh scripts/release.sh

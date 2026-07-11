@@ -1,45 +1,45 @@
 #!/bin/bash
 set -euo pipefail
 
-if [ "$#" -lt 1 ] || [ "$#" -gt 2 ]; then
-  echo "usage: release-context.sh <vX.Y.Z> [android-build-number|apple-build-number]" >&2
+if [ "$#" -gt 1 ]; then
+  echo "usage: release-context.sh [vX.Y.Z]" >&2
   exit 2
-fi
-
-readonly TAG="$1"
-readonly BUILD_NUMBER_MODE="${2:-}"
-
-case "$BUILD_NUMBER_MODE" in
-  ""|android-build-number|apple-build-number) ;;
-  *) echo "unknown release context mode: $BUILD_NUMBER_MODE" >&2; exit 2 ;;
-esac
-
-if [[ ! "$TAG" =~ ^v([0-9]+)\.([0-9]+)\.([0-9]+)$ ]]; then
-  echo "release label must match vX.Y.Z: $TAG" >&2
-  exit 1
-fi
-if [ -n "${GITHUB_ACTIONS:-}" ] && [ "${GITHUB_EVENT_NAME:-}" = workflow_dispatch ] \
-  && [ "${GITHUB_REF:-}" != refs/heads/main ]; then
-  echo "recovery releases must be dispatched from main" >&2
-  exit 1
 fi
 
 python3 scripts/check-release-metadata.py
 version="$(scripts/version.sh)"
+TAG="${1:-v$version}"
+readonly TAG
+sha="$(git rev-parse HEAD)"
+readonly sha
+
+if [[ ! "$TAG" =~ ^v([0-9]+)\.([0-9]+)\.([0-9]+)$ ]]; then
+  echo "release tag must match vX.Y.Z: $TAG" >&2
+  exit 1
+fi
 if [ "$TAG" != "v$version" ]; then
-  echo "release label $TAG does not match source version v$version" >&2
+  echo "release tag $TAG does not match source version v$version" >&2
   exit 1
 fi
 
-sha="$(git rev-parse HEAD)"
-IFS=. read -r major minor patch <<< "$version"
-version_code=$((major * 1000000 + minor * 1000 + patch))
-if [ "$BUILD_NUMBER_MODE" = android-build-number ]; then
-  version_code="$(date -u +%s)"
-  if [ "$version_code" -gt 2100000000 ]; then
-    echo "timestamp no longer fits the Google Play version-code range" >&2
+# A supplied tag is a publication identity and must resolve to this exact
+# checkout. Omitting it is reserved for non-publishing branch validation.
+if [ "$#" -eq 1 ]; then
+  tag_sha="$(git rev-parse "$TAG^{commit}" 2>/dev/null)" || {
+    echo "release tag does not exist in this checkout: $TAG" >&2
+    exit 1
+  }
+  if [ "$sha" != "$tag_sha" ]; then
+    echo "release tag $TAG resolves to $tag_sha, not checked-out source $sha" >&2
     exit 1
   fi
+fi
+
+IFS=. read -r major minor patch <<< "$version"
+version_code=$((1800000000 + major * 1000000 + minor * 1000 + patch))
+if [ "$version_code" -gt 2100000000 ]; then
+  echo "release version no longer fits the Google Play build-number range" >&2
+  exit 1
 fi
 
 if [ -n "${GITHUB_OUTPUT:-}" ]; then
@@ -55,9 +55,7 @@ fi
 
 if [ -n "${GITHUB_ENV:-}" ]; then
   echo "ZUKO_VERSION=$version" >> "$GITHUB_ENV"
-  if [ "$BUILD_NUMBER_MODE" = apple-build-number ]; then
-    echo "ZUKO_BUILD_NUMBER=$(date -u +%s)" >> "$GITHUB_ENV"
-  fi
+  echo "ZUKO_BUILD_NUMBER=$version_code" >> "$GITHUB_ENV"
 fi
 
 echo "release context: $TAG from $sha"

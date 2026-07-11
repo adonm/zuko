@@ -36,11 +36,18 @@ require_equal() {
 
 validate_app() {
   local app="$1"
-  local identifier version build executable signature_details team
+  local info identifier version build executable signature_details team
   require_directory "$app"
-  identifier="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$app/Contents/Info.plist" 2>/dev/null || /usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$app/Info.plist")"
-  version="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$app/Contents/Info.plist" 2>/dev/null || /usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$app/Info.plist")"
-  build="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$app/Contents/Info.plist" 2>/dev/null || /usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$app/Info.plist")"
+  if [ -f "$app/Contents/Info.plist" ]; then
+    info="$app/Contents/Info.plist"
+  elif [ -f "$app/Info.plist" ]; then
+    info="$app/Info.plist"
+  else
+    fail "application Info.plist does not exist: $app"
+  fi
+  identifier="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$info")"
+  version="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$info")"
+  build="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$info")"
   require_equal "bundle identifier" "$identifier" "$BUNDLE_ID"
   require_equal "version" "$version" "$EXPECTED_VERSION"
   if [ -n "$EXPECTED_BUILD" ]; then
@@ -68,12 +75,12 @@ required = (
 if any(entitlements.get(key) is not True for key in required):
     raise SystemExit("macOS archive is missing required sandbox entitlements")
 PY
-    executable="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$app/Contents/Info.plist")"
+    executable="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$info")"
     lipo -archs "$app/Contents/MacOS/$executable" | grep -Eqw 'arm64|x86_64'
   else
     grep -q '^Authority=Apple Distribution:' <<< "$signature_details"
     test -f "$app/embedded.mobileprovision"
-    executable="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$app/Info.plist")"
+    executable="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$info")"
     lipo -archs "$app/$executable" | grep -qw arm64
     ghostty="$app/Frameworks/ghostty.framework/ghostty"
     test -f "$ghostty"
