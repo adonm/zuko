@@ -1,7 +1,7 @@
 #!/usr/bin/env sh
 set -eu
 
-ROOT="$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)"
+ROOT="$(CDPATH='' cd -- "$(dirname -- "$0")/.." && pwd)"
 CLIENT="$ROOT/flutter"
 WASM="$CLIENT/rust/web_transport"
 OUT="$CLIENT/web/wasm"
@@ -17,7 +17,7 @@ if ! command -v wasm-bindgen >/dev/null 2>&1 || ! wasm-bindgen --version 2>/dev/
 fi
 
 CARGO_TARGET_DIR="$ROOT/target/web-wasm" \
-  cargo build --manifest-path "$WASM/Cargo.toml" --target wasm32-unknown-unknown --release
+  cargo build --locked --manifest-path "$WASM/Cargo.toml" --target wasm32-unknown-unknown --release
 
 rm -rf "$OUT"
 mkdir -p "$OUT"
@@ -32,6 +32,7 @@ rm -rf "$ROOT/target/book/web"
 mise exec -C "$CLIENT" -- flutter pub get --enforce-lockfile
 mise exec -C "$CLIENT" -- flutter build web \
   --release \
+  --no-pub \
   --wasm \
   --no-web-resources-cdn \
   --base-href /web/ \
