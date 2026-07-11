@@ -73,6 +73,7 @@ validate_profile() {
 import datetime
 import os
 import plistlib
+import uuid
 from pathlib import Path
 
 profile = plistlib.loads(Path(os.environ["PROFILE_PLIST"]).read_bytes())
@@ -92,7 +93,27 @@ if profile.get("ProvisionedDevices") or profile.get("ProvisionsAllDevices"):
 platforms = profile.get("Platform", [])
 if os.environ["EXPECTED_PLATFORM"] not in platforms:
     raise SystemExit(f"unexpected provisioning profile platform: {platforms}")
+profile_uuid = profile.get("UUID")
+try:
+    uuid.UUID(profile_uuid)
+except (AttributeError, TypeError, ValueError) as error:
+    raise SystemExit("provisioning profile has an invalid UUID") from error
+print(profile_uuid)
 PY
+}
+
+install_profile() {
+  local profile="$1"
+  local uuid="$2"
+  local extension="${profile##*.}"
+  local directory
+  for directory in \
+    "$HOME/Library/Developer/Xcode/UserData/Provisioning Profiles" \
+    "$HOME/Library/MobileDevice/Provisioning Profiles"; do
+    mkdir -p "$directory"
+    cp "$profile" "$directory/$uuid.$extension"
+    chmod 600 "$directory/$uuid.$extension"
+  done
 }
 
 require_env TEAM_ID
@@ -108,7 +129,7 @@ case "$PLATFORM" in
     profile="$SIGNING_DIR/zuko.mobileprovision"
     decode_secret BUILD_CERTIFICATE_BASE64 "$application_p12"
     decode_secret PROVISIONING_PROFILE_BASE64 "$profile"
-    validate_profile "$profile" iOS
+    profile_uuid="$(validate_profile "$profile" iOS)"
     application_identity="$(certificate_identity "$application_p12" P12_PASSWORD)"
     application_password_variable=P12_PASSWORD
     case "$application_identity" in
@@ -128,7 +149,7 @@ case "$PLATFORM" in
     decode_secret MACOS_APPLICATION_CERTIFICATE_BASE64 "$application_p12"
     decode_secret MACOS_INSTALLER_CERTIFICATE_BASE64 "$installer_p12"
     decode_secret MACOS_PROVISIONING_PROFILE_BASE64 "$profile"
-    validate_profile "$profile" OSX
+    profile_uuid="$(validate_profile "$profile" OSX)"
     application_identity="$(certificate_identity "$application_p12" MACOS_APPLICATION_CERTIFICATE_PASSWORD)"
     installer_identity="$(certificate_identity "$installer_p12" MACOS_INSTALLER_CERTIFICATE_PASSWORD)"
     application_password_variable=MACOS_APPLICATION_CERTIFICATE_PASSWORD
@@ -146,6 +167,8 @@ case "$PLATFORM" in
     exit 2
     ;;
 esac
+
+install_profile "$profile" "$profile_uuid"
 
 keychain initialize -p "$KEYCHAIN" --timeout 7200
 keychain add-certificates -p "$KEYCHAIN" \
