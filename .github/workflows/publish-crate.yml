@@ -23,20 +23,19 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Install pinned repository tools
+        uses: jdx/mise-action@e6a8b3978addb5a52f2b4cd9d91eafa7f0ab959d # v4.2.0
+        with:
+          cache: true
+
       - name: Resolve crate version and source
         id: identity
         env:
           TAG: ${{ github.ref_name }}
-        run: scripts/release-context.sh "$TAG"
-
-      - name: Install pinned Rust toolchain
-        uses: jdx/mise-action@e6a8b3978addb5a52f2b4cd9d91eafa7f0ab959d # v4.2.0
-        with:
-          cache: true
-          install_args: rust
+        run: mise exec -- just release-context "$TAG"
 
       - name: Verify packaged crate and dependency fix
-        run: scripts/check-crate-package.sh
+        run: mise exec -- just check-crate-package
 
   publish:
     name: publish zuko
@@ -51,27 +50,14 @@ jobs:
         with:
           ref: ${{ needs.verify.outputs.sha }}
 
-      - name: Install pinned Rust toolchain
+      - name: Set up repository tools
         uses: jdx/mise-action@e6a8b3978addb5a52f2b4cd9d91eafa7f0ab959d # v4.2.0
         with:
           cache: true
-          install_args: rust
 
       - name: Check registry version status
         id: version
-        run: |
-          set -euo pipefail
-          version=$(scripts/version.sh)
-          status=$(curl --silent --show-error \
-            --user-agent zuko-trusted-publisher \
-            --output /dev/null \
-            --write-out '%{http_code}' \
-            "https://crates.io/api/v1/crates/zuko/$version")
-          case "$status" in
-            200) echo "published=true" >> "$GITHUB_OUTPUT" ;;
-            404) echo "published=false" >> "$GITHUB_OUTPUT" ;;
-            *) echo "Unexpected crates.io response: HTTP $status" >&2; exit 1 ;;
-          esac
+        run: mise exec -- just crate-publish-status
 
       - name: Authenticate to crates.io with trusted publishing
         id: crates-io-auth
@@ -81,4 +67,4 @@ jobs:
         if: steps.version.outputs.published != 'true'
         env:
           CARGO_REGISTRY_TOKEN: ${{ steps.crates-io-auth.outputs.token }}
-        run: cargo publish --locked
+        run: mise exec -- just publish-crate

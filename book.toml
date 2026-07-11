@@ -1,8 +1,8 @@
 # mdBook config for the zuko docs site.
 # Source lives in `docs/` (alongside the long-form markdown); the built site
 # lands under `target/book/` (already gitignored via `target/`).
-# Build:   `mise run build-docs`   (== `mdbook build`)
-# Preview: `mise run serve-docs`   (== `mdbook serve --open`)
+# Build:   `just build-docs`   (== `mdbook build`)
+# Preview: `just serve-docs`   (== `mdbook serve --open`)
 
 [book]
 title = "zuko"

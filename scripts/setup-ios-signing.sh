@@ -21,7 +21,7 @@
 #     and appstoreconnect.apple.com
 #
 # Usage:
-#   mise run setup-ios-signing
+#   just setup-ios-signing
 #   sh scripts/setup-ios-signing.sh
 #
 # After it finishes, manually run release-flutter-ios to verify signing without

@@ -27,14 +27,19 @@ jobs:
           fetch-depth: 0
           submodules: recursive
 
+      - name: Set up repository tools
+        uses: jdx/mise-action@e6a8b3978addb5a52f2b4cd9d91eafa7f0ab959d # v4.2.0
+        with:
+          cache: true
+
       - name: Resolve release metadata
         env:
           TAG: ${{ github.ref_name }}
         run: |
           if [ "$GITHUB_EVENT_NAME" = push ]; then
-            scripts/release-context.sh "$TAG"
+            mise exec -- just release-context "$TAG"
           else
-            scripts/release-context.sh
+            mise exec -- just build-context
           fi
 
       # Zig 0.15.2 cannot parse the arm64e-macos exports in Xcode 26.6's
@@ -42,15 +47,7 @@ jobs:
       # Xcode 26.3 is installed on current macOS 15/26 images and is proven by
       # the accepted TestFlight build. Fail closed if the pinned SDK disappears.
       - name: Select Xcode 26.3
-        run: scripts/select-xcode.sh
-
-      - name: Set up mise
-        uses: jdx/mise-action@e6a8b3978addb5a52f2b4cd9d91eafa7f0ab959d # v4.2.0
-        with:
-          cache: true
-          install_args: rust just zig@0.15.2
-
-      - uses: ./.github/actions/setup-flutter
+        run: mise exec -- just select-xcode
 
       - uses: ./.github/actions/setup-codemagic
 
@@ -59,53 +56,26 @@ jobs:
           path: ~/.pub-cache
           key: ${{ runner.os }}-${{ runner.arch }}-flutter-ios-store-${{ hashFiles('flutter/pubspec.lock', 'scripts/prepare-libghostty-ios-static.py') }}
 
-      - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
-        with:
-          key: flutter-ios-release
 
       - name: Analyze and test shared client
-        run: mise run flutter-check
+        run: mise exec -- just flutter-check
 
       - name: Prepare App Store-compatible Ghostty library
-        run: |
-          set -euo pipefail
-          python3 scripts/prepare-libghostty-ios-static.py
+        run: mise exec -- just prepare-ios-ghostty
 
       - name: Configure App Store signing with Codemagic
         env:
           BUILD_CERTIFICATE_BASE64: ${{ secrets.BUILD_CERTIFICATE_BASE64 }}
           P12_PASSWORD: ${{ secrets.P12_PASSWORD }}
           PROVISIONING_PROFILE_BASE64: ${{ secrets.PROVISIONING_PROFILE_BASE64 }}
-        run: scripts/apple-setup-signing.sh ios
+        run: mise exec -- just configure-apple-signing ios
 
       - name: Build signed Flutter IPA
-        run: |
-          set -euo pipefail
-          cd flutter
-          mise exec zig@0.15.2 -- flutter build ipa \
-            --release \
-            --no-pub \
-            --build-name "$ZUKO_VERSION" \
-            --build-number "$ZUKO_BUILD_NUMBER" \
-            --export-options-plist "$APPLE_EXPORT_OPTIONS"
+        run: mise exec -- just build-ios-store
 
       - name: Validate signed IPA
         id: package
-        run: |
-          set -euo pipefail
-          shopt -s nullglob
-          archives=(flutter/build/ios/archive/*.xcarchive)
-          ipas=(flutter/build/ios/ipa/*.ipa)
-          [ "${#archives[@]}" -eq 1 ]
-          [ "${#ipas[@]}" -eq 1 ]
-          archive="${archives[0]}"
-          ipa="${ipas[0]}"
-          scripts/apple-validate-package.sh ios "$archive" "$ipa" \
-            "$ZUKO_VERSION" "$ZUKO_BUILD_NUMBER"
-          mkdir -p dist/flutter-ios
-          cp "$ipa" dist/flutter-ios/Zuko-Flutter.ipa
-          (cd dist/flutter-ios && shasum -a 256 Zuko-Flutter.ipa > Zuko-Flutter.ipa.sha256)
-          echo "ipa=$PWD/dist/flutter-ios/Zuko-Flutter.ipa" >> "$GITHUB_OUTPUT"
+        run: mise exec -- just package-ios-store
 
       - name: Upload signed IPA
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -125,6 +95,4 @@ jobs:
           ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
           ASC_KEY_CONTENT: ${{ secrets.ASC_KEY_CONTENT }}
           IPA_PATH: ${{ steps.package.outputs.ipa }}
-        run: |
-          set -euo pipefail
-          scripts/apple-upload.sh ios "$IPA_PATH"
+        run: mise exec -- just upload-apple-store ios "$IPA_PATH"

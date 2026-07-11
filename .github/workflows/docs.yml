@@ -1,8 +1,8 @@
 name: docs
 
 # Builds the mdBook site from `docs/` (config in `book.toml`) and publishes
-# it to GitHub Pages. mise installs pinned tools and the compatibility task
-# delegates to the same Justfile recipe used locally.
+# it to GitHub Pages. Mise installs pinned tools and Just runs the same recipes
+# used locally.
 #
 # Pages must be configured in the repo settings: Settings → Pages →
 # "Build and deployment" → Source = "GitHub Actions" (not "Deploy from a
@@ -16,7 +16,6 @@ on:
       - "book.toml"
       - "Justfile"
       - "mise.toml"
-      - ".github/actions/setup-flutter/**"
       - "scripts/build-web.sh"
       - "scripts/finalize-web-build.py"
       - "flutter/**"
@@ -43,41 +42,33 @@ jobs:
         with:
           submodules: recursive
 
-      - name: mise install
+      - name: Set up repository tools
         uses: jdx/mise-action@e6a8b3978addb5a52f2b4cd9d91eafa7f0ab959d # v4.2.0
         with:
           cache: true
-          install_args: rust just mdbook lychee
 
-      - uses: ./.github/actions/setup-flutter
-
-      - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
-        with:
-          shared-key: flutter-web
-          workspaces: |
-            flutter/rust/web_transport -> ../../../target/web-wasm
 
       - name: Lint markdown links
         # Gate the deploy on link health (config in .lychee.toml). GITHUB_TOKEN
         # lifts GitHub rate limits.
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: mise run lint-md
+        run: mise exec -- just lint-md
 
       - name: Test curl installer
-        run: just test-installer
+        run: mise exec -- just test-installer
 
       - name: Install web build system deps
         run: sudo apt-get update && sudo apt-get install -y clang
 
       - name: Build site
-        run: mise run build-docs
+        run: mise exec -- just build-docs
 
       - name: Verify installer is published
         run: test -f target/book/install.sh
 
       - name: Build web client
-        run: mise run build-web
+        run: mise exec -- just build-web
 
       - name: Setup Pages
         uses: actions/configure-pages@983d7736d9b0ae728b81ab479565c72886d7745b # v5.0.0

@@ -38,11 +38,15 @@ jobs:
           ref: ${{ inputs.tag }}
           fetch-depth: 0
 
+      - uses: jdx/mise-action@e6a8b3978addb5a52f2b4cd9d91eafa7f0ab959d # v4.2.0
+        with:
+          cache: true
+
       - name: Resolve release context
         id: release
         env:
           TAG: ${{ inputs.tag }}
-        run: scripts/release-context.sh "$TAG"
+        run: mise exec -- just release-context "$TAG"
 
   package:
     name: build and sign Store package
@@ -69,46 +73,18 @@ jobs:
       - uses: jdx/mise-action@e6a8b3978addb5a52f2b4cd9d91eafa7f0ab959d # v4.2.0
         with:
           cache: true
-          cache_save: false
-          install_args: rust
 
-      - uses: ./.github/actions/setup-flutter
-
-      - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
-        with:
-          key: flutter-windows-store
-          save-if: false
 
       - name: Build locked Flutter Windows release
-        shell: pwsh
         env:
           RELEASE_VERSION: ${{ needs.prepare.outputs.version }}
-        run: |
-          $ErrorActionPreference = "Stop"
-          $PSNativeCommandUseErrorActionPreference = $true
-          $rustBin = Join-Path (mise where rust) "bin"
-          $env:Path = "$rustBin;$env:Path"
-          Push-Location flutter
-          flutter pub get --enforce-lockfile
-          Pop-Location
-          python scripts/patch-iroh-flutter.py flutter
-          Push-Location flutter
-          flutter build windows --release --no-pub `
-            --build-name $env:RELEASE_VERSION `
-            --build-number 0
-          Pop-Location
+        run: mise exec -- just build-flutter-windows-store "$RELEASE_VERSION"
 
       - name: Package, sign, and verify MSIX artifacts
-        shell: pwsh
         env:
           TAG: ${{ needs.prepare.outputs.tag }}
           EXPECTED_SHA: ${{ needs.prepare.outputs.sha }}
-        run: |
-          ./flutter/windows/store/Package.ps1 `
-            -Tag $env:TAG `
-            -ExpectedSha $env:EXPECTED_SHA `
-            -BuildDirectory flutter/build/windows/x64/runner/Release `
-            -OutputDirectory dist/windows-store
+        run: mise exec -- just package-windows-store "$TAG" "$EXPECTED_SHA"
 
       - name: Upload signed Store artifacts
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -150,17 +126,15 @@ jobs:
           name: zuko-windows-store-${{ needs.prepare.outputs.tag }}-${{ needs.prepare.outputs.sha }}
           path: dist/windows-store
 
+      - uses: jdx/mise-action@e6a8b3978addb5a52f2b4cd9d91eafa7f0ab959d # v4.2.0
+        with:
+          cache: true
+
       - name: Revalidate source and signed artifact
-        shell: pwsh
         env:
           TAG: ${{ needs.prepare.outputs.tag }}
           EXPECTED_SHA: ${{ needs.prepare.outputs.sha }}
-        run: |
-          ./flutter/windows/store/Test-ReleaseSource.ps1 -Tag $env:TAG -ExpectedSha $env:EXPECTED_SHA
-          ./flutter/windows/store/Test-Package.ps1 `
-            -Tag $env:TAG `
-            -ExpectedSha $env:EXPECTED_SHA `
-            -InputDirectory dist/windows-store
+        run: mise exec -- just validate-windows-store "$TAG" "$EXPECTED_SHA"
 
       - name: Set up pinned Microsoft Store Developer CLI
         uses: microsoft/microsoft-store-apppublisher@b76227f539d68e6465f79bbbc82ed92f61081aa4 # v1.3
@@ -168,19 +142,10 @@ jobs:
           version: v0.3.9
 
       - name: Validate protected Partner Center identity
-        shell: pwsh
-        run: ./flutter/windows/store/Test-PartnerCenter.ps1
+        run: mise exec -- just validate-partner-center
 
       - name: Upload package without committing submission
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = "Stop"
-          $PSNativeCommandUseErrorActionPreference = $true
-          $bundles = @(Get-ChildItem dist/windows-store -Filter *.msixbundle)
-          if ($bundles.Count -ne 1) { throw "Expected exactly one MSIXBundle" }
-          msstore publish $bundles[0].FullName `
-            --appId $env:MSSTORE_PRODUCT_ID `
-            --noCommit
+        run: mise exec -- just upload-windows-store-draft
 
   submit:
     name: approve and commit Store submission
@@ -211,17 +176,15 @@ jobs:
           name: zuko-windows-store-${{ needs.prepare.outputs.tag }}-${{ needs.prepare.outputs.sha }}
           path: dist/windows-store
 
+      - uses: jdx/mise-action@e6a8b3978addb5a52f2b4cd9d91eafa7f0ab959d # v4.2.0
+        with:
+          cache: true
+
       - name: Revalidate source and signed artifact
-        shell: pwsh
         env:
           TAG: ${{ needs.prepare.outputs.tag }}
           EXPECTED_SHA: ${{ needs.prepare.outputs.sha }}
-        run: |
-          ./flutter/windows/store/Test-ReleaseSource.ps1 -Tag $env:TAG -ExpectedSha $env:EXPECTED_SHA
-          ./flutter/windows/store/Test-Package.ps1 `
-            -Tag $env:TAG `
-            -ExpectedSha $env:EXPECTED_SHA `
-            -InputDirectory dist/windows-store
+        run: mise exec -- just validate-windows-store "$TAG" "$EXPECTED_SHA"
 
       - name: Set up pinned Microsoft Store Developer CLI
         uses: microsoft/microsoft-store-apppublisher@b76227f539d68e6465f79bbbc82ed92f61081aa4 # v1.3
@@ -229,12 +192,7 @@ jobs:
           version: v0.3.9
 
       - name: Revalidate protected Partner Center identity
-        shell: pwsh
-        run: ./flutter/windows/store/Test-PartnerCenter.ps1
+        run: mise exec -- just validate-partner-center
 
       - name: Commit existing draft submission
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = "Stop"
-          $PSNativeCommandUseErrorActionPreference = $true
-          msstore submission publish $env:MSSTORE_PRODUCT_ID
+        run: mise exec -- just submit-windows-store

@@ -37,21 +37,18 @@ jobs:
           fetch-depth: 0
           submodules: recursive
 
-      - name: Resolve release metadata
-        env:
-          TAG: ${{ inputs.tag }}
-        run: scripts/release-context.sh "$TAG"
-
-      - name: Select Xcode 26.3
-        run: scripts/select-xcode.sh
-
-      - name: Set up mise
+      - name: Set up repository tools
         uses: jdx/mise-action@e6a8b3978addb5a52f2b4cd9d91eafa7f0ab959d # v4.2.0
         with:
           cache: true
-          install_args: rust just zig@0.15.2
 
-      - uses: ./.github/actions/setup-flutter
+      - name: Resolve release metadata
+        env:
+          TAG: ${{ inputs.tag }}
+        run: mise exec -- just release-context "$TAG"
+
+      - name: Select Xcode 26.3
+        run: mise exec -- just select-xcode
 
       - uses: ./.github/actions/setup-codemagic
 
@@ -60,12 +57,9 @@ jobs:
           path: ~/.pub-cache
           key: ${{ runner.os }}-${{ runner.arch }}-flutter-macos-store-${{ hashFiles('flutter/pubspec.lock') }}
 
-      - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
-        with:
-          key: flutter-macos-store-release
 
       - name: Resolve, analyze, and test shared client
-        run: mise run flutter-check
+        run: mise exec -- just flutter-check
 
       - name: Configure Mac App Store signing with Codemagic
         env:
@@ -74,34 +68,13 @@ jobs:
           MACOS_INSTALLER_CERTIFICATE_BASE64: ${{ secrets.MACOS_INSTALLER_CERTIFICATE_BASE64 }}
           MACOS_INSTALLER_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_INSTALLER_CERTIFICATE_PASSWORD }}
           MACOS_PROVISIONING_PROFILE_BASE64: ${{ secrets.MACOS_PROVISIONING_PROFILE_BASE64 }}
-        run: scripts/apple-setup-signing.sh macos
+        run: mise exec -- just configure-apple-signing macos
 
       - name: Build signed Flutter macOS application
-        run: |
-          set -euo pipefail
-          cd flutter
-          mise exec zig@0.15.2 -- flutter build macos \
-            --release \
-            --no-pub \
-            --build-name "$ZUKO_VERSION" \
-            --build-number "$ZUKO_BUILD_NUMBER"
+        run: mise exec -- just build-macos-store
 
       - name: Create and validate Mac App Store package
-        run: |
-          set -euo pipefail
-          shopt -s nullglob
-          apps=(flutter/build/macos/Build/Products/Release/*.app)
-          [ "${#apps[@]}" -eq 1 ]
-          app="${apps[0]}"
-          mkdir -p dist/flutter-macos
-          package="$PWD/dist/flutter-macos/Zuko-Flutter.pkg"
-          xcrun productbuild \
-            --component "$app" /Applications \
-            --sign "$MACOS_INSTALLER_IDENTITY" \
-            "$package"
-          scripts/apple-validate-package.sh macos "$app" "$package" \
-            "$ZUKO_VERSION" "$ZUKO_BUILD_NUMBER"
-          (cd dist/flutter-macos && shasum -a 256 Zuko-Flutter.pkg > Zuko-Flutter.pkg.sha256)
+        run: mise exec -- just package-macos-store
 
       - name: Upload signed Mac App Store package
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -124,9 +97,15 @@ jobs:
       TEAM_ID: ${{ secrets.TEAM_ID }}
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: ${{ inputs.tag }}
+
+      - uses: jdx/mise-action@e6a8b3978addb5a52f2b4cd9d91eafa7f0ab959d # v4.2.0
+        with:
+          cache: true
 
       - name: Select Xcode 26.3
-        run: scripts/select-xcode.sh
+        run: mise exec -- just select-xcode
 
       - uses: ./.github/actions/setup-codemagic
 
@@ -142,12 +121,4 @@ jobs:
           ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
           ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
           ASC_KEY_CONTENT: ${{ secrets.ASC_KEY_CONTENT }}
-        run: |
-          set -euo pipefail
-          cd dist/flutter-macos
-          shasum -a 256 -c Zuko-Flutter.pkg.sha256
-          package_signature="$(pkgutil --check-signature Zuko-Flutter.pkg)"
-          grep -q "$TEAM_ID" <<< "$package_signature"
-          xcode-project pkg-info Zuko-Flutter.pkg
-          cd ../..
-          scripts/apple-upload.sh macos dist/flutter-macos/Zuko-Flutter.pkg
+        run: mise exec -- just upload-macos-store

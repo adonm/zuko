@@ -1,4 +1,4 @@
-# lychee link-checker config. Run: `mise run lint-md`
+# lychee link-checker config. Run: `just lint-md`
 # Docs: https://lychee.linkchecker.cli.rs/
 # Valid field names: https://github.com/lycheeverse/lychee/blob/lychee-v0.24.2/lychee.example.toml
 

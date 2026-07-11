@@ -114,7 +114,7 @@ artifact paths are in [Building clients](docs/building-clients.md).
 | `src/` | Rust crate: host, CLI client, handoff, service, and app streaming |
 | `flutter/` | Shared Android, iOS, macOS, web, Linux, and Windows client |
 | `Justfile` | Human-facing build, test, package, and release recipes |
-| `mise.toml` | Managed tools, system dependencies, and compatibility task aliases |
+| `mise.toml` | Pinned tools, environment, and bootstrap system dependencies |
 | `docs/` | mdBook docs |
 | `tests/e2e.rs` | ignored live-network integration test |
 | `.github/workflows/` | Rust, Flutter, release, TestFlight, and docs CI |

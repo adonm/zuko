@@ -1,30 +1,20 @@
-# Single source of truth for tools and system dependencies. Human-facing
-# recipes live in Justfile; compatibility `mise run <task>` entries delegate
-# to those recipes. CI uses the same mise environment and recipe graph.
-# Local dev:   `mise bootstrap` then `just <recipe>`
-# CI/compat:   `mise run <task>`
+# Single source of truth for tool versions, environment, and bootstrap
+# dependencies. Human-facing and CI operations live in Justfile.
+# Local: `mise bootstrap`, then `just <recipe>` in an activated shell.
+# Explicit: `mise exec -- just <recipe>`.
 
 [tools]
 # iroh 1.0's dependency tree needs edition2024 (Rust 1.85+).
-# `components` explicitly pins clippy + rustfmt (CI runners default to the
-# 'minimal' profile, and `Swatinem/rust-cache` can restore a toolchain without
-# them — see the matching `rustup component add` step in the workflows).
 rust = { version = "1.96.1", components = "clippy,rustfmt" }
+zig = "0.15.2"
 just = "1.55.1"
-# mdBook for the docs site (published to GitHub Pages via docs.yml). Prebuilt
-# binary via mise's aqua backend — no compile. `mise run build-docs` builds.
 mdbook = "0.5.4"
-# Link/URL checker for markdown (the sensible md lint for this repo — no
-# node/ruby style linter, on purpose). Prebuilt binary via aqua.
 lychee = "0.24.2"
-# Linter for .github/workflows/*.yml: validates syntax, action SHAs/versions,
-# permissions, expression contexts, job needs. `mise run lint-ci` runs it.
 actionlint = "1.7.12"
 
 # Official beta archives for framework revision
 # 677d472756f83c14371dd8cc624387065f3d32a7. Platform checksums come from
-# Flutter's published release manifests. The beta has the Linux and macOS
-# Impeller controls used here; its Windows embedder still uses the SDK default.
+# Flutter's published release manifests.
 [tools."http:flutter"]
 version = "3.46.0-0.3.pre"
 
@@ -37,7 +27,7 @@ windows-x64 = { url = "https://storage.googleapis.com/flutter_infra_release/rele
 # System-level dependencies used by Linux builds. `mise bootstrap` installs
 # only entries for package managers available on the current OS.
 [bootstrap.packages]
-"apt:gcc-aarch64-linux-gnu" = "latest" # cross linker for aarch64-unknown-linux-gnu
+"apt:gcc-aarch64-linux-gnu" = "latest"
 "apt:clang" = "latest"
 "apt:cmake" = "latest"
 "apt:libgtk-3-dev" = "latest"
@@ -57,190 +47,14 @@ windows-x64 = { url = "https://storage.googleapis.com/flutter_infra_release/rele
 "pacman:ninja" = "latest"
 "pacman:pkgconf" = "latest"
 
-# `mise bootstrap` owns idempotent marker blocks instead of project scripts
-# hand-editing shell startup files.
 [bootstrap.mise_shell_activate]
 bashrc = "activate"
 zshrc = "activate"
 fish = "activate"
 
 [settings]
-# `mise bootstrap` (used for [bootstrap.packages]) is still experimental.
 experimental = true
 
 [env]
 CARGO_TERM_COLOR = "always"
 ZUKO_FLUTTER_REVISION = "677d472756f83c14371dd8cc624387065f3d32a7"
-
-# --- tasks (shared by local dev and CI) ---
-
-[tasks.build]
-description = "Build the zuko release binary (native target)"
-run = "just build"
-
-[tasks.test]
-description = "Clippy + unit tests for zuko (host + client + share/claim). Skips the network-gated e2e test (run `mise run test-e2e` for that)."
-run = "just test"
-
-[tasks.test-e2e]
-description = "End-to-end PTY harness (host<->connect + share<->claim) against the live Iroh network. Needs network. Runs the #[ignore] e2e integration test in tests/e2e.rs."
-run = "just test-e2e"
-
-[tasks.flutter-check]
-description = "Resolve, format-check, analyze, and test the shared Flutter client."
-run = "just flutter-check"
-
-[tasks.build-flutter-android]
-description = "Build the shared Flutter client as Android release APK and AAB packages."
-run = "just build-flutter-android"
-
-[tasks.build-flutter-linux]
-description = "Build the shared Flutter Linux desktop client."
-run = "just build-flutter-linux"
-
-[tasks.build-flutter-windows]
-description = "Build the shared Flutter Windows desktop client."
-run = "just build-flutter-windows"
-
-[tasks.build-flutter-ios]
-description = "Build the shared Flutter iOS Simulator client (macOS/Xcode only)."
-run = "just build-flutter-ios"
-
-[tasks.build-flutter-macos]
-description = "Build the shared Flutter macOS desktop client."
-run = "just build-flutter-macos"
-
-[tasks.setup-ios-signing]
-description = "One-time Apple signing setup for the Flutter TestFlight pipeline. Generates cert+profile material and pushes the 7 GitHub Actions secrets via gh."
-run = "sh scripts/setup-ios-signing.sh"
-
-[tasks.ios-signing-status]
-description = "Check local iOS signing artifacts under ~/.config/zuko/ios-signing without printing secrets."
-run = """
-dir="${ZUKO_IOS_SIGNING_DIR:-$HOME/.config/zuko/ios-signing}"
-missing=0
-echo "iOS signing workspace: $dir"
-for f in zuko.key zuko.csr zuko.cer zuko.p12 p12-password Zuko_AppStore.mobileprovision team-id asc-key-id asc-issuer-id; do
-    if [ -f "$dir/$f" ]; then
-        echo "  ok:      $f"
-    else
-        echo "  missing: $f"
-        missing=1
-    fi
-done
-if ! ls "$dir"/AuthKey_*.p8 >/dev/null 2>&1; then
-    echo "  missing: AuthKey_*.p8"
-    missing=1
-else
-    echo "  ok:      AuthKey_*.p8"
-fi
-if [ "$missing" -ne 0 ]; then
-    echo "Run: mise run setup-ios-signing"
-    exit 1
-fi
-"""
-
-[tasks.run-host]
-description = "Run `zuko host` in the foreground (mise shim or local debug build)"
-run = "just run-host"
-
-[tasks.release]
-description = "Cut a release: commit pending work, push, tag vX.Y.Z, and push the tag to trigger GitHub assets plus TestFlight. Pass the version, e.g. `mise run release v0.1.0`."
-run = "just release ${@}"
-
-# ───────────────────────── docs (mdBook) ────────────────────────────
-# Source lives in `docs/` (see `book.toml`); the built site lands under
-# `target/book/` (gitignored via `target/`). CI publishes it to GitHub
-# Pages via `.github/workflows/docs.yml`.
-
-[tasks.build-docs]
-description = "Build the mdBook docs site into target/book/ (config in book.toml, source in docs/)."
-run = "just build-docs"
-
-[tasks.build-web]
-description = "Build the Flutter web client into target/book/web/ (Iroh WASM + libghostty)."
-run = "just build-web"
-
-[tasks.test-web]
-description = "Build the Flutter browser client after shared Dart checks."
-run = "just test-web"
-
-[tasks.serve-docs]
-description = "Build + serve the mdBook docs site on http://localhost:3000 with live reload. Open in a browser."
-run = "just serve-docs"
-
-[tasks.serve-web]
-description = "Run the Flutter browser client dev server."
-run = "just serve-web"
-
-[tasks.lint-md]
-description = "Lint markdown links with lychee (config in .lychee.toml). Checks all repo .md except generated/build dirs. Network-enabled for external URLs."
-run = "just lint-md"
-
-[tasks.lint-ci]
-description = "Lint .github/workflows/*.yml with actionlint (syntax, action versions/SHAs, permissions, expression contexts, job needs)."
-run = "just lint-ci"
-
-[tasks.check-release-metadata]
-description = "Verify CLI and Flutter versions share the workspace release version."
-run = "just check-release-metadata"
-
-# ──────────────────────────── hooks ─────────────────────────────────
-# See https://mise.jdx.dev/hooks.html. All hooks fire only when
-# `mise activate` is set up in the user's shell — they're no-ops
-# otherwise (CI included, which is fine: CI runs tasks explicitly).
-#
-# Design:
-#   - `enter` is a one-shot status snapshot (cheap, no builds).
-#   - `watch_files` runs fast Rust checks on save.
-
-[hooks.enter]
-# Run once when entering the project. Quick environment snapshot only —
-# no builds, no tests, no network. Surfaces:
-#   - rust toolchain version (always)
-# The goal is a glance-able status line so you immediately know if
-# something's off before you start a build.
-run = """
-echo "zuko dev env:"
-echo "  rust:   $(cargo --version 2>/dev/null || echo 'missing — run mise install')"
-signing_dir="${ZUKO_IOS_SIGNING_DIR:-$HOME/.config/zuko/ios-signing}"
-if [ -d "$signing_dir" ]; then
-    if [ -f "$signing_dir/zuko.p12" ] && [ -f "$signing_dir/Zuko_AppStore.mobileprovision" ] && ls "$signing_dir"/AuthKey_*.p8 >/dev/null 2>&1; then
-        echo "  iOS signing: configured ($signing_dir)"
-    else
-        echo "  iOS signing: incomplete (run 'mise run setup-ios-signing' if you need TestFlight)"
-    fi
-else
-    echo "  iOS signing: not set up (run 'mise run setup-ios-signing' if you need TestFlight)"
-fi
-"""
-
-# ────────────── watch_files: fast checks on every save ──────────────
-
-[[watch_files]]
-# cargo fmt is instant and runs unconditionally on every Rust save.
-# Auto-fixes in place; noisy diffs print to the editor pane so you see
-# what changed.
-patterns = ["src/**/*.rs", "tests/**/*.rs"]
-run = "cargo fmt"
-
-[[watch_files]]
-# `cargo check` is what we'd actually want here (faster than clippy for
-# save-time feedback), but it doesn't auto-fix. Clippy does lint-grade
-# analysis with decent incremental speed; the watch_files output
-# surfaces warnings without aborting the editor session.
-patterns = ["src/**/*.rs", "Cargo.toml", "Cargo.lock"]
-run = "cargo clippy --quiet --message-format=short 2>&1 | tail -5"
-
-# ──────────────────── explicit check / preflight tasks ──────────────
-# These don't auto-run; they're what you call before `git push` to
-# mirror what CI is going to do. `check` is the fast subset (~10s);
-# `preflight` is everything CI runs including the iOS build (~3 min).
-
-[tasks.check]
-description = "Fast pre-push checks: Rust format/clippy/tests plus shared Flutter checks."
-run = "just check"
-
-[tasks.preflight]
-description = "Full local CI mirror."
-run = "just preflight"

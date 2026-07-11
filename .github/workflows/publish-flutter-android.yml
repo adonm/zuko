@@ -52,11 +52,15 @@ jobs:
           ref: ${{ inputs.tag }}
           fetch-depth: 0
 
+      - uses: jdx/mise-action@e6a8b3978addb5a52f2b4cd9d91eafa7f0ab959d # v4.2.0
+        with:
+          cache: true
+
       - name: Resolve release context
         id: identity
         env:
           TAG: ${{ inputs.tag }}
-        run: scripts/release-context.sh "$TAG"
+        run: mise exec -- just release-context "$TAG"
 
   package:
     name: rebuild Android bundle
@@ -71,26 +75,16 @@ jobs:
           fetch-depth: 0
           submodules: recursive
 
-      - name: Set up release toolchain
+      - name: Set up repository tools
         uses: jdx/mise-action@e6a8b3978addb5a52f2b4cd9d91eafa7f0ab959d # v4.2.0
         with:
           cache: true
-          cache_save: false
-          install_args: rust
-
-      - uses: ./.github/actions/setup-flutter
 
       - name: Set up Java 17
         uses: actions/setup-java@0f481fcb613427c0f801b606911222b5b6f3083a # v5.5.0
         with:
           distribution: temurin
           java-version: '17'
-
-      - name: Cache Rust build
-        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
-        with:
-          key: flutter-android-store-rebuild
-          save-if: false
 
       - name: Set up Android SDK
         uses: android-actions/setup-android@40fd30fb8d7440372e1316f5d1809ec01dcd3699 # v4.0.1
@@ -106,19 +100,7 @@ jobs:
           VERSION: ${{ needs.prepare.outputs.version }}
           VERSION_CODE: ${{ needs.prepare.outputs.version_code }}
           TAG: ${{ needs.prepare.outputs.tag }}
-        run: |
-          set -euo pipefail
-          pushd flutter >/dev/null
-          flutter pub get --enforce-lockfile
-          flutter build appbundle \
-            --release \
-            --no-pub \
-            --build-name "$VERSION" \
-            --build-number "$VERSION_CODE"
-          popd >/dev/null
-          mkdir -p dist/android
-          cp flutter/build/app/outputs/bundle/release/app-release.aab \
-            "dist/android/zuko-android-${TAG}-unsigned.aab"
+        run: mise exec -- just build-flutter-android-store "$TAG" "$VERSION" "$VERSION_CODE"
 
       - name: Upload package for protected publishing
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -152,6 +134,10 @@ jobs:
           distribution: temurin
           java-version: '17'
 
+      - uses: jdx/mise-action@e6a8b3978addb5a52f2b4cd9d91eafa7f0ab959d # v4.2.0
+        with:
+          cache: true
+
       - uses: ./.github/actions/setup-codemagic
 
       - name: Prepare and validate exact signed AAB
@@ -162,20 +148,11 @@ jobs:
           ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
           TAG: ${{ needs.prepare.outputs.tag }}
           ASSET: ${{ needs.prepare.outputs.asset }}
-        run: |
-          set -euo pipefail
-          mkdir -p dist/android
-          input="staging/zuko-android-${TAG}-unsigned.aab"
-          output="dist/android/$ASSET"
-          scripts/android-prepare-aab.sh sign "$input" "$output"
-          (cd dist/android && sha256sum "$ASSET" > "$ASSET.sha256")
-          scripts/android-validate-aab.sh \
-            "$output" \
-            "dist/android/$ASSET.sha256" \
-            "${{ needs.prepare.outputs.package }}" \
-            "${{ needs.prepare.outputs.version }}" \
-            "${{ needs.prepare.outputs.version_code }}"
-          echo "AAB_SHA256=$(sha256sum "$output" | cut -d' ' -f1)" >> "$GITHUB_ENV"
+        run: >-
+          mise exec -- just prepare-android-store-aab "$TAG" "$ASSET"
+          "${{ needs.prepare.outputs.package }}"
+          "${{ needs.prepare.outputs.version }}"
+          "${{ needs.prepare.outputs.version_code }}"
 
       - name: Retain the validated signed AAB
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -190,12 +167,8 @@ jobs:
           GOOGLE_PLAY_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_PLAY_SERVICE_ACCOUNT_JSON }}
           TAG: ${{ needs.prepare.outputs.tag }}
           ASSET: ${{ needs.prepare.outputs.asset }}
-        run: |
-          set -euo pipefail
-          scripts/android-upload-google-play.sh \
-            "dist/android/$ASSET" \
-            "$AAB_SHA256" \
-            "${{ needs.prepare.outputs.package }}" \
-            "${{ inputs.track }}" \
-            "${{ inputs.publish_mode }}" \
-            "Zuko $TAG"
+        run: >-
+          mise exec -- just publish-android-store
+          "dist/android/$ASSET" "$AAB_SHA256"
+          "${{ needs.prepare.outputs.package }}"
+          "${{ inputs.track }}" "${{ inputs.publish_mode }}" "Zuko $TAG"

@@ -30,11 +30,15 @@ jobs:
         with:
           fetch-depth: 0
 
+      - uses: jdx/mise-action@e6a8b3978addb5a52f2b4cd9d91eafa7f0ab959d # v4.2.0
+        with:
+          cache: true
+
       - name: Resolve release version and source
         id: identity
         env:
           TAG: ${{ github.ref_name }}
-        run: scripts/release-context.sh "$TAG"
+        run: mise exec -- just release-context "$TAG"
 
   build:
     name: build ${{ matrix.target }}
@@ -68,20 +72,11 @@ jobs:
         with:
           ref: ${{ needs.prepare.outputs.sha }}
 
-      - name: mise install (rust)
+      - name: Set up repository tools
         uses: jdx/mise-action@e6a8b3978addb5a52f2b4cd9d91eafa7f0ab959d # v4.2.0
         with:
           cache: true
-          cache_save: false
-          install_args: rust
 
-      - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
-        with:
-          key: ${{ matrix.target }}
-          save-if: false
-
-      - name: Add rust target
-        run: rustup target add "${ZUKO_TARGET}"
 
       - name: Install cross toolchain (linux aarch64)
         if: ${{ matrix.cross }}
@@ -93,7 +88,7 @@ jobs:
       - name: Build release (target = ${{ matrix.target }})
         # The Linux target includes `zuko app`; non-Linux targets do not wire in
         # that subcommand, so the same command builds all platforms.
-        run: cargo build --locked --release --target "${ZUKO_TARGET}"
+        run: mise exec -- just build-cli-release "$ZUKO_TARGET"
 
       - name: Bundle cage + libs (x86_64-linux only)
         # `zuko app` spawns cage headless (WLR_BACKENDS=headless WLR_RENDERER=pixman);
@@ -105,43 +100,10 @@ jobs:
         # NOTE: no apostrophes inside the bash -c '...' block — they close the
         # single-quoted argument and break the quoting.
         if: ${{ matrix.target == 'x86_64-unknown-linux-gnu' }}
-        run: |
-          set -e
-          mkdir -p dist/cage
-          docker run --rm -v "$PWD/dist/cage:/out:z" fedora:latest bash -c '
-            set -e
-            dnf install -y -q --setopt=install_weak_deps=False cage >/dev/null
-            cp /usr/bin/cage /out/cage
-            chmod 0755 /out/cage
-            for lib in libwlroots-0.20.so libliftoff.so.0 libseat.so.1 libxcb-errors.so.0; do
-              cp -L "/usr/lib64/$lib" /out/ 2>/dev/null || true
-            done
-          '
-          echo "--- bundled cage ---"
-          ls -la dist/cage
+        run: mise exec -- just bundle-cage
 
       - name: Package
-        run: |
-          mkdir -p dist
-          cp "target/${ZUKO_TARGET}/release/zuko" dist/zuko
-          chmod +x dist/zuko
-          # Include the cage/ bundle if the previous step populated it (Linux
-          # only); macOS tarball is just the binary.
-          tar_args=(zuko)
-          [ -d dist/cage ] && tar_args+=(cage)
-          tar -C dist -czf "$ARTIFACT" "${tar_args[@]}"
-          # `sha256sum` is Linux-only; macOS ships `shasum -a 256` (Perl). The
-          # two produce byte-identical output (<hash>  <filename>), so consumers
-          # don't care which one wrote the .sha256 sidecar.
-          if command -v sha256sum >/dev/null 2>&1; then
-            sha256sum "$ARTIFACT" > "$ARTIFACT.sha256"
-          else
-            shasum -a 256 "$ARTIFACT" > "$ARTIFACT.sha256"
-          fi
-          echo "--- archive ---"
-          tar -tzf "$ARTIFACT"
-          echo "--- checksum ---"
-          cat "$ARTIFACT.sha256"
+        run: mise exec -- just package-cli-release "$ZUKO_TARGET"
 
       - name: Upload artifact
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -163,19 +125,11 @@ jobs:
           ref: ${{ needs.prepare.outputs.sha }}
           submodules: recursive
 
-      - name: Install mise tools
+      - name: Set up repository tools
         uses: jdx/mise-action@e6a8b3978addb5a52f2b4cd9d91eafa7f0ab959d # v4.2.0
         with:
           cache: true
-          cache_save: false
-          install_args: rust just
 
-      - uses: ./.github/actions/setup-flutter
-
-      - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
-        with:
-          key: flutter-android-release
-          save-if: false
 
       - name: Set up Android SDK
         uses: android-actions/setup-android@40fd30fb8d7440372e1316f5d1809ec01dcd3699 # v4.0.1
@@ -193,22 +147,7 @@ jobs:
           STORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
           KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
           KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
-        run: |
-          set -euo pipefail
-          present=0
-          for value in "$KEYSTORE_BASE64" "$STORE_PASSWORD" "$KEY_ALIAS" "$KEY_PASSWORD"; do
-            [ -n "$value" ] && present=$((present + 1))
-          done
-          if [ "$present" -ne 4 ]; then
-            echo "Set all four Android signing secrets for release packages" >&2
-            exit 1
-          else
-            keystore="$RUNNER_TEMP/zuko-release.jks"
-            printf '%s' "$KEYSTORE_BASE64" | base64 --decode > "$keystore"
-            chmod 600 "$keystore"
-            echo "mode=signed" >> "$GITHUB_OUTPUT"
-            echo "path=$keystore" >> "$GITHUB_OUTPUT"
-          fi
+        run: mise exec -- just configure-android-signing
 
       - name: Test and build Flutter Android packages
         env:
@@ -216,29 +155,13 @@ jobs:
           ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
           ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
           ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
-        run: mise run build-flutter-android
+        run: mise exec -- just build-flutter-android
 
       - name: Name and checksum Android assets
         env:
           TAG: ${{ needs.prepare.outputs.tag }}
           SIGNING_MODE: ${{ steps.signing.outputs.mode }}
-        run: |
-          set -euo pipefail
-          mkdir -p dist/android
-          [ "$SIGNING_MODE" = signed ]
-          apk=flutter/build/app/outputs/flutter-apk/app-release.apk
-          "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify --verbose "$apk"
-          aab=flutter/build/app/outputs/bundle/release/app-release.aab
-          aab_verify=$(jarsigner -verify "$aab" 2>&1)
-          case "$aab_verify" in
-            *"jar verified"*) echo "AAB JAR signature verified" ;;
-            *) printf '%s\n' "$aab_verify" >&2; exit 1 ;;
-          esac
-          cp "$apk" "dist/android/zuko-android-${TAG}-${SIGNING_MODE}.apk"
-          cp "$aab" \
-            "dist/android/zuko-android-${TAG}-${SIGNING_MODE}.aab"
-          cd dist/android
-          for asset in *.apk *.aab; do sha256sum "$asset" > "$asset.sha256"; done
+        run: mise exec -- just package-android-release "$TAG" "$SIGNING_MODE"
 
       - name: Upload Android release assets
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -254,12 +177,10 @@ jobs:
           APPETIZE_PUBLIC_KEY: ${{ secrets.APPETIZE_ANDROID_PUBLIC_KEY }}
           TAG: ${{ needs.prepare.outputs.tag }}
         run: |
-          set -euo pipefail
-          [ -n "$APPETIZE_API_TOKEN" ] || { echo "Set APPETIZE_API_TOKEN" >&2; exit 1; }
-          public_key="${APPETIZE_PUBLIC_KEY:--}"
-          sh scripts/upload-appetize.sh android \
+          test -n "$APPETIZE_API_TOKEN"
+          mise exec -- just upload-appetize android \
             "dist/android/zuko-android-${TAG}-signed.apk" \
-            "$public_key" \
+            "${APPETIZE_PUBLIC_KEY:--}" \
             "Zuko ${TAG} from GitHub Actions"
 
   ios-preview:
@@ -273,64 +194,33 @@ jobs:
           ref: ${{ needs.prepare.outputs.sha }}
           submodules: recursive
 
-      - name: Select Xcode 26.3
-        run: scripts/select-xcode.sh
-
       - uses: jdx/mise-action@e6a8b3978addb5a52f2b4cd9d91eafa7f0ab959d # v4.2.0
         with:
           cache: true
-          cache_save: false
-          install_args: rust
 
-      - uses: ./.github/actions/setup-flutter
+      - name: Select Xcode 26.3
+        run: mise exec -- just select-xcode
 
       - uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
         with:
           path: ~/.pub-cache
           key: ${{ runner.os }}-${{ runner.arch }}-flutter-pub-${{ hashFiles('flutter/pubspec.lock') }}
 
-      - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
-        with:
-          key: flutter-ios-appetize
-          save-if: false
 
       - name: Build locked ARM iOS Simulator client
         env:
-          TAG: ${{ needs.prepare.outputs.tag }}
-        run: |
-          set -euo pipefail
-          version="${TAG#v}"
-          (cd flutter && flutter pub get --enforce-lockfile)
-          (cd flutter && flutter build ios --simulator --debug --no-pub \
-            --build-name "$version"
-          )
-
-      - name: Package and validate Appetize client
-        id: package
-        run: |
-          set -euo pipefail
-          app=flutter/build/ios/iphonesimulator/Runner.app
-          test -d "$app"
-          plist="$app/Info.plist"
-          platform=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleSupportedPlatforms:0' "$plist")
-          executable=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$plist")
-          test "$platform" = iPhoneSimulator
-          lipo -archs "$app/$executable" | tr ' ' '\n' | grep -qx arm64
-          archive="$RUNNER_TEMP/Zuko-Flutter-ios-simulator.zip"
-          ditto -c -k --sequesterRsrc --keepParent "$app" "$archive"
-          echo "archive=$archive" >> "$GITHUB_OUTPUT"
+          VERSION: ${{ needs.prepare.outputs.tag }}
+        run: mise exec -- just package-ios-preview "${VERSION#v}"
 
       - name: Upload Simulator package to Appetize
         env:
           APPETIZE_API_TOKEN: ${{ secrets.APPETIZE_API_TOKEN }}
           APPETIZE_PUBLIC_KEY: ${{ secrets.APPETIZE_IOS_PUBLIC_KEY }}
           TAG: ${{ needs.prepare.outputs.tag }}
-          APP_FILE: ${{ steps.package.outputs.archive }}
+          APP_FILE: dist/ios-preview/Zuko-Flutter-ios-simulator.zip
         run: |
-          set -euo pipefail
-          [ -n "$APPETIZE_API_TOKEN" ] || { echo "Set APPETIZE_API_TOKEN" >&2; exit 1; }
-          public_key="${APPETIZE_PUBLIC_KEY:--}"
-          sh scripts/upload-appetize.sh ios "$APP_FILE" "$public_key" \
+          test -n "$APPETIZE_API_TOKEN"
+          mise exec -- just upload-appetize ios "$APP_FILE" "${APPETIZE_PUBLIC_KEY:--}" \
             "Zuko ${TAG} iOS Simulator from GitHub Actions"
 
   linux:
@@ -355,20 +245,12 @@ jobs:
       - uses: jdx/mise-action@e6a8b3978addb5a52f2b4cd9d91eafa7f0ab959d # v4.2.0
         with:
           cache: true
-          cache_save: false
-          install_args: rust
 
-      - uses: ./.github/actions/setup-flutter
-
-      - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
-        with:
-          key: flutter-linux-release
-          save-if: false
 
       - name: Install pinned LLVM toolchain
         run: |
           set -euo pipefail
-          bash scripts/install-flatpak-llvm.sh /opt/llvm
+          mise exec -- just install-flatpak-llvm /opt/llvm
           echo /opt/llvm/bin >> "$GITHUB_PATH"
           export PATH="/opt/llvm/bin:$PATH"
           dbus-uuidgen --ensure=/etc/machine-id
@@ -378,47 +260,15 @@ jobs:
       - name: Build locked Flutter Linux client
         env:
           RELEASE_SHA: ${{ needs.prepare.outputs.sha }}
-        run: |
-          set -euo pipefail
-          SOURCE_DATE_EPOCH="$(git show -s --format=%ct "$RELEASE_SHA")"
-          export SOURCE_DATE_EPOCH
-          export TZ=UTC LC_ALL=C.UTF-8
-          (cd flutter && flutter pub get --enforce-lockfile)
-          python3 scripts/patch-iroh-flutter.py flutter
-          (cd flutter && flutter build linux --release --no-pub)
+        run: mise exec -- just build-flutter-linux-release "$RELEASE_SHA"
 
       - name: Package and smoke-test Flatpak offline
         env:
           TAG: ${{ needs.prepare.outputs.tag }}
           RELEASE_SHA: ${{ needs.prepare.outputs.sha }}
         run: |
-          set -euo pipefail
-          SOURCE_DATE_EPOCH="$(git show -s --format=%ct "$RELEASE_SHA")"
-          export SOURCE_DATE_EPOCH
-          # Keep generated Flatpak metadata aligned with the requested release
-          # version and the exact source commit built by this run.
-          python3 - "$TAG" "$SOURCE_DATE_EPOCH" <<'PY'
-          import datetime
-          import pathlib
-          import sys
-          import xml.etree.ElementTree as ET
-
-          path = pathlib.Path("flatpak/dev.adonm.zuko.metainfo.xml")
-          tree = ET.parse(path)
-          release = tree.getroot().find("releases/release")
-          if release is None:
-              raise SystemExit("Flatpak metainfo has no release entry")
-          release.set("version", sys.argv[1].removeprefix("v"))
-          release.set(
-              "date",
-              datetime.datetime.fromtimestamp(
-                  int(sys.argv[2]), datetime.timezone.utc
-              ).date().isoformat(),
-          )
-          ET.indent(tree, space="  ")
-          tree.write(path, encoding="UTF-8", xml_declaration=True)
-          PY
-          dbus-run-session -- bash scripts/package-flatpak.sh "$TAG"
+          mise exec -- just prepare-flatpak-release "$TAG" "$RELEASE_SHA"
+          mise exec -- just package-flatpak-release "$TAG" "$RELEASE_SHA"
 
       - name: Upload Linux Flatpak release asset
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -443,37 +293,12 @@ jobs:
       - uses: jdx/mise-action@e6a8b3978addb5a52f2b4cd9d91eafa7f0ab959d # v4.2.0
         with:
           cache: true
-          cache_save: false
-          install_args: rust
 
-      - uses: ./.github/actions/setup-flutter
-
-      - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
-        with:
-          key: flutter-windows-release
-          save-if: false
 
       - name: Build and package Windows client
-        shell: pwsh
         env:
           TAG: ${{ needs.prepare.outputs.tag }}
-        run: |
-          $ErrorActionPreference = "Stop"
-          $PSNativeCommandUseErrorActionPreference = $true
-          $rustBin = Join-Path (mise where rust) "bin"
-          $env:Path = "$rustBin;$env:Path"
-          Push-Location flutter
-          flutter pub get --enforce-lockfile
-          Pop-Location
-          python scripts/patch-iroh-flutter.py flutter
-          Push-Location flutter
-          flutter build windows --release --no-pub
-          Pop-Location
-          New-Item -ItemType Directory -Force dist/windows | Out-Null
-          $archive = "dist/windows/zuko-windows-$env:TAG-x86_64.zip"
-          Compress-Archive -Path flutter/build/windows/x64/runner/Release/* -DestinationPath $archive
-          $hash = (Get-FileHash -Algorithm SHA256 $archive).Hash.ToLower()
-          "$hash  $(Split-Path -Leaf $archive)" | Set-Content -NoNewline "$archive.sha256"
+        run: mise exec -- just build-flutter-windows-release "$TAG"
 
       - name: Upload Windows release asset
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -494,6 +319,10 @@ jobs:
           ref: ${{ needs.prepare.outputs.sha }}
           fetch-depth: 0
 
+      - uses: jdx/mise-action@e6a8b3978addb5a52f2b4cd9d91eafa7f0ab959d # v4.2.0
+        with:
+          cache: true
+
       - name: Download all artifacts
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
@@ -506,40 +335,4 @@ jobs:
           # Keep the target repository explicit for `gh release create`.
           GH_REPO: ${{ github.repository }}
           TAG: ${{ needs.prepare.outputs.tag }}
-        run: |
-          set -euo pipefail
-          echo "Publishing $TAG with:"
-          ls -1 assets
-          if gh release view "$TAG" >/dev/null 2>&1; then
-            release_id="$(gh release view "$TAG" --json databaseId --jq .databaseId)"
-            gh release edit "$TAG" --draft
-          else
-            gh release create "$TAG" \
-              --draft \
-              --title "$TAG" \
-              --generate-notes \
-              --verify-tag
-            release_id="$(gh release view "$TAG" --json databaseId --jq .databaseId)"
-          fi
-          declare -A expected_names=()
-          for asset in assets/*; do
-            expected_names["$(basename "$asset")"]=1
-          done
-          endpoint="repos/${GITHUB_REPOSITORY}/releases/${release_id}"
-          while IFS=$'\t' read -r asset_id name; do
-            if [ -z "${expected_names[$name]+present}" ]; then
-              gh api --method DELETE \
-                "repos/${GITHUB_REPOSITORY}/releases/assets/${asset_id}"
-            fi
-          done < <(gh api "$endpoint" --jq '.assets[] | [.id, .name] | @tsv')
-          gh release upload "$TAG" assets/* --clobber
-          for asset in assets/*; do
-            name="$(basename "$asset")"
-            expected="sha256:$(sha256sum "$asset" | cut -d' ' -f1)"
-            actual="$(gh api "$endpoint" --jq \
-              ".assets | map(select(.name == \"$name\")) | if length == 1 then .[0].digest else error(\"asset missing or duplicated\") end")"
-            [ "$actual" = "$expected" ]
-          done
-          remote_count="$(gh api "$endpoint" --jq '.assets | length')"
-          [ "$remote_count" -eq "${#expected_names[@]}" ]
-          gh release edit "$TAG" --draft=false --latest
+        run: mise exec -- just publish-github-release "$TAG"

@@ -24,23 +24,18 @@ jobs:
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
 
-      - name: mise install
+      - name: Set up repository tools
         uses: jdx/mise-action@e6a8b3978addb5a52f2b4cd9d91eafa7f0ab959d # v4.2.0
         with:
           cache: true
-          install_args: ${{ matrix.os == 'ubuntu-latest' && 'rust just lychee actionlint' || 'rust just' }}
 
-      - name: Ensure clippy/rustfmt (reliable across cached toolchains)
-        run: rustup component add clippy rustfmt
-
-      - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
 
       - name: Clippy + tests
-        run: mise run test
+        run: mise exec -- just test
 
       - name: Build (release)
         if: ${{ github.event_name != 'pull_request' }}
-        run: mise run build
+        run: mise exec -- just build
 
       - name: End-to-end (connect, pairing, revocation)
         if: ${{ matrix.os == 'ubuntu-latest' }}
@@ -49,7 +44,7 @@ jobs:
         # `zuko share`/`zuko claim`, then proves a revoked client gets one fatal
         # authorization error rather than a reconnect loop. Needs access to
         # Iroh's public relays.
-        run: mise run test-e2e
+        run: mise exec -- just test-e2e
 
       - name: Lint markdown links
         if: ${{ matrix.os == 'ubuntu-latest' }}
@@ -58,13 +53,13 @@ jobs:
         # stable. Runs only on the ubuntu leg to avoid duplicating on macos.
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: mise run lint-md
+        run: mise exec -- just lint-md
 
       - name: Lint GitHub Actions workflows
         if: ${{ matrix.os == 'ubuntu-latest' }}
         # actionlint validates workflow syntax, action versions/SHAs,
         # permissions, expression contexts. Ubuntu leg only.
-        run: mise run lint-ci
+        run: mise exec -- just lint-ci
 
       - name: Upload binary
         if: ${{ github.event_name != 'pull_request' }}
