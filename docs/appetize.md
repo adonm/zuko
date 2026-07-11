@@ -3,8 +3,8 @@
 Tagged releases update two existing Appetize apps:
 
 - Android receives the exact signed Flutter APK attached to GitHub Releases.
-- iOS receives an unsigned ARM Flutter Simulator `.app` zip built from the same
-  immutable tag. Appetize cannot run the signed device IPA.
+- iOS receives an unsigned ARM Flutter Simulator `.app` zip built by the same
+  release run. Appetize cannot run the signed device IPA.
 
 Appetize is a preview channel, not a source of release artifacts or credentials.
 

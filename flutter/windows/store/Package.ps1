@@ -67,7 +67,7 @@ function New-Logo([string] $Source, [string] $Destination, [int] $Size) {
     }
 }
 
-& (Join-Path $PSScriptRoot 'Test-ReleaseTag.ps1') -Tag $Tag -ExpectedSha $ExpectedSha
+& (Join-Path $PSScriptRoot 'Test-ReleaseSource.ps1') -Tag $Tag -ExpectedSha $ExpectedSha
 
 $config = Get-Content (Join-Path $PSScriptRoot 'store-config.json') -Raw | ConvertFrom-Json
 if ($config.logicalApplicationId -cne 'dev.adonm.zuko' -or

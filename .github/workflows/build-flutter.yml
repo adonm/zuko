@@ -13,6 +13,7 @@ on:
       - 'scripts/check-flutter-config.py'
       - 'scripts/finalize-web-build.py'
       - 'scripts/patch-iroh-flutter.py'
+      - 'scripts/select-xcode.sh'
       - '.github/workflows/build-flutter.yml'
   pull_request:
     paths:
@@ -25,6 +26,7 @@ on:
       - 'scripts/check-flutter-config.py'
       - 'scripts/finalize-web-build.py'
       - 'scripts/patch-iroh-flutter.py'
+      - 'scripts/select-xcode.sh'
       - '.github/workflows/build-flutter.yml'
   workflow_dispatch:
 
@@ -172,12 +174,7 @@ jobs:
         with:
           submodules: recursive
       - name: Select Xcode 26.3
-        run: |
-          set -euo pipefail
-          xcode=/Applications/Xcode_26.3.app
-          test -d "$xcode"
-          sudo xcode-select -s "$xcode"
-          xcodebuild -version | grep -x 'Xcode 26.3'
+        run: scripts/select-xcode.sh
       - uses: jdx/mise-action@e6a8b3978addb5a52f2b4cd9d91eafa7f0ab959d # v4.2.0
         with:
           cache: true

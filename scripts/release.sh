@@ -20,7 +20,8 @@
 #   4. Warn (but proceed) if the working tree is dirty or the branch isn't
 #      `main` — both are usually mistakes, but legitimate in a pinch.
 #   5. Create an annotated tag and push it to origin, triggering the coordinated
-#      GitHub Release and TestFlight workflows.
+#      GitHub Release and TestFlight workflows. Recovery runs can later rebuild
+#      the same version from main without moving the tag.
 #   6. Print the Actions run URL so you can watch the build.
 set -eu
 

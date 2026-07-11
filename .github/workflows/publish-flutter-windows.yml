@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: "Immutable release tag (vX.Y.Z)"
+        description: "Release version to publish from main (vX.Y.Z)"
         required: true
         type: string
       lane:
@@ -25,7 +25,7 @@ concurrency:
 
 jobs:
   prepare:
-    name: validate immutable release
+    name: resolve release version and source
     runs-on: ubuntu-latest
     timeout-minutes: 10
     outputs:
@@ -34,43 +34,12 @@ jobs:
       version: ${{ steps.release.outputs.version }}
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
-        with:
-          ref: ${{ inputs.tag }}
-          fetch-depth: 0
 
-      - name: Validate tag, versions, and remote target
+      - name: Resolve release context
         id: release
         env:
           TAG: ${{ inputs.tag }}
-        run: |
-          set -euo pipefail
-          [[ "$TAG" =~ ^v([0-9]+)\.([0-9]+)\.([0-9]+)$ ]] || {
-            echo "Tag must match vX.Y.Z" >&2
-            exit 1
-          }
-          version="${TAG#v}"
-          [ "$version" = "$(scripts/version.sh)" ] || {
-            echo "Tag does not match the workspace version" >&2
-            exit 1
-          }
-          python3 scripts/check-release-metadata.py
-          sha="$(git rev-parse HEAD)"
-          [ "$sha" = "$(git rev-parse "$TAG^{commit}")" ] || {
-            echo "Checked-out commit does not match the tag" >&2
-            exit 1
-          }
-          remote_tag="$(git ls-remote --refs origin "refs/tags/$TAG" | cut -f1)"
-          remote_peeled="$(git ls-remote origin "refs/tags/$TAG^{}" | cut -f1)"
-          remote_sha="${remote_peeled:-$remote_tag}"
-          if [ -z "$remote_sha" ] || [ "$sha" != "$remote_sha" ]; then
-            echo "Remote tag is missing or does not resolve to the checked-out commit" >&2
-            exit 1
-          fi
-          {
-            echo "tag=$TAG"
-            echo "sha=$sha"
-            echo "version=$version"
-          } >> "$GITHUB_OUTPUT"
+        run: scripts/release-context.sh "$TAG"
 
   package:
     name: build and sign Store package
@@ -178,13 +147,13 @@ jobs:
           name: zuko-windows-store-${{ needs.prepare.outputs.tag }}-${{ needs.prepare.outputs.sha }}
           path: dist/windows-store
 
-      - name: Revalidate release and signed artifact
+      - name: Revalidate source and signed artifact
         shell: pwsh
         env:
           TAG: ${{ needs.prepare.outputs.tag }}
           EXPECTED_SHA: ${{ needs.prepare.outputs.sha }}
         run: |
-          ./flutter/windows/store/Test-ReleaseTag.ps1 -Tag $env:TAG -ExpectedSha $env:EXPECTED_SHA
+          ./flutter/windows/store/Test-ReleaseSource.ps1 -Tag $env:TAG -ExpectedSha $env:EXPECTED_SHA
           ./flutter/windows/store/Test-Package.ps1 `
             -Tag $env:TAG `
             -ExpectedSha $env:EXPECTED_SHA `
@@ -239,13 +208,13 @@ jobs:
           name: zuko-windows-store-${{ needs.prepare.outputs.tag }}-${{ needs.prepare.outputs.sha }}
           path: dist/windows-store
 
-      - name: Revalidate release and signed artifact
+      - name: Revalidate source and signed artifact
         shell: pwsh
         env:
           TAG: ${{ needs.prepare.outputs.tag }}
           EXPECTED_SHA: ${{ needs.prepare.outputs.sha }}
         run: |
-          ./flutter/windows/store/Test-ReleaseTag.ps1 -Tag $env:TAG -ExpectedSha $env:EXPECTED_SHA
+          ./flutter/windows/store/Test-ReleaseSource.ps1 -Tag $env:TAG -ExpectedSha $env:EXPECTED_SHA
           ./flutter/windows/store/Test-Package.ps1 `
             -Tag $env:TAG `
             -ExpectedSha $env:EXPECTED_SHA `

@@ -3,22 +3,18 @@
 Android compilation remains a native Flutter/Gradle build. The manual
 `publish-flutter-android.yml` workflow uses pinned Codemagic CLI Tools only at
 the signing, bundle validation, Google Play API validation, and upload boundary.
-It must be dispatched from `main` with an annotated `vX.Y.Z` tag.
+It must be dispatched from `main` with a `vX.Y.Z` release version.
 
-The default `artifact_source=release` path downloads
-`zuko-android-vX.Y.Z-signed.aab` and its checksum from the GitHub Release. It
-captures and verifies both GitHub asset digests, verifies the sidecar, and does
-not alter the signed bundle. `artifact_source=rebuild` instead checks out the
-resolved tag commit, runs a normal unsigned `flutter build appbundle`, and signs
-that output with Codemagic inside the protected publishing job. Both paths
-validate and upload the exact AAB retained as the final workflow artifact.
+The workflow checks out the selected `main` commit, runs a normal unsigned
+`flutter build appbundle`, and signs that output with Codemagic inside the
+protected publishing job. It validates and uploads the exact AAB retained as
+the final workflow artifact.
 
 The workflow verifies all of the following before upload:
 
-- the remote annotated tag object and peeled commit have not changed during the
-  run;
-- Cargo, Flutter, and `vX.Y.Z` versions agree, with the deterministic Android
-  version code `major * 1,000,000 + minor * 1,000 + patch`;
+- the requested version matches the checked-out Cargo and Flutter metadata;
+- the Google Play version code is the dispatch timestamp, so a new recovery run
+  for the same version receives a higher code;
 - the package and namespace are `dev.adonm.zuko`;
 - Bundletool accepts the AAB and its manifest reports the expected package,
   version name, and version code;
@@ -51,9 +47,6 @@ External setup cannot be created safely by this repository:
    reviewers, prevent self-review where practical, and restrict deployment to
    `main`. Store the secrets below on that environment, not as plaintext files
    or workflow inputs.
-7. Add a repository ruleset for `refs/tags/v*` that blocks tag updates and
-   deletion. The workflow detects movement during a run, while the ruleset makes
-   release tags immutable between runs.
 
 ## Protected secrets
 
@@ -73,8 +66,8 @@ plaintext.
 
 ## Dispatch and release
 
-Run **publish-flutter-android** manually, select the immutable tag, artifact
-source, Play track, and mode. `draft` uploads a draft release; `release` makes it
+Run **publish-flutter-android** manually, select the release version, Play track,
+and mode. `draft` uploads a draft release; `release` makes it
 available according to the selected track and Google Play review state. Use the
 internal track first. A production `release` is a full production release, so
 the `google-play` environment approval is the final human control.

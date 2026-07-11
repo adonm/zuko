@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: "Immutable release tag to build (vX.Y.Z)"
+        description: "Release version to build from main (vX.Y.Z)"
         required: true
         type: string
       lane:
@@ -36,43 +36,20 @@ jobs:
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
-          ref: ${{ github.event_name == 'push' && github.ref || inputs.tag }}
           fetch-depth: 0
           submodules: recursive
 
       - name: Resolve release metadata
         env:
           TAG: ${{ github.event_name == 'push' && github.ref_name || inputs.tag }}
-          EVENT_NAME: ${{ github.event_name }}
-          EVENT_SHA: ${{ github.sha }}
-        run: |
-          set -euo pipefail
-          python3 scripts/check-release-metadata.py
-          version=$(scripts/version.sh)
-          [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]
-          [ "$TAG" = "v$version" ]
-          head=$(git rev-parse HEAD)
-          [ "$head" = "$(git rev-parse "$TAG^{commit}")" ]
-          if [ "$EVENT_NAME" = push ]; then
-            [ "$head" = "$EVENT_SHA" ]
-          fi
-          remote=$(git ls-remote origin "refs/tags/$TAG^{}" | cut -f1)
-          [ -n "$remote" ] && [ "$remote" = "$head" ]
-          echo "ZUKO_VERSION=$version" >> "$GITHUB_ENV"
-          echo "ZUKO_BUILD_NUMBER=$(date -u +%s)" >> "$GITHUB_ENV"
+        run: scripts/release-context.sh "$TAG" apple-build-number
 
       # Zig 0.15.2 cannot parse the arm64e-macos exports in Xcode 26.6's
       # macOS 26.5 libSystem.tbd while compiling Ghostty's host build runner.
       # Xcode 26.3 is installed on current macOS 15/26 images and is proven by
       # the accepted TestFlight build. Fail closed if the pinned SDK disappears.
       - name: Select Xcode 26.3
-        run: |
-          set -euo pipefail
-          xcode=/Applications/Xcode_26.3.app
-          test -d "$xcode"
-          sudo xcode-select -s "$xcode"
-          xcodebuild -version | grep -x 'Xcode 26.3'
-          xcodebuild -version
+        run: scripts/select-xcode.sh
 
       - name: Set up mise
         uses: jdx/mise-action@e6a8b3978addb5a52f2b4cd9d91eafa7f0ab959d # v4.2.0
@@ -82,29 +59,16 @@ jobs:
 
       - uses: ./.github/actions/setup-flutter
 
-      - name: Set up Python 3.13.14
-        uses: actions/setup-python@83679a892e2d95755f2dac6acb0bfd1e9ac5d548 # v6.1.0
-        with:
-          python-version: 3.13.14
-          cache: pip
-          cache-dependency-path: scripts/codemagic-requirements.txt
-
-      - name: Install pinned Codemagic CLI Tools
-        run: bash scripts/install-codemagic.sh
+      - uses: ./.github/actions/setup-codemagic
 
       - uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
         with:
           path: ~/.pub-cache
-          key: ${{ runner.os }}-${{ runner.arch }}-flutter-pub-${{ hashFiles('flutter/pubspec.lock', 'scripts/prepare-libghostty-ios-static.py') }}
-          restore-keys: |
-            ${{ runner.os }}-${{ runner.arch }}-flutter-pub-
+          key: ${{ runner.os }}-${{ runner.arch }}-flutter-ios-store-${{ hashFiles('flutter/pubspec.lock', 'scripts/prepare-libghostty-ios-static.py') }}
 
       - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
         with:
           key: flutter-ios-release
-
-      - name: Resolve locked packages
-        run: cd flutter && flutter pub get --enforce-lockfile
 
       - name: Analyze and test shared client
         run: mise run flutter-check

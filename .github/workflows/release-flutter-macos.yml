@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: "Immutable release tag to build (vX.Y.Z)"
+        description: "Release version to build from main (vX.Y.Z)"
         required: true
         type: string
       lane:
@@ -33,32 +33,16 @@ jobs:
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
-          ref: ${{ inputs.tag }}
           fetch-depth: 0
           submodules: recursive
 
       - name: Resolve release metadata
         env:
           TAG: ${{ inputs.tag }}
-        run: |
-          set -euo pipefail
-          python3 scripts/check-release-metadata.py
-          version=$(scripts/version.sh)
-          [ "$TAG" = "v$version" ]
-          [ "$(git rev-parse HEAD)" = "$(git rev-parse "$TAG^{commit}")" ]
-          remote=$(git ls-remote origin "refs/tags/$TAG^{}" | cut -f1)
-          [ -n "$remote" ] && [ "$remote" = "$(git rev-parse HEAD)" ]
-          echo "ZUKO_VERSION=$version" >> "$GITHUB_ENV"
-          echo "ZUKO_BUILD_NUMBER=$(date -u +%s)" >> "$GITHUB_ENV"
+        run: scripts/release-context.sh "$TAG" apple-build-number
 
       - name: Select Xcode 26.3
-        run: |
-          set -euo pipefail
-          xcode=/Applications/Xcode_26.3.app
-          test -d "$xcode"
-          sudo xcode-select -s "$xcode"
-          xcodebuild -version | grep -x 'Xcode 26.3'
-          xcodebuild -version
+        run: scripts/select-xcode.sh
 
       - name: Set up mise
         uses: jdx/mise-action@e6a8b3978addb5a52f2b4cd9d91eafa7f0ab959d # v4.2.0
@@ -68,22 +52,12 @@ jobs:
 
       - uses: ./.github/actions/setup-flutter
 
-      - name: Set up Python 3.13.14
-        uses: actions/setup-python@83679a892e2d95755f2dac6acb0bfd1e9ac5d548 # v6.1.0
-        with:
-          python-version: 3.13.14
-          cache: pip
-          cache-dependency-path: scripts/codemagic-requirements.txt
-
-      - name: Install pinned Codemagic CLI Tools
-        run: bash scripts/install-codemagic.sh
+      - uses: ./.github/actions/setup-codemagic
 
       - uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
         with:
           path: ~/.pub-cache
-          key: ${{ runner.os }}-${{ runner.arch }}-flutter-pub-${{ hashFiles('flutter/pubspec.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-${{ runner.arch }}-flutter-pub-
+          key: ${{ runner.os }}-${{ runner.arch }}-flutter-macos-store-${{ hashFiles('flutter/pubspec.lock') }}
 
       - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
         with:
@@ -149,27 +123,11 @@ jobs:
       TEAM_ID: ${{ secrets.TEAM_ID }}
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
-        with:
-          ref: ${{ inputs.tag }}
-          fetch-depth: 0
 
       - name: Select Xcode 26.3
-        run: |
-          set -euo pipefail
-          xcode=/Applications/Xcode_26.3.app
-          test -d "$xcode"
-          sudo xcode-select -s "$xcode"
-          xcodebuild -version | grep -x 'Xcode 26.3'
+        run: scripts/select-xcode.sh
 
-      - name: Set up Python 3.13.14
-        uses: actions/setup-python@83679a892e2d95755f2dac6acb0bfd1e9ac5d548 # v6.1.0
-        with:
-          python-version: 3.13.14
-          cache: pip
-          cache-dependency-path: scripts/codemagic-requirements.txt
-
-      - name: Install pinned Codemagic CLI Tools
-        run: bash scripts/install-codemagic.sh
+      - uses: ./.github/actions/setup-codemagic
 
       - name: Download signed package
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1

@@ -73,7 +73,7 @@ function Test-ExtractedPackage([string] $Directory, [string] $SemanticVersion, [
     }
 }
 
-& (Join-Path $PSScriptRoot 'Test-ReleaseTag.ps1') -Tag $Tag -ExpectedSha $ExpectedSha
+& (Join-Path $PSScriptRoot 'Test-ReleaseSource.ps1') -Tag $Tag -ExpectedSha $ExpectedSha
 foreach ($name in @(
     'MSSTORE_PRODUCT_ID',
     'MSSTORE_PACKAGE_IDENTITY_NAME',

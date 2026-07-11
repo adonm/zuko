@@ -5,10 +5,11 @@ separate, protected boundary:
 
 - `release-flutter-ios.yml` builds, validates, and uploads a signed IPA for
   internal TestFlight processing on every `vX.Y.Z` tag. Manual `lane=build`
-  runs stop after validation; manual `lane=beta` runs upload as well.
+  runs from current `main` stop after validation; manual `lane=beta` runs upload
+  as well.
 - `release-flutter-macos.yml` builds a sandboxed Mac App Store `.pkg`;
-  `lane=upload` starts a second job protected by the `apple-store` GitHub
-  environment before validation and upload.
+  manual runs build current `main`, and `lane=upload` starts a second job in the
+  same run before validation and upload.
 
 Both workflows use Xcode 26.3, the checksum-pinned Flutter `3.46.0-0.3.pre`
 beta archive in `mise.toml`, Rust 1.96.1, Zig 0.15.2, and
@@ -80,7 +81,7 @@ Configure these Actions secrets without placing values in shell history:
 
 Certificate and profile values are unwrapped base64. Protect the
 `apple-store` environment with required reviewers and restrict deployment to
-the release refs allowed by repository policy. Put all listed secrets, including
+release tag pushes and manual runs from `main`. Put all listed secrets, including
 the three `ASC_*` values used by both iOS and macOS, in that environment.
 
 ## Validation and release

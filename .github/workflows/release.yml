@@ -33,40 +33,13 @@ jobs:
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
-          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.sha }}
           fetch-depth: 0
 
-      - name: Validate tag, version, and commit
+      - name: Resolve release version and source
         id: identity
         env:
           TAG: ${{ inputs.tag || github.ref_name }}
-          EVENT_NAME: ${{ github.event_name }}
-          EVENT_SHA: ${{ github.sha }}
-        run: |
-          set -euo pipefail
-          if [[ ! "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-            echo "Release tag must match vX.Y.Z: $TAG" >&2
-            exit 1
-          fi
-          expected="v$(scripts/version.sh)"
-          if [ "$TAG" != "$expected" ]; then
-            echo "Tag $TAG does not match Cargo version $expected" >&2
-            exit 1
-          fi
-          sha=$(git rev-list -n 1 "$TAG")
-          if [ -z "$sha" ] || [ "$sha" != "$(git rev-parse HEAD)" ]; then
-            echo "Checked-out commit does not match $TAG" >&2
-            exit 1
-          fi
-          if [ "$EVENT_NAME" = push ] && [ "$sha" != "$EVENT_SHA" ]; then
-            echo "Tag commit does not match the triggering SHA" >&2
-            exit 1
-          fi
-          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
-          echo "sha=$sha" >> "$GITHUB_OUTPUT"
-
-      - name: Validate cross-platform release metadata
-        run: python3 scripts/check-release-metadata.py
+        run: scripts/release-context.sh "$TAG"
 
   build:
     name: build ${{ matrix.target }}
@@ -306,12 +279,7 @@ jobs:
           submodules: recursive
 
       - name: Select Xcode 26.3
-        run: |
-          set -euo pipefail
-          xcode=/Applications/Xcode_26.3.app
-          test -d "$xcode"
-          sudo xcode-select -s "$xcode"
-          xcodebuild -version | grep -x 'Xcode 26.3'
+        run: scripts/select-xcode.sh
 
       - uses: jdx/mise-action@e6a8b3978addb5a52f2b4cd9d91eafa7f0ab959d # v4.2.0
         with:
@@ -432,9 +400,8 @@ jobs:
           set -euo pipefail
           SOURCE_DATE_EPOCH="$(git show -s --format=%ct "$RELEASE_SHA")"
           export SOURCE_DATE_EPOCH
-          # Keep recovery dispatches reproducible when a tagged source checkout
-          # predates the AppStream metadata bump. Future tags are gated by
-          # check-release-metadata.py before this point.
+          # Keep generated Flatpak metadata aligned with the requested release
+          # version and the exact source commit built by this run.
           python3 - "$TAG" "$SOURCE_DATE_EPOCH" <<'PY'
           import datetime
           import pathlib
@@ -538,28 +505,46 @@ jobs:
           path: assets
           merge-multiple: true
 
-      - name: Create release
+      - name: Create or update release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           # Keep the target repository explicit for `gh release create`.
           GH_REPO: ${{ github.repository }}
           TAG: ${{ needs.prepare.outputs.tag }}
-          EXPECTED_SHA: ${{ needs.prepare.outputs.sha }}
         run: |
           set -euo pipefail
-          git fetch origin "refs/tags/${TAG}:refs/tags/${TAG}" --force
-          actual_sha=$(git rev-list -n 1 "$TAG")
-          if [ "$actual_sha" != "$EXPECTED_SHA" ]; then
-            echo "Refusing to publish: $TAG moved from $EXPECTED_SHA to $actual_sha" >&2
-            exit 1
-          fi
-          if gh release view "$TAG" >/dev/null 2>&1; then
-            echo "Refusing to replace existing release $TAG" >&2
-            exit 1
-          fi
           echo "Publishing $TAG with:"
           ls -1 assets
-          gh release create "$TAG" assets/* \
-            --title "$TAG" \
-            --generate-notes \
-            --verify-tag
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            release_id="$(gh release view "$TAG" --json databaseId --jq .databaseId)"
+            gh release edit "$TAG" --draft
+          else
+            gh release create "$TAG" \
+              --draft \
+              --title "$TAG" \
+              --generate-notes \
+              --verify-tag
+            release_id="$(gh release view "$TAG" --json databaseId --jq .databaseId)"
+          fi
+          declare -A expected_names=()
+          for asset in assets/*; do
+            expected_names["$(basename "$asset")"]=1
+          done
+          endpoint="repos/${GITHUB_REPOSITORY}/releases/${release_id}"
+          while IFS=$'\t' read -r asset_id name; do
+            if [ -z "${expected_names[$name]+present}" ]; then
+              gh api --method DELETE \
+                "repos/${GITHUB_REPOSITORY}/releases/assets/${asset_id}"
+            fi
+          done < <(gh api "$endpoint" --jq '.assets[] | [.id, .name] | @tsv')
+          gh release upload "$TAG" assets/* --clobber
+          for asset in assets/*; do
+            name="$(basename "$asset")"
+            expected="sha256:$(sha256sum "$asset" | cut -d' ' -f1)"
+            actual="$(gh api "$endpoint" --jq \
+              ".assets | map(select(.name == \"$name\")) | if length == 1 then .[0].digest else error(\"asset missing or duplicated\") end")"
+            [ "$actual" = "$expected" ]
+          done
+          remote_count="$(gh api "$endpoint" --jq '.assets | length')"
+          [ "$remote_count" -eq "${#expected_names[@]}" ]
+          gh release edit "$TAG" --draft=false --latest

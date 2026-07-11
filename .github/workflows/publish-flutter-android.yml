@@ -4,17 +4,9 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: "Immutable release tag to publish (vX.Y.Z)"
+        description: "Release version to publish from main (vX.Y.Z)"
         required: true
         type: string
-      artifact_source:
-        description: "Use the signed GitHub Release AAB or rebuild from the tag"
-        required: true
-        default: release
-        type: choice
-        options:
-          - release
-          - rebuild
       track:
         description: "Google Play track"
         required: true
@@ -43,148 +35,63 @@ concurrency:
 
 jobs:
   prepare:
-    name: resolve immutable release identity
+    name: resolve release version and source
     runs-on: ubuntu-latest
     timeout-minutes: 10
     outputs:
       tag: ${{ steps.identity.outputs.tag }}
       sha: ${{ steps.identity.outputs.sha }}
-      tag_object: ${{ steps.identity.outputs.tag_object }}
       version: ${{ steps.identity.outputs.version }}
       version_code: ${{ steps.identity.outputs.version_code }}
       package: ${{ steps.identity.outputs.package }}
       asset: ${{ steps.identity.outputs.asset }}
-      asset_digest: ${{ steps.release.outputs.asset_digest }}
-      checksum_digest: ${{ steps.release.outputs.checksum_digest }}
     steps:
-      - name: Check out trusted publishing tools
+      - name: Check out current release source
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
-          path: tooling
-
-      - name: Check out release tag
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
-        with:
-          ref: ${{ inputs.tag }}
           fetch-depth: 0
-          path: release-source
 
-      - name: Validate workflow and release identity
+      - name: Resolve release context
         id: identity
         env:
           TAG: ${{ inputs.tag }}
-        run: |
-          set -euo pipefail
-          if [ "$GITHUB_REF" != refs/heads/main ]; then
-            echo "Publishing must be dispatched from the main branch" >&2
-            exit 1
-          fi
-          python3 tooling/scripts/android-release-metadata.py \
-            --source release-source \
-            --tag "$TAG" >> "$GITHUB_OUTPUT"
-
-      - name: Snapshot signed release asset digests
-        if: ${{ inputs.artifact_source == 'release' }}
-        id: release
-        env:
-          GH_TOKEN: ${{ github.token }}
-          TAG: ${{ steps.identity.outputs.tag }}
-          ASSET: ${{ steps.identity.outputs.asset }}
-        run: |
-          set -euo pipefail
-          endpoint="repos/${GITHUB_REPOSITORY}/releases/tags/${TAG}"
-          draft="$(gh api "$endpoint" --jq '.draft')"
-          prerelease="$(gh api "$endpoint" --jq '.prerelease')"
-          [ "$draft" = false ]
-          [ "$prerelease" = false ]
-          asset_digest="$(gh api "$endpoint" --jq \
-            ".assets | map(select(.name == \"${ASSET}\")) | if length == 1 then .[0].digest else error(\"AAB missing or duplicated\") end")"
-          checksum_digest="$(gh api "$endpoint" --jq \
-            ".assets | map(select(.name == \"${ASSET}.sha256\")) | if length == 1 then .[0].digest else error(\"checksum missing or duplicated\") end")"
-          [[ "$asset_digest" =~ ^sha256:[0-9a-f]{64}$ ]]
-          [[ "$checksum_digest" =~ ^sha256:[0-9a-f]{64}$ ]]
-          echo "asset_digest=$asset_digest" >> "$GITHUB_OUTPUT"
-          echo "checksum_digest=$checksum_digest" >> "$GITHUB_OUTPUT"
+        run: scripts/release-context.sh "$TAG" android-build-number
 
   package:
-    name: ${{ inputs.artifact_source }} Android bundle
+    name: rebuild Android bundle
     needs: prepare
     runs-on: ubuntu-latest
     timeout-minutes: 75
     steps:
-      - name: Check out release commit
+      - name: Check out release source
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           ref: ${{ needs.prepare.outputs.sha }}
           fetch-depth: 0
-          path: release-source
           submodules: recursive
 
-      - name: Check out trusted publishing tools
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
-        with:
-          path: tooling
-
-      - name: Revalidate immutable tag
-        run: |
-          set -euo pipefail
-          python3 tooling/scripts/android-release-metadata.py \
-            --source release-source \
-            --tag "${{ needs.prepare.outputs.tag }}" \
-            --commit "${{ needs.prepare.outputs.sha }}" \
-            --tag-object "${{ needs.prepare.outputs.tag_object }}" >/dev/null
-
-      - name: Download exact signed GitHub Release AAB
-        if: ${{ inputs.artifact_source == 'release' }}
-        env:
-          GH_TOKEN: ${{ github.token }}
-          TAG: ${{ needs.prepare.outputs.tag }}
-          ASSET: ${{ needs.prepare.outputs.asset }}
-          ASSET_DIGEST: ${{ needs.prepare.outputs.asset_digest }}
-          CHECKSUM_DIGEST: ${{ needs.prepare.outputs.checksum_digest }}
-        run: |
-          set -euo pipefail
-          mkdir -p dist/android
-          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" \
-            --dir dist/android \
-            --pattern "$ASSET" \
-            --pattern "$ASSET.sha256"
-          actual_asset="sha256:$(sha256sum "dist/android/$ASSET" | cut -d' ' -f1)"
-          actual_checksum="sha256:$(sha256sum "dist/android/$ASSET.sha256" | cut -d' ' -f1)"
-          [ "$actual_asset" = "$ASSET_DIGEST" ]
-          [ "$actual_checksum" = "$CHECKSUM_DIGEST" ]
-          (cd dist/android && sha256sum --strict --check "$ASSET.sha256")
-
       - name: Set up release toolchain
-        if: ${{ inputs.artifact_source == 'rebuild' }}
         uses: jdx/mise-action@e6a8b3978addb5a52f2b4cd9d91eafa7f0ab959d # v4.2.0
         with:
           cache: true
           cache_save: false
           install_args: rust
-          working_directory: release-source
 
       - uses: ./.github/actions/setup-flutter
-        if: ${{ inputs.artifact_source == 'rebuild' }}
-        with:
-          working-directory: release-source
 
       - name: Set up Java 17
-        if: ${{ inputs.artifact_source == 'rebuild' }}
         uses: actions/setup-java@0f481fcb613427c0f801b606911222b5b6f3083a # v5.5.0
         with:
           distribution: temurin
           java-version: '17'
 
       - name: Cache Rust build
-        if: ${{ inputs.artifact_source == 'rebuild' }}
         uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
         with:
           key: flutter-android-store-rebuild
           save-if: false
 
       - name: Set up Android SDK
-        if: ${{ inputs.artifact_source == 'rebuild' }}
         uses: android-actions/setup-android@40fd30fb8d7440372e1316f5d1809ec01dcd3699 # v4.0.1
         with:
           packages: >-
@@ -193,15 +100,14 @@ jobs:
             build-tools;36.0.0
             ndk;28.2.13676358
 
-      - name: Natively rebuild unsigned AAB from tag
-        if: ${{ inputs.artifact_source == 'rebuild' }}
+      - name: Natively rebuild unsigned AAB from main
         env:
           VERSION: ${{ needs.prepare.outputs.version }}
           VERSION_CODE: ${{ needs.prepare.outputs.version_code }}
           TAG: ${{ needs.prepare.outputs.tag }}
         run: |
           set -euo pipefail
-          pushd release-source/flutter >/dev/null
+          pushd flutter >/dev/null
           flutter pub get --enforce-lockfile
           flutter build appbundle \
             --release \
@@ -210,7 +116,7 @@ jobs:
             --build-number "$VERSION_CODE"
           popd >/dev/null
           mkdir -p dist/android
-          cp release-source/flutter/build/app/outputs/bundle/release/app-release.aab \
+          cp flutter/build/app/outputs/bundle/release/app-release.aab \
             "dist/android/zuko-android-${TAG}-unsigned.aab"
 
       - name: Upload package for protected publishing
@@ -228,17 +134,10 @@ jobs:
     timeout-minutes: 30
     environment: google-play
     steps:
-      - name: Check out trusted publishing tools
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
-        with:
-          path: tooling
-
-      - name: Check out release commit
+      - name: Check out release source
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           ref: ${{ needs.prepare.outputs.sha }}
-          fetch-depth: 0
-          path: release-source
 
       - name: Download package selected for publishing
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
@@ -252,17 +151,9 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      - name: Set up Python 3.13.14
-        uses: actions/setup-python@83679a892e2d95755f2dac6acb0bfd1e9ac5d548 # v6.1.0
-        with:
-          python-version: 3.13.14
-          cache: pip
-          cache-dependency-path: tooling/scripts/codemagic-requirements.txt
+      - uses: ./.github/actions/setup-codemagic
 
-      - name: Install pinned Codemagic CLI Tools
-        run: tooling/scripts/install-codemagic.sh
-
-      - name: Revalidate tag and prepare exact signed AAB
+      - name: Prepare and validate exact signed AAB
         env:
           ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
           ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
@@ -272,29 +163,12 @@ jobs:
           ASSET: ${{ needs.prepare.outputs.asset }}
         run: |
           set -euo pipefail
-          python3 tooling/scripts/android-release-metadata.py \
-            --source release-source \
-            --tag "$TAG" \
-            --commit "${{ needs.prepare.outputs.sha }}" \
-            --tag-object "${{ needs.prepare.outputs.tag_object }}" >/dev/null
           mkdir -p dist/android
-          if [ "${{ inputs.artifact_source }}" = release ]; then
-            input="staging/$ASSET"
-            checksum="staging/$ASSET.sha256"
-            mode=preserve
-          else
-            input="staging/zuko-android-${TAG}-unsigned.aab"
-            checksum="dist/android/$ASSET.sha256"
-            mode=sign
-          fi
+          input="staging/zuko-android-${TAG}-unsigned.aab"
           output="dist/android/$ASSET"
-          tooling/scripts/android-prepare-aab.sh "$mode" "$input" "$output"
-          if [ "$mode" = sign ]; then
-            (cd dist/android && sha256sum "$ASSET" > "$ASSET.sha256")
-          else
-            cp "$checksum" "dist/android/$ASSET.sha256"
-          fi
-          tooling/scripts/android-validate-aab.sh \
+          scripts/android-prepare-aab.sh sign "$input" "$output"
+          (cd dist/android && sha256sum "$ASSET" > "$ASSET.sha256")
+          scripts/android-validate-aab.sh \
             "$output" \
             "dist/android/$ASSET.sha256" \
             "${{ needs.prepare.outputs.package }}" \
@@ -317,12 +191,7 @@ jobs:
           ASSET: ${{ needs.prepare.outputs.asset }}
         run: |
           set -euo pipefail
-          python3 tooling/scripts/android-release-metadata.py \
-            --source release-source \
-            --tag "$TAG" \
-            --commit "${{ needs.prepare.outputs.sha }}" \
-            --tag-object "${{ needs.prepare.outputs.tag_object }}" >/dev/null
-          tooling/scripts/android-upload-google-play.sh \
+          scripts/android-upload-google-play.sh \
             "dist/android/$ASSET" \
             "$AAB_SHA256" \
             "${{ needs.prepare.outputs.package }}" \

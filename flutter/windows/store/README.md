@@ -1,11 +1,10 @@
 # Microsoft Store publishing for Flutter Windows
 
-The manual `publish-flutter-windows` workflow packages the existing Flutter
-Windows release without changing ordinary Windows CI or the coordinated GitHub
-release workflow. It accepts only an existing `vX.Y.Z` tag, pins the tag to its
-remote commit, creates signed MSIX and MSIXBundle artifacts, and uploads the
-bundle to a Partner Center draft. The `submit` lane requires a second protected
-environment before it commits that draft for certification.
+The manual `publish-flutter-windows` workflow packages the current Flutter
+Windows source from `main` for a `vX.Y.Z` release version. It records the source
+commit, creates signed MSIX and MSIXBundle artifacts, and uploads the bundle to
+a Partner Center draft. The `submit` lane requires a second protected environment
+before it commits that draft for certification.
 
 ## Package mapping
 
@@ -75,15 +74,16 @@ the CLI does not create the first loose-MSIX submission.
 
 ## Run
 
-1. Run `publish-flutter-windows` with an immutable release tag and `lane=draft`.
+1. Run `publish-flutter-windows` from `main` with the release version and
+   `lane=draft`.
 2. Download and retain the signed workflow artifact, then review the draft and
    certification inputs in Partner Center.
-3. Run the workflow for the same tag with `lane=submit`. Approve
+3. Run the workflow for the same release version with `lane=submit`. Approve
    `microsoft-store-submit` only after reviewing the newly uploaded draft.
 
-The second run rebuilds and reuploads the exact tagged source before approval;
-it never commits a draft from an unrelated run. Concurrency prevents two Store
-publishing runs from changing the app draft at the same time.
+The second run rebuilds and reuploads the then-current `main` source before
+approval; it never commits a draft from an unrelated run. Concurrency prevents
+two Store publishing runs from changing the app draft at the same time.
 
 Before enabling submission, run the generated package through the Windows App
 Certification Kit and confirm launch/install behavior on supported Windows 10

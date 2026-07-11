@@ -13,10 +13,10 @@ inputs.
   Partner Center-assigned Microsoft package identity.
 - [ ] Keep `https://adonm.dev` reachable and visibly associated with Zuko so
   the reverse-DNS ID remains supportable and can be verified by stores.
-- [ ] Protect `refs/tags/v*` against updates and deletion. Require reviews on
-  every publishing environment and prevent self-review where practical.
+- [ ] Require reviews on every publishing environment and prevent self-review
+  where practical.
 - [ ] Run `just check`, `just test-e2e`, and the platform package check before
-  creating an annotated immutable `vX.Y.Z` tag.
+  creating an annotated `vX.Y.Z` tag.
 
 ## GitHub configuration matrix
 
@@ -113,7 +113,12 @@ Details: [Flatpak packaging](../flatpak/README.md).
 
 1. Complete the portal records and protected GitHub environments.
 2. Publish the `crossterm-zuko` bootstrap dependency and verify Zuko packaging.
-3. Cut the immutable tag and let the coordinated GitHub release produce checksummed artifacts.
+3. Cut the tag and let the coordinated GitHub release produce checksummed artifacts.
 4. Confirm the automatic TestFlight build, then publish Google Play internal,
    Mac App Store, and Microsoft draft builds through their protected workflows.
 5. Review each portal's retained artifact, metadata, policy answers, and human approval before production submission.
+
+Tags start a release and provide its version label. If release automation needs
+a fix, dispatch the workflow again from `main` with the same version. Recovery
+runs build the current `main` commit and may replace same-version GitHub Release
+assets; workflow artifacts and package metadata retain the exact source SHA.

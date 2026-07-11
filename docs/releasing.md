@@ -41,7 +41,14 @@ just release v0.9.11
 `scripts/release.sh` validates the version, commits requested pending work,
 pushes the branch, creates an annotated tag, and pushes it. The tag-triggered
 workflow validates that the tag, Cargo version, Flutter version, and checked-out
-commit agree before building any artifact.
+source metadata agree before building any artifact.
+
+The tag starts the first build and names the release; it is not the permanent
+source identity for recovery builds. To rebuild after an automation or packaging
+fix, dispatch the release workflow from `main` with the same `vX.Y.Z` value. The
+workflow builds that `main` commit and replaces assets with matching names on the
+existing GitHub Release. Store workflows use the same version-label model and
+retain the selected source SHA in workflow artifacts or package metadata.
 
 Cargo `workspace.package.version` is canonical. Flutter must use the same
 semantic version plus this Android-compatible build number:
@@ -68,14 +75,15 @@ published and protected by crates.io trusted publishing. Do not publish Zuko
 unless the check reports that the exact registry package contains the normal,
 rxvt, SGR, and cursor-position underflow fixes.
 
-The `publish-crate.yml` workflow validates `vX.Y.Z`, the Cargo version, and the
-tag commit before running the same fail-closed package check. Its `crates-io`
-GitHub environment must be protected with required reviewers and tag-only
-deployment rules. The protected publish job is not reached when verification
-fails.
+The `publish-crate.yml` workflow validates `vX.Y.Z` against the selected source
+before running the same fail-closed package check. Its `crates-io` GitHub
+environment must be protected with required reviewers and allow tag pushes plus
+manual recovery dispatches from `main`. The protected publish job is not reached
+when verification fails, and crates.io refuses replacement of an existing
+version.
 
 The Zuko crate uses a crates.io trusted publisher for repository `adonm/zuko`,
-workflow `publish-crate.yml`, and environment `crates-io`. Tag publications use
+workflow `publish-crate.yml`, and environment `crates-io`. Publications use
 GitHub OIDC and store no crates.io token or other publishing secret in the
 repository.
 
