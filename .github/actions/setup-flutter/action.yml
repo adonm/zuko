@@ -1,0 +1,19 @@
+name: Set up pinned Flutter
+description: Install and verify the checksum-pinned Flutter beta from mise.toml
+
+inputs:
+  working-directory:
+    description: Repository checkout containing mise.toml
+    required: false
+    default: .
+
+runs:
+  using: composite
+  steps:
+    - name: Install pinned Flutter beta
+      shell: bash
+      run: |
+        set -euo pipefail
+        cd "${{ inputs.working-directory }}"
+        mise install http:flutter
+        mise exec -- flutter --version

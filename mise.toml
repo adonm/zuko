@@ -1,7 +1,7 @@
 # Single source of truth for tools and system dependencies. Human-facing
 # recipes live in Justfile; compatibility `mise run <task>` entries delegate
 # to those recipes. CI uses the same mise environment and recipe graph.
-# Local dev:   `mise install` then `just <recipe>`
+# Local dev:   `mise bootstrap` then `just <recipe>`
 # CI/compat:   `mise run <task>`
 
 [tools]
@@ -10,10 +10,6 @@
 # 'minimal' profile, and `Swatinem/rust-cache` can restore a toolchain without
 # them — see the matching `rustup component add` step in the workflows).
 rust = { version = "1.96.1", components = "clippy,rustfmt" }
-# Shared Android, Apple, web, Linux, and Windows client.
-flutter = "3.44.6"
-# `just` owns the human-facing recipe graph; mise remains the source of pinned
-# tools and optional per-task SDKs. `mise run …` delegates to the same recipes.
 just = "1.55.1"
 # mdBook for the docs site (published to GitHub Pages via docs.yml). Prebuilt
 # binary via mise's aqua backend — no compile. `mise run build-docs` builds.
@@ -25,13 +21,48 @@ lychee = "0.24.2"
 # permissions, expression contexts, job needs. `mise run lint-ci` runs it.
 actionlint = "1.7.12"
 
-# System-level deps used by builds. `mise bootstrap packages install` installs
-# only the ones for the current OS/package manager. Just the linux/arm64
-# cross-compiler here (used by the release workflow).
+# Official beta archives for framework revision
+# 677d472756f83c14371dd8cc624387065f3d32a7. Platform checksums come from
+# Flutter's published release manifests. The beta is new enough for the
+# explicit desktop Impeller APIs without relying on a moving master checkout.
+[tools."http:flutter"]
+version = "3.46.0-0.3.pre"
+
+[tools."http:flutter".platforms]
+linux-x64 = { url = "https://storage.googleapis.com/flutter_infra_release/releases/beta/linux/flutter_linux_3.46.0-0.3.pre-beta.tar.xz", checksum = "sha256:931c30fde3cc9b4eae2bbae750914c1ec60bfea4d46531e37f25caaa1a47d2da" }
+macos-x64 = { url = "https://storage.googleapis.com/flutter_infra_release/releases/beta/macos/flutter_macos_3.46.0-0.3.pre-beta.zip", checksum = "sha256:788df8e91c57880b0559ceeb8e09021bbc841bd2e03f3e8d1a149cd127735f86" }
+macos-arm64 = { url = "https://storage.googleapis.com/flutter_infra_release/releases/beta/macos/flutter_macos_arm64_3.46.0-0.3.pre-beta.zip", checksum = "sha256:5191b391f00a8e3756c873e27326af01b62c40c152d8cfd4b490b9ed8a3530f0" }
+windows-x64 = { url = "https://storage.googleapis.com/flutter_infra_release/releases/beta/windows/flutter_windows_3.46.0-0.3.pre-beta.zip", checksum = "sha256:11e5b04a443f0a764ddcf36b53dca811f65f859b6074f7e4a3e8591075d572ed" }
+
+# System-level dependencies used by Linux builds. `mise bootstrap` installs
+# only entries for package managers available on the current OS.
 [bootstrap.packages]
 "apt:gcc-aarch64-linux-gnu" = "latest" # cross linker for aarch64-unknown-linux-gnu
-# ring's wasm32 build (pulled by browser Iroh's tls-ring feature) needs clang.
 "apt:clang" = "latest"
+"apt:cmake" = "latest"
+"apt:libgtk-3-dev" = "latest"
+"apt:libsecret-1-dev" = "latest"
+"apt:ninja-build" = "latest"
+"apt:pkg-config" = "latest"
+"dnf:clang" = "latest"
+"dnf:cmake" = "latest"
+"dnf:gtk3-devel" = "latest"
+"dnf:libsecret-devel" = "latest"
+"dnf:ninja-build" = "latest"
+"dnf:pkgconf-pkg-config" = "latest"
+"pacman:clang" = "latest"
+"pacman:cmake" = "latest"
+"pacman:gtk3" = "latest"
+"pacman:libsecret" = "latest"
+"pacman:ninja" = "latest"
+"pacman:pkgconf" = "latest"
+
+# `mise bootstrap` owns idempotent marker blocks instead of project scripts
+# hand-editing shell startup files.
+[bootstrap.mise_shell_activate]
+bashrc = "activate"
+zshrc = "activate"
+fish = "activate"
 
 [settings]
 # `mise bootstrap` (used for [bootstrap.packages]) is still experimental.
@@ -39,6 +70,7 @@ experimental = true
 
 [env]
 CARGO_TERM_COLOR = "always"
+ZUKO_FLUTTER_REVISION = "677d472756f83c14371dd8cc624387065f3d32a7"
 
 # --- tasks (shared by local dev and CI) ---
 

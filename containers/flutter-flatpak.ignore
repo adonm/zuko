@@ -1,2 +1,6 @@
 **
 !mise.toml
+!.flutter-version
+!scripts/
+!scripts/flutter-sdk.py
+!scripts/install-flatpak-llvm.sh

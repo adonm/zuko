@@ -16,6 +16,7 @@ on:
       - "book.toml"
       - "Justfile"
       - "mise.toml"
+      - ".github/actions/setup-flutter/**"
       - "scripts/build-web.sh"
       - "scripts/finalize-web-build.py"
       - "flutter/**"
@@ -46,7 +47,9 @@ jobs:
         uses: jdx/mise-Action@e6a8b3978addb5a52f2b4cd9d91eafa7f0ab959d # v4.2.0
         with:
           cache: true
-          install_args: flutter rust just mdbook lychee
+          install_args: rust just mdbook lychee
+
+      - uses: ./.github/actions/setup-flutter
 
       - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
         with:

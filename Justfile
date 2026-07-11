@@ -59,13 +59,14 @@ flutter-vendor-get:
 [group('flutter')]
 flutter-vendor-check: flutter-vendor-get
     sh flutter/packages/flterm/tool/fetch-test-assets.sh
-    mise exec -C flutter/packages/flterm -- dart format --output=none --set-exit-if-changed lib test
+    python3 scripts/check-dart-format.py --cwd flutter/packages/flterm lib test
     mise exec -C flutter/packages/flterm -- flutter analyze --no-pub
     mise exec -C flutter/packages/flterm -- flutter test --no-pub
 
 [group('flutter')]
 flutter-check: flutter-get flutter-vendor-check
-    mise exec -- dart format --output=none --set-exit-if-changed flutter/lib flutter/test
+    python3 scripts/check-flutter-config.py
+    python3 scripts/check-dart-format.py flutter/lib flutter/test
     mise exec -C flutter -- flutter analyze --no-pub
     mise exec -C flutter -- flutter test --no-pub
 

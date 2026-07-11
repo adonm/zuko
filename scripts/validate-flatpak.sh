@@ -33,7 +33,6 @@ required_permissions = {
     "--share=ipc",
     "--share=network",
     "--socket=wayland",
-    "--socket=fallback-x11",
     "--device=dri",
     "--talk-name=org.freedesktop.secrets",
 }

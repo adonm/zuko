@@ -64,7 +64,9 @@ jobs:
         uses: jdx/mise-action@e6a8b3978addb5a52f2b4cd9d91eafa7f0ab959d # v4.2.0
         with:
           cache: true
-          install_args: flutter rust just zig@0.15.2
+          install_args: rust just zig@0.15.2
+
+      - uses: ./.github/actions/setup-flutter
 
       - name: Set up Python 3.13.14
         uses: actions/setup-python@83679a892e2d95755f2dac6acb0bfd1e9ac5d548 # v6.1.0
@@ -102,7 +104,8 @@ jobs:
       - name: Build signed Flutter macOS application
         run: |
           set -euo pipefail
-          mise exec zig@0.15.2 -C flutter -- flutter build macos \
+          cd flutter
+          mise exec zig@0.15.2 -- flutter build macos \
             --release \
             --no-pub \
             --build-name "$ZUKO_VERSION" \

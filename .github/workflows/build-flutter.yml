@@ -7,7 +7,10 @@ on:
       - 'flutter/**'
       - 'Justfile'
       - 'mise.toml'
+      - '.github/actions/setup-flutter/**'
       - 'scripts/build-web.sh'
+      - 'scripts/check-dart-format.py'
+      - 'scripts/check-flutter-config.py'
       - 'scripts/finalize-web-build.py'
       - 'scripts/patch-iroh-flutter.py'
       - '.github/workflows/build-flutter.yml'
@@ -16,7 +19,10 @@ on:
       - 'flutter/**'
       - 'Justfile'
       - 'mise.toml'
+      - '.github/actions/setup-flutter/**'
       - 'scripts/build-web.sh'
+      - 'scripts/check-dart-format.py'
+      - 'scripts/check-flutter-config.py'
       - 'scripts/finalize-web-build.py'
       - 'scripts/patch-iroh-flutter.py'
       - '.github/workflows/build-flutter.yml'
@@ -41,7 +47,8 @@ jobs:
       - uses: jdx/mise-action@e6a8b3978addb5a52f2b4cd9d91eafa7f0ab959d # v4.2.0
         with:
           cache: true
-          install_args: flutter rust just
+          install_args: rust just
+      - uses: ./.github/actions/setup-flutter
       - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
         with:
           shared-key: flutter-web
@@ -68,7 +75,8 @@ jobs:
       - uses: jdx/mise-action@e6a8b3978addb5a52f2b4cd9d91eafa7f0ab959d # v4.2.0
         with:
           cache: true
-          install_args: flutter rust
+          install_args: rust
+      - uses: ./.github/actions/setup-flutter
       - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
         with:
           key: flutter-android
@@ -80,9 +88,9 @@ jobs:
             build-tools;36.0.0
             ndk;28.2.13676358
       - name: Resolve locked packages
-        run: mise exec -C flutter -- flutter pub get --enforce-lockfile
+        run: cd flutter && flutter pub get --enforce-lockfile
       - name: Build APK
-        run: mise exec -C flutter -- flutter build apk --debug --no-pub --target-platform android-arm64
+        run: cd flutter && flutter build apk --debug --no-pub --target-platform android-arm64
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: zuko-flutter-android-${{ github.sha }}
@@ -100,7 +108,8 @@ jobs:
       - uses: jdx/mise-action@e6a8b3978addb5a52f2b4cd9d91eafa7f0ab959d # v4.2.0
         with:
           cache: true
-          install_args: flutter rust just
+          install_args: rust just
+      - uses: ./.github/actions/setup-flutter
       - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
         with:
           key: flutter-linux
@@ -127,7 +136,8 @@ jobs:
       - uses: jdx/mise-action@e6a8b3978addb5a52f2b4cd9d91eafa7f0ab959d # v4.2.0
         with:
           cache: true
-          install_args: flutter rust
+          install_args: rust
+      - uses: ./.github/actions/setup-flutter
       - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
         with:
           key: flutter-windows
@@ -136,15 +146,14 @@ jobs:
         run: |
           $ErrorActionPreference = "Stop"
           $PSNativeCommandUseErrorActionPreference = $true
-          $flutter = Join-Path (mise where flutter) "bin/flutter.bat"
           $rustBin = Join-Path (mise where rust) "bin"
           $env:Path = "$rustBin;$env:Path"
           Push-Location flutter
-          & $flutter pub get --enforce-lockfile
+          flutter pub get --enforce-lockfile
           Pop-Location
           python scripts/patch-iroh-flutter.py flutter
           Push-Location flutter
-          & $flutter build windows --release --no-pub
+          flutter build windows --release --no-pub
           Pop-Location
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: ${{ github.event_name != 'pull_request' }}
@@ -172,7 +181,8 @@ jobs:
       - uses: jdx/mise-action@e6a8b3978addb5a52f2b4cd9d91eafa7f0ab959d # v4.2.0
         with:
           cache: true
-          install_args: flutter rust
+          install_args: rust
+      - uses: ./.github/actions/setup-flutter
       - uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
         with:
           path: ~/.pub-cache
@@ -181,11 +191,11 @@ jobs:
         with:
           key: flutter-apple
       - name: Resolve locked packages
-        run: mise exec -C flutter -- flutter pub get --enforce-lockfile
+        run: cd flutter && flutter pub get --enforce-lockfile
       - name: Build iOS Simulator client
-        run: mise exec -C flutter -- flutter build ios --simulator --debug --no-pub
+        run: cd flutter && flutter build ios --simulator --debug --no-pub
       - name: Build macOS client
-        run: mise exec -C flutter -- flutter build macos --release --no-pub
+        run: cd flutter && flutter build macos --release --no-pub
       - name: Package Apple clients
         if: ${{ github.event_name != 'pull_request' }}
         run: |

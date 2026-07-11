@@ -119,7 +119,7 @@ jobs:
         if: ${{ matrix.cross }}
         run: |
           sudo apt-get update
-          mise bootstrap packages install --yes
+          mise bootstrap packages apply --yes apt:gcc-aarch64-linux-gnu
           echo "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc" >> "$GITHUB_ENV"
 
       - name: Build release (target = ${{ matrix.target }})
@@ -200,7 +200,9 @@ jobs:
         with:
           cache: true
           cache_save: ${{ github.event_name == 'workflow_dispatch' }}
-          install_args: flutter rust just
+          install_args: rust just
+
+      - uses: ./.github/actions/setup-flutter
 
       - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
         with:
@@ -315,7 +317,9 @@ jobs:
         with:
           cache: true
           cache_save: ${{ github.event_name == 'workflow_dispatch' }}
-          install_args: flutter rust
+          install_args: rust
+
+      - uses: ./.github/actions/setup-flutter
 
       - uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
         with:
@@ -333,9 +337,10 @@ jobs:
         run: |
           set -euo pipefail
           version="${TAG#v}"
-          mise exec -C flutter -- flutter pub get --enforce-lockfile
-          mise exec -C flutter -- flutter build ios --simulator --debug --no-pub \
+          (cd flutter && flutter pub get --enforce-lockfile)
+          (cd flutter && flutter build ios --simulator --debug --no-pub \
             --build-name "$version"
+          )
 
       - name: Package and validate Appetize client
         id: package
@@ -388,21 +393,23 @@ jobs:
         with:
           cache: true
           cache_save: ${{ github.event_name == 'workflow_dispatch' }}
-          install_args: flutter rust
+          install_args: rust
+
+      - uses: ./.github/actions/setup-flutter
 
       - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
         with:
           key: flutter-linux-release
           save-if: ${{ github.event_name == 'workflow_dispatch' }}
 
-      - name: Expose Freedesktop SDK compilers to Flutter
+      - name: Install pinned LLVM toolchain
         run: |
           set -euo pipefail
-          # Flutter hard-codes these executable names. CMake identifies the
-          # pinned SDK image's compilers as GNU and configures them accordingly.
-          ln -s /usr/bin/gcc /app/bin/clang
-          ln -s /usr/bin/g++ /app/bin/clang++
+          bash scripts/install-flatpak-llvm.sh /opt/llvm
+          echo /opt/llvm/bin >> "$GITHUB_PATH"
+          export PATH="/opt/llvm/bin:$PATH"
           dbus-uuidgen --ensure=/etc/machine-id
+          clang --version
           clang++ --version
 
       - name: Build locked Flutter Linux client
@@ -413,9 +420,9 @@ jobs:
           SOURCE_DATE_EPOCH="$(git show -s --format=%ct "$RELEASE_SHA")"
           export SOURCE_DATE_EPOCH
           export TZ=UTC LC_ALL=C.UTF-8
-          mise exec -C flutter -- flutter pub get --enforce-lockfile
+          (cd flutter && flutter pub get --enforce-lockfile)
           python3 scripts/patch-iroh-flutter.py flutter
-          mise exec -C flutter -- flutter build linux --release --no-pub
+          (cd flutter && flutter build linux --release --no-pub)
 
       - name: Package and smoke-test Flatpak offline
         env:
@@ -425,6 +432,30 @@ jobs:
           set -euo pipefail
           SOURCE_DATE_EPOCH="$(git show -s --format=%ct "$RELEASE_SHA")"
           export SOURCE_DATE_EPOCH
+          # Keep recovery dispatches reproducible when a tagged source checkout
+          # predates the AppStream metadata bump. Future tags are gated by
+          # check-release-metadata.py before this point.
+          python3 - "$TAG" "$SOURCE_DATE_EPOCH" <<'PY'
+          import datetime
+          import pathlib
+          import sys
+          import xml.etree.ElementTree as ET
+
+          path = pathlib.Path("flatpak/dev.adonm.zuko.metainfo.xml")
+          tree = ET.parse(path)
+          release = tree.getroot().find("releases/release")
+          if release is None:
+              raise SystemExit("Flatpak metainfo has no release entry")
+          release.set("version", sys.argv[1].removeprefix("v"))
+          release.set(
+              "date",
+              datetime.datetime.fromtimestamp(
+                  int(sys.argv[2]), datetime.timezone.utc
+              ).date().isoformat(),
+          )
+          ET.indent(tree, space="  ")
+          tree.write(path, encoding="UTF-8", xml_declaration=True)
+          PY
           dbus-run-session -- bash scripts/package-flatpak.sh "$TAG"
 
       - name: Upload Linux Flatpak release asset
@@ -451,7 +482,9 @@ jobs:
         with:
           cache: true
           cache_save: ${{ github.event_name == 'workflow_dispatch' }}
-          install_args: flutter rust
+          install_args: rust
+
+      - uses: ./.github/actions/setup-flutter
 
       - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
         with:
@@ -465,15 +498,14 @@ jobs:
         run: |
           $ErrorActionPreference = "Stop"
           $PSNativeCommandUseErrorActionPreference = $true
-          $flutter = Join-Path (mise where flutter) "bin/flutter.bat"
           $rustBin = Join-Path (mise where rust) "bin"
           $env:Path = "$rustBin;$env:Path"
           Push-Location flutter
-          & $flutter pub get --enforce-lockfile
+          flutter pub get --enforce-lockfile
           Pop-Location
           python scripts/patch-iroh-flutter.py flutter
           Push-Location flutter
-          & $flutter build windows --release --no-pub
+          flutter build windows --release --no-pub
           Pop-Location
           New-Item -ItemType Directory -Force dist/windows | Out-Null
           $archive = "dist/windows/zuko-windows-$env:TAG-x86_64.zip"

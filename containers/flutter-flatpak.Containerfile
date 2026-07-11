@@ -21,14 +21,14 @@ ENV MISE_DATA_DIR=/opt/mise/data \
     PUB_CACHE=/var/cache/zuko/pub \
     CI=true \
     FLUTTER_SUPPRESS_ANALYTICS=true \
-    PATH=/app/bin:/opt/mise/data/shims:/usr/bin:/bin
+    TAR_OPTIONS=--no-same-owner \
+    PATH=/app/llvm/bin:/app/bin:/opt/mise/data/shims:/usr/bin:/bin
+
+COPY scripts/install-flatpak-llvm.sh /app/bin/install-flatpak-llvm
 
 RUN set -eux; \
-    # Flutter hard-codes clang/clang++ for Linux CMake builds. The pinned \
-    # Freedesktop SDK image provides GCC instead; CMake still identifies and \
-    # configures the compiler as GNU when reached through these names. \
-    ln -s /usr/bin/gcc /app/bin/clang; \
-    ln -s /usr/bin/g++ /app/bin/clang++; \
+    chmod 0755 /app/bin/install-flatpak-llvm; \
+    /app/bin/install-flatpak-llvm /app/llvm; \
     dbus-uuidgen --ensure=/etc/machine-id
 
 COPY mise.toml /opt/zuko/mise.toml
@@ -36,7 +36,7 @@ COPY mise.toml /opt/zuko/mise.toml
 RUN set -eux; \
     cd /opt/zuko; \
     mise trust mise.toml; \
-    mise install flutter rust just; \
+    mise install rust just http:flutter; \
     mise exec -- flutter --version; \
     mise exec -- rustc --version; \
     mise exec -- just --version

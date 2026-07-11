@@ -6,12 +6,12 @@ from the repository root unless noted.
 
 ## Common setup
 
-Install [mise](https://mise.jdx.dev/getting-started.html), then install the
-repository-managed Rust and Flutter toolchains:
+Install [mise](https://mise.jdx.dev/getting-started.html), then bootstrap the
+repository-managed tools, Linux OS packages, and shell activation:
 
 ```sh
 git submodule update --init --recursive
-mise install
+mise bootstrap
 just flutter-check
 ```
 
@@ -19,9 +19,9 @@ The shared client pins the focused `adonm/flterm` fork as a Git submodule.
 Clone with `--recurse-submodules` or run the update command above before any
 Flutter build.
 
-Flutter is pinned to 3.44.6. Rust and several contributor tools track their
-configured mise channels, so `mise install` is the supported entry point rather
-than a claim that every tool is version-locked.
+Flutter is installed by mise from the official checksum-pinned
+`3.46.0-0.3.pre` beta archives at revision
+`677d472756f83c14371dd8cc624387065f3d32a7`, so the Impeller APIs cannot drift.
 
 ## Android
 
@@ -73,7 +73,8 @@ while terminal payloads remain end-to-end encrypted.
 
 ## Linux desktop
 
-Install the build dependencies on Debian/Ubuntu:
+`mise bootstrap` installs the configured dependencies on Debian/Ubuntu,
+Fedora, and Arch. The equivalent Debian/Ubuntu command is:
 
 ```sh
 sudo apt-get update
@@ -88,9 +89,10 @@ Output and run command:
 flutter/build/linux/x64/release/bundle/zuko
 ```
 
-Keep the complete `bundle/` directory together. Runtime machines need GTK 3,
-libsecret, and an active Secret Service provider such as GNOME Keyring; see the
-[packaged Linux notes](../flutter/linux/README.md).
+Keep the complete `bundle/` directory together. The supported packaged target
+is Wayland with Impeller/OpenGL; runtime machines also need GTK 3, libsecret,
+and an active Secret Service provider such as GNOME Keyring. See the [packaged
+Linux notes](../flutter/linux/README.md).
 
 ## Windows desktop
 
@@ -99,17 +101,17 @@ with C++** workload. Confirm `flutter doctor -v` passes. The repository Justfile
 uses Bash, so native Windows CI uses this PowerShell sequence instead:
 
 ```powershell
-mise install flutter rust
-$flutter = Join-Path (mise where flutter) "bin\flutter.bat"
+mise install rust http:flutter
+mise exec -- flutter --version
 $rustBin = Join-Path (mise where rust) "bin"
 $env:Path = "$rustBin;$env:Path"
 
 Push-Location flutter
-& $flutter pub get
+mise exec -- flutter pub get
 Pop-Location
 python scripts/patch-iroh-flutter.py flutter
 Push-Location flutter
-& $flutter build windows --release
+mise exec -- flutter build windows --release
 Pop-Location
 ```
 
@@ -124,7 +126,8 @@ build compiles `iroh_flutter`'s Rust library and packages `libghostty` for the
 selected Apple platform. The generated runners target iOS 18 and macOS 15.
 
 ```sh
-mise install flutter rust
+mise bootstrap
+mise exec -- flutter --version
 just build-flutter-ios
 just build-flutter-macos
 ```

@@ -31,10 +31,10 @@ the platform guides provide deeper operational detail.
 ## Cut a release
 
 ```sh
-mise install
+mise bootstrap
 just check
 just test-e2e
-just release v0.9.9
+just release v0.9.10
 ```
 
 `scripts/release.sh` validates the version, commits requested pending work,

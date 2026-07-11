@@ -206,7 +206,7 @@ If the link is wedged, use the CLI force-exit sequence and reconnect.
 ## Build/test
 
 ```sh
-mise install
+mise bootstrap
 just test
 just test-e2e
 ```

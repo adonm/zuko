@@ -161,8 +161,13 @@ jobs:
         with:
           cache: true
           cache_save: false
-          install_args: flutter rust
+          install_args: rust
           working_directory: release-source
+
+      - uses: ./.github/actions/setup-flutter
+        if: ${{ inputs.artifact_source == 'rebuild' }}
+        with:
+          working-directory: release-source
 
       - name: Set up Java 17
         if: ${{ inputs.artifact_source == 'rebuild' }}
@@ -197,8 +202,8 @@ jobs:
         run: |
           set -euo pipefail
           pushd release-source/flutter >/dev/null
-          mise exec -- flutter pub get --enforce-lockfile
-          mise exec -- flutter build appbundle \
+          flutter pub get --enforce-lockfile
+          flutter build appbundle \
             --release \
             --no-pub \
             --build-name "$VERSION" \

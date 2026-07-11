@@ -21,6 +21,27 @@ case "${1:-}" in
     where) [ -f "${MISE_TEST_INSTALLED:?}" ] ;;
     use) touch "${MISE_TEST_INSTALLED:?}" ;;
     upgrade) exit 0 ;;
+    trust) exit 0 ;;
+    bootstrap)
+        config_dir=
+        while [ "$#" -gt 0 ]; do
+            if [ "$1" = -C ]; then
+                config_dir=$2
+                break
+            fi
+            shift
+        done
+        [ -n "$config_dir" ]
+        if grep -Fq 'bashrc = "activate"' "$config_dir/mise.toml"; then
+            rc_file="$HOME/.bashrc"
+            if ! grep -Fq '# >>> mise:activate >>>' "$rc_file" 2>/dev/null; then
+                printf '%s\n' \
+                    '# >>> mise:activate >>> managed by mise - do not edit between markers' \
+                    'eval "$(mise activate bash)"' \
+                    '# <<< mise:activate <<<' >> "$rc_file"
+            fi
+        fi
+        ;;
     exec)
         [ "${2:-}" = -- ]
         [ "${3:-}" = zuko ]
@@ -77,6 +98,8 @@ if grep -Fq 'upgrade github:adonm/zuko' "$WORK/mise.log"; then
     exit 1
 fi
 grep -Fq 'exec -- zuko --version' "$WORK/mise.log"
+grep -Fq 'bootstrap --yes --only mise-shell-activate -C' "$WORK/mise.log"
+grep -Fq '# >>> mise:activate >>>' "$HOME_DIR/.bashrc"
 grep -Fq 'activate bash' "$HOME_DIR/.bashrc"
 bash -n "$HOME_DIR/.bashrc"
 grep -Fq 'Exit and relaunch your shell' "$WORK/output"

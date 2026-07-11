@@ -105,7 +105,7 @@ representative physical-device coverage remain open.
 |--------|--------------|
 | **Android** | Signed APK/AAB, Appetize preview, upgrade test, physical phone/tablet tests, Play-ready metadata |
 | **Web** | Chrome/Firefox/Safari tests, strict CSP, origin review, deployed `/web/` smoke test |
-| **Linux** | Reproducible Flatpak, Secret Service behavior, Wayland/X11 input tests, install/uninstall documentation |
+| **Linux** | Reproducible Wayland-only Flatpak, Impeller rendering, Secret Service behavior, install/uninstall documentation |
 | **Windows** | Signed installer, Credential Manager behavior, URI registration, upgrade/uninstall tests |
 | **iOS/iPadOS** | Signed TestFlight build, physical-device Iroh/terminal/lifecycle tests, replacement migration decision |
 | **macOS** | Signed/notarized package, Keychain behavior, keyboard/accessibility and upgrade tests |

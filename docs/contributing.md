@@ -7,7 +7,7 @@ kept for compatibility, but new commands and documentation should prefer
 
 ```sh
 git submodule update --init --recursive
-mise install
+mise bootstrap          # OS packages + shell activation + pinned tools
 just                 # grouped recipe list
 just check           # Rust + Flutter + release metadata
 just test            # Rust clippy + unit tests

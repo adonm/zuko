@@ -11,6 +11,7 @@ flatpak --user install ./zuko-linux-vX.Y.Z-x86_64.flatpak
 flatpak run dev.adonm.zuko
 ```
 
-Wayland is preferred with fallback X11 support. See
+The packaged client requires Wayland and uses Flutter's Impeller/OpenGL
+renderer. X11 sockets are intentionally not exposed. See
 [`../../flatpak/README.md`](../../flatpak/README.md) for build, validation,
 permission, and smoke-test details.

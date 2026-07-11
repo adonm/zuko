@@ -1,6 +1,8 @@
 import 'dart:async';
 
 import 'package:flterm/flterm.dart';
+import 'package:flutter/foundation.dart'
+    show TargetPlatform, defaultTargetPlatform, kIsWeb;
 import 'package:flutter/material.dart' hide Key;
 import 'package:flutter/services.dart';
 import 'package:libghostty/libghostty.dart' show pasteIsSafe;
@@ -8,16 +10,29 @@ import 'package:libghostty/libghostty.dart' show pasteIsSafe;
 import 'app_controller.dart';
 import 'model.dart';
 import 'session_state.dart';
+import 'theme.dart';
 import 'transport.dart';
 import 'wire.dart';
 
-const _background = Color(0xff080b10);
-const _orange = Color(0xffef7d3c);
-const _mint = Color(0xff75c7b7);
 const _installCommand =
     "curl --proto '=https' --tlsv1.2 -LsSf "
     'https://zuko.adonm.dev/install.sh | sh';
 const _shareCommand = 'zuko install\nzuko share';
+const _wideLayoutBreakpoint = 760.0;
+
+bool usesIntegratedDesktopHeader({
+  required double width,
+  required TargetPlatform platform,
+  required bool isWeb,
+}) =>
+    width >= _wideLayoutBreakpoint &&
+    !isWeb &&
+    switch (platform) {
+      TargetPlatform.linux ||
+      TargetPlatform.macOS ||
+      TargetPlatform.windows => true,
+      _ => false,
+    };
 
 class ZukoApp extends StatelessWidget {
   const ZukoApp({super.key, required this.controller});
@@ -27,30 +42,17 @@ class ZukoApp extends StatelessWidget {
   Widget build(BuildContext context) => AnimatedBuilder(
     animation: controller,
     builder: (context, _) => MaterialApp(
-      title: 'zuko',
+      title: 'Zuko',
       debugShowCheckedModeBanner: false,
       themeMode: switch (controller.theme) {
         AppThemePreference.system => ThemeMode.system,
         AppThemePreference.dark => ThemeMode.dark,
         AppThemePreference.light => ThemeMode.light,
       },
-      theme: _theme(Brightness.light),
-      darkTheme: _theme(Brightness.dark),
+      theme: buildZukoTheme(Brightness.light),
+      darkTheme: buildZukoTheme(Brightness.dark),
       home: _Home(controller: controller),
     ),
-  );
-}
-
-ThemeData _theme(Brightness brightness) {
-  final dark = brightness == Brightness.dark;
-  return ThemeData(
-    brightness: brightness,
-    colorScheme: ColorScheme.fromSeed(
-      seedColor: _orange,
-      brightness: brightness,
-    ),
-    scaffoldBackgroundColor: dark ? _background : const Color(0xfff4f1ed),
-    useMaterial3: true,
   );
 }
 
@@ -74,6 +76,7 @@ class _HomeState extends State<_Home> with WidgetsBindingObserver {
   TerminalGeometry geometry = const TerminalGeometry(80, 24, 0, 0);
   DateTime? _backgroundedAt;
   int _sessionGeneration = 0;
+  bool _sidebarExpanded = true;
 
   @override
   void initState() {
@@ -87,7 +90,7 @@ class _HomeState extends State<_Home> with WidgetsBindingObserver {
     };
     terminal.write(
       Uint8List.fromList(
-        '\x1b[1;38;2;239;125;60mzuko\x1b[0m ready\r\n'.codeUnits,
+        '\x1b[1;38;2;197;64;74mzuko\x1b[0m ready\r\n'.codeUnits,
       ),
     );
   }
@@ -253,11 +256,21 @@ class _HomeState extends State<_Home> with WidgetsBindingObserver {
     await widget.controller.remove(host);
   }
 
+  void _toggleSidebar() {
+    setState(() => _sidebarExpanded = !_sidebarExpanded);
+  }
+
   @override
   Widget build(BuildContext context) => AnimatedBuilder(
     animation: widget.controller,
     builder: (context, _) {
-      final wide = MediaQuery.sizeOf(context).width >= 760;
+      final width = MediaQuery.sizeOf(context).width;
+      final wide = width >= _wideLayoutBreakpoint;
+      final integratedDesktopHeader = usesIntegratedDesktopHeader(
+        width: width,
+        platform: defaultTargetPlatform,
+        isWeb: kIsWeb,
+      );
       final sidebar = _Sidebar(
         controller: widget.controller,
         selected: selected,
@@ -267,33 +280,34 @@ class _HomeState extends State<_Home> with WidgetsBindingObserver {
         onDisconnect: _disconnect,
         onForget: _forget,
       );
-      final terminalTheme =
-          (Theme.of(context).brightness == Brightness.dark
-                  ? TerminalTheme.dark()
-                  : TerminalTheme.light())
-              .copyWith(
-                fontFamily: 'JetBrains Mono',
-                fontFamilyFallback: const [
-                  'Noto Sans Mono',
-                  'Noto Emoji',
-                  'Noto Sans Symbols 2',
-                ],
-                fontSize: widget.controller.terminalFontSize,
-              );
+      final terminalTheme = buildZukoTerminalTheme(
+        brightness: Theme.of(context).brightness,
+        fontSize: widget.controller.terminalFontSize,
+      );
       final selectedHost = selected;
       return Scaffold(
-        appBar: AppBar(
-          leading: Padding(
-            padding: const EdgeInsets.all(10),
-            child: Image.asset('assets/zuko-logo.png'),
-          ),
-          title: const Text('zuko'),
-          foregroundColor: _orange,
-        ),
+        appBar: integratedDesktopHeader
+            ? null
+            : AppBar(
+                title: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Image.asset('assets/zuko-logo.png', width: 28, height: 28),
+                    const SizedBox(width: 10),
+                    const Text('Zuko'),
+                  ],
+                ),
+              ),
         drawer: wide ? null : Drawer(child: SafeArea(child: sidebar)),
         body: Row(
           children: [
-            if (wide) SizedBox(width: 300, child: sidebar),
+            if (wide)
+              _DesktopSidebar(
+                expanded: _sidebarExpanded,
+                onToggle: _toggleSidebar,
+                onPair: _pair,
+                child: sidebar,
+              ),
             if (wide) const VerticalDivider(width: 1),
             Expanded(
               child: Column(
@@ -337,6 +351,83 @@ class _HomeState extends State<_Home> with WidgetsBindingObserver {
   );
 }
 
+class _DesktopSidebar extends StatelessWidget {
+  const _DesktopSidebar({
+    required this.expanded,
+    required this.onToggle,
+    required this.onPair,
+    required this.child,
+  });
+
+  final bool expanded;
+  final VoidCallback onToggle;
+  final VoidCallback onPair;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) => AnimatedSize(
+    duration: const Duration(milliseconds: 200),
+    curve: Curves.easeOutCubic,
+    alignment: Alignment.centerLeft,
+    child: SizedBox(
+      width: expanded ? 300 : 56,
+      child: ColoredBox(
+        color: Theme.of(context).colorScheme.surfaceContainerLow,
+        child: expanded
+            ? Column(
+                children: [
+                  SizedBox(
+                    height: 52,
+                    child: Padding(
+                      padding: const EdgeInsetsDirectional.only(
+                        start: 16,
+                        end: 6,
+                      ),
+                      child: Row(
+                        children: [
+                          Expanded(
+                            child: Text(
+                              'Connections',
+                              style: Theme.of(context).textTheme.titleSmall,
+                            ),
+                          ),
+                          IconButton(
+                            onPressed: onToggle,
+                            tooltip: 'Collapse sidebar',
+                            icon: const Icon(Icons.chevron_left),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                  const Divider(height: 1),
+                  Expanded(child: child),
+                ],
+              )
+            : Column(
+                children: [
+                  SizedBox(
+                    height: 52,
+                    child: IconButton(
+                      onPressed: onToggle,
+                      tooltip: 'Expand sidebar',
+                      icon: const Icon(Icons.chevron_right),
+                    ),
+                  ),
+                  const Divider(height: 1),
+                  const SizedBox(height: 6),
+                  IconButton(
+                    onPressed: onPair,
+                    tooltip: 'Pair a new host',
+                    icon: const Icon(Icons.add_link),
+                  ),
+                ],
+              ),
+      ),
+    ),
+  );
+}
+
 class _SessionOverlay extends StatelessWidget {
   const _SessionOverlay({
     required this.state,
@@ -354,7 +445,7 @@ class _SessionOverlay extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => ColoredBox(
-    color: Colors.black.withValues(alpha: 0.58),
+    color: Theme.of(context).colorScheme.scrim.withValues(alpha: 0.62),
     child: Center(
       child: ConstrainedBox(
         constraints: const BoxConstraints(maxWidth: 420),
@@ -483,93 +574,101 @@ class _TerminalAccessory extends StatelessWidget {
   @override
   Widget build(BuildContext context) => AnimatedBuilder(
     animation: controller,
-    builder: (context, _) => Material(
-      color: Theme.of(context).colorScheme.surfaceContainer,
-      child: SafeArea(
-        top: false,
-        child: SizedBox(
-          height: 48,
-          child: ListView(
-            scrollDirection: Axis.horizontal,
-            padding: const EdgeInsets.symmetric(horizontal: 4),
-            children: [
-              _AccessoryKey(
-                label: 'Esc',
-                onPressed: () => controller.sendKey(Key.escape),
+    builder: (context, _) {
+      final colors = Theme.of(context).colorScheme;
+      return Material(
+        color: colors.surfaceContainerHigh,
+        child: DecoratedBox(
+          decoration: BoxDecoration(
+            border: Border(top: BorderSide(color: colors.outlineVariant)),
+          ),
+          child: SafeArea(
+            top: false,
+            child: SizedBox(
+              height: 48,
+              child: ListView(
+                scrollDirection: Axis.horizontal,
+                padding: const EdgeInsets.symmetric(horizontal: 4),
+                children: [
+                  _AccessoryKey(
+                    label: 'Esc',
+                    onPressed: () => controller.sendKey(Key.escape),
+                  ),
+                  _AccessoryKey(
+                    label: 'Tab',
+                    onPressed: () => controller.sendKey(Key.tab),
+                  ),
+                  if (showAdditionalKeys) ...[
+                    _AccessoryKey(
+                      label: 'Ctrl',
+                      selected: controller.virtualMods.hasCtrl,
+                      onPressed: () => controller.toggleMod(const Mods.ctrl()),
+                    ),
+                    _AccessoryKey(
+                      label: 'Alt',
+                      selected: controller.virtualMods.hasAlt,
+                      onPressed: () => controller.toggleMod(const Mods.alt()),
+                    ),
+                    _AccessoryIcon(
+                      tooltip: 'Left',
+                      icon: Icons.arrow_left,
+                      onPressed: () => controller.sendKey(Key.arrowLeft),
+                    ),
+                    _AccessoryIcon(
+                      tooltip: 'Up',
+                      icon: Icons.arrow_drop_up,
+                      onPressed: () => controller.sendKey(Key.arrowUp),
+                    ),
+                    _AccessoryIcon(
+                      tooltip: 'Down',
+                      icon: Icons.arrow_drop_down,
+                      onPressed: () => controller.sendKey(Key.arrowDown),
+                    ),
+                    _AccessoryIcon(
+                      tooltip: 'Right',
+                      icon: Icons.arrow_right,
+                      onPressed: () => controller.sendKey(Key.arrowRight),
+                    ),
+                  ],
+                  _AccessoryIcon(
+                    tooltip: controller.keyboardState == KeyboardState.showing
+                        ? 'Hide keyboard'
+                        : 'Show keyboard',
+                    icon: controller.keyboardState == KeyboardState.showing
+                        ? Icons.keyboard_hide
+                        : Icons.keyboard,
+                    onPressed: () {
+                      if (controller.keyboardState == KeyboardState.showing) {
+                        controller.disableKeyboard();
+                      } else {
+                        controller.showKeyboard();
+                      }
+                    },
+                  ),
+                  _AccessoryIcon(
+                    tooltip: 'Select all terminal text',
+                    icon: Icons.select_all,
+                    onPressed: controller.selectAll,
+                  ),
+                  _AccessoryIcon(
+                    tooltip: 'Copy selected text',
+                    icon: Icons.copy,
+                    onPressed: controller.hasSelection
+                        ? () => _copy(context)
+                        : null,
+                  ),
+                  _AccessoryIcon(
+                    tooltip: 'Paste',
+                    icon: Icons.content_paste,
+                    onPressed: () => _paste(context),
+                  ),
+                ],
               ),
-              _AccessoryKey(
-                label: 'Tab',
-                onPressed: () => controller.sendKey(Key.tab),
-              ),
-              if (showAdditionalKeys) ...[
-                _AccessoryKey(
-                  label: 'Ctrl',
-                  selected: controller.virtualMods.hasCtrl,
-                  onPressed: () => controller.toggleMod(const Mods.ctrl()),
-                ),
-                _AccessoryKey(
-                  label: 'Alt',
-                  selected: controller.virtualMods.hasAlt,
-                  onPressed: () => controller.toggleMod(const Mods.alt()),
-                ),
-                _AccessoryIcon(
-                  tooltip: 'Left',
-                  icon: Icons.arrow_left,
-                  onPressed: () => controller.sendKey(Key.arrowLeft),
-                ),
-                _AccessoryIcon(
-                  tooltip: 'Up',
-                  icon: Icons.arrow_drop_up,
-                  onPressed: () => controller.sendKey(Key.arrowUp),
-                ),
-                _AccessoryIcon(
-                  tooltip: 'Down',
-                  icon: Icons.arrow_drop_down,
-                  onPressed: () => controller.sendKey(Key.arrowDown),
-                ),
-                _AccessoryIcon(
-                  tooltip: 'Right',
-                  icon: Icons.arrow_right,
-                  onPressed: () => controller.sendKey(Key.arrowRight),
-                ),
-              ],
-              _AccessoryIcon(
-                tooltip: controller.keyboardState == KeyboardState.showing
-                    ? 'Hide keyboard'
-                    : 'Show keyboard',
-                icon: controller.keyboardState == KeyboardState.showing
-                    ? Icons.keyboard_hide
-                    : Icons.keyboard,
-                onPressed: () {
-                  if (controller.keyboardState == KeyboardState.showing) {
-                    controller.disableKeyboard();
-                  } else {
-                    controller.showKeyboard();
-                  }
-                },
-              ),
-              _AccessoryIcon(
-                tooltip: 'Select all terminal text',
-                icon: Icons.select_all,
-                onPressed: controller.selectAll,
-              ),
-              _AccessoryIcon(
-                tooltip: 'Copy selected text',
-                icon: Icons.copy,
-                onPressed: controller.hasSelection
-                    ? () => _copy(context)
-                    : null,
-              ),
-              _AccessoryIcon(
-                tooltip: 'Paste',
-                icon: Icons.content_paste,
-                onPressed: () => _paste(context),
-              ),
-            ],
+            ),
           ),
         ),
-      ),
-    ),
+      );
+    },
   );
 }
 
@@ -590,6 +689,9 @@ class _AccessoryKey extends StatelessWidget {
       style: TextButton.styleFrom(
         backgroundColor: selected
             ? Theme.of(context).colorScheme.primaryContainer
+            : null,
+        foregroundColor: selected
+            ? Theme.of(context).colorScheme.onPrimaryContainer
             : null,
         minimumSize: const Size(44, 36),
         padding: const EdgeInsets.symmetric(horizontal: 10),
@@ -742,132 +844,214 @@ class _Sidebar extends StatelessWidget {
   }
 
   @override
-  Widget build(BuildContext context) => ColoredBox(
-    color: Theme.of(context).colorScheme.surfaceContainerLow,
+  Widget build(BuildContext context) => DecoratedBox(
+    decoration: BoxDecoration(
+      color: Theme.of(context).colorScheme.surfaceContainerLow,
+    ),
     child: ListView(
-      padding: const EdgeInsets.all(16),
+      padding: const EdgeInsets.all(12),
       children: [
+        const SizedBox(height: 2),
         FilledButton.icon(
           onPressed: controller.busy ? null : onPair,
           icon: const Icon(Icons.add_link),
           label: const Text('Pair host'),
         ),
-        const SizedBox(height: 20),
-        Text(
-          'SAVED HOSTS',
-          style: Theme.of(context).textTheme.labelSmall?.copyWith(color: _mint),
-        ),
+        const SizedBox(height: 18),
+        const _SectionLabel('Saved hosts'),
         const SizedBox(height: 8),
         if (controller.hosts.isEmpty)
           _Onboarding(onCopy: (value) => _copy(context, value)),
-        for (final host in controller.hosts)
-          ListTile(
-            selected: host.nodeId == selected?.nodeId,
-            contentPadding: EdgeInsets.zero,
-            title: Text(host.name),
-            subtitle: Text(
-              host.label,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-            ),
-            onTap: () => onConnect(host),
-            trailing: PopupMenuButton<String>(
-              tooltip: 'Manage ${host.name}',
-              onSelected: (action) {
-                switch (action) {
-                  case 'details':
-                    unawaited(_details(context, host));
-                  case 'rename':
-                    unawaited(_rename(context, host));
-                  case 'forget':
-                    unawaited(_confirmForget(context, host));
-                }
-              },
-              itemBuilder: (context) => const [
-                PopupMenuItem(value: 'details', child: Text('Details')),
-                PopupMenuItem(value: 'rename', child: Text('Rename')),
-                PopupMenuItem(value: 'forget', child: Text('Forget')),
+        if (controller.hosts.isNotEmpty)
+          Card(
+            child: Column(
+              children: [
+                for (
+                  var index = 0;
+                  index < controller.hosts.length;
+                  index++
+                ) ...[
+                  ListTile(
+                    selected:
+                        controller.hosts[index].nodeId == selected?.nodeId,
+                    leading: const Icon(Icons.computer_outlined),
+                    title: Text(controller.hosts[index].name),
+                    subtitle: Text(
+                      controller.hosts[index].label,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                    onTap: () => onConnect(controller.hosts[index]),
+                    trailing: PopupMenuButton<String>(
+                      tooltip: 'Manage ${controller.hosts[index].name}',
+                      onSelected: (action) {
+                        final host = controller.hosts[index];
+                        switch (action) {
+                          case 'details':
+                            unawaited(_details(context, host));
+                          case 'rename':
+                            unawaited(_rename(context, host));
+                          case 'forget':
+                            unawaited(_confirmForget(context, host));
+                        }
+                      },
+                      itemBuilder: (context) => const [
+                        PopupMenuItem(value: 'details', child: Text('Details')),
+                        PopupMenuItem(value: 'rename', child: Text('Rename')),
+                        PopupMenuItem(value: 'forget', child: Text('Forget')),
+                      ],
+                    ),
+                  ),
+                  if (index != controller.hosts.length - 1)
+                    const Divider(indent: 48),
+                ],
               ],
             ),
           ),
-        const Divider(height: 32),
-        Text(
-          'APPEARANCE',
-          style: Theme.of(context).textTheme.labelSmall?.copyWith(color: _mint),
-        ),
-        DropdownButton<AppThemePreference>(
-          isExpanded: true,
-          value: controller.theme,
-          onChanged: (value) {
-            if (value != null) unawaited(controller.setTheme(value));
-          },
-          items: const [
-            DropdownMenuItem(
-              value: AppThemePreference.system,
-              child: Text('System theme'),
-            ),
-            DropdownMenuItem(
-              value: AppThemePreference.dark,
-              child: Text('Dark theme'),
-            ),
-            DropdownMenuItem(
-              value: AppThemePreference.light,
-              child: Text('Light theme'),
-            ),
-          ],
-        ),
-        Row(
-          children: [
-            const Expanded(child: Text('Terminal text')),
-            IconButton(
-              tooltip: 'Decrease font size',
-              onPressed: controller.terminalFontSize <= 10
-                  ? null
-                  : () => unawaited(
-                      controller.setTerminalFontSize(
-                        controller.terminalFontSize - 1,
+        const SizedBox(height: 24),
+        const _SectionLabel('Appearance'),
+        const SizedBox(height: 8),
+        Card(
+          child: Column(
+            children: [
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 12),
+                child: Row(
+                  children: [
+                    const Icon(Icons.palette_outlined, size: 20),
+                    const SizedBox(width: 10),
+                    const Expanded(child: Text('Color scheme')),
+                    DropdownButtonHideUnderline(
+                      child: DropdownButton<AppThemePreference>(
+                        value: controller.theme,
+                        borderRadius: BorderRadius.circular(9),
+                        onChanged: (value) {
+                          if (value != null) {
+                            unawaited(controller.setTheme(value));
+                          }
+                        },
+                        items: const [
+                          DropdownMenuItem(
+                            value: AppThemePreference.system,
+                            child: Text('System'),
+                          ),
+                          DropdownMenuItem(
+                            value: AppThemePreference.dark,
+                            child: Text('Dark'),
+                          ),
+                          DropdownMenuItem(
+                            value: AppThemePreference.light,
+                            child: Text('Light'),
+                          ),
+                        ],
                       ),
                     ),
-              icon: const Icon(Icons.remove),
-            ),
-            Text('${controller.terminalFontSize.round()}'),
-            IconButton(
-              tooltip: 'Increase font size',
-              onPressed: controller.terminalFontSize >= 24
-                  ? null
-                  : () => unawaited(
-                      controller.setTerminalFontSize(
-                        controller.terminalFontSize + 1,
+                  ],
+                ),
+              ),
+              const Divider(indent: 42),
+              Padding(
+                padding: const EdgeInsets.only(left: 12),
+                child: Row(
+                  children: [
+                    const Icon(Icons.text_fields, size: 20),
+                    const SizedBox(width: 10),
+                    const Expanded(child: Text('Terminal text')),
+                    IconButton(
+                      tooltip: 'Decrease font size',
+                      onPressed: controller.terminalFontSize <= 10
+                          ? null
+                          : () => unawaited(
+                              controller.setTerminalFontSize(
+                                controller.terminalFontSize - 1,
+                              ),
+                            ),
+                      icon: const Icon(Icons.remove),
+                    ),
+                    SizedBox(
+                      width: 24,
+                      child: Text(
+                        '${controller.terminalFontSize.round()}',
+                        textAlign: TextAlign.center,
                       ),
                     ),
-              icon: const Icon(Icons.add),
-            ),
-          ],
+                    IconButton(
+                      tooltip: 'Increase font size',
+                      onPressed: controller.terminalFontSize >= 24
+                          ? null
+                          : () => unawaited(
+                              controller.setTerminalFontSize(
+                                controller.terminalFontSize + 1,
+                              ),
+                            ),
+                      icon: const Icon(Icons.add),
+                    ),
+                  ],
+                ),
+              ),
+              const Divider(indent: 42),
+              SwitchListTile(
+                secondary: const Icon(Icons.keyboard_alt_outlined, size: 20),
+                title: const Text('Additional terminal keys'),
+                subtitle: const Text('Show modifiers and arrows'),
+                value: controller.showAdditionalKeys,
+                onChanged: (value) =>
+                    unawaited(controller.setShowAdditionalKeys(value)),
+              ),
+            ],
+          ),
         ),
-        SwitchListTile(
-          contentPadding: EdgeInsets.zero,
-          title: const Text('Additional terminal keys'),
-          subtitle: const Text('Show modifiers and arrow keys'),
-          value: controller.showAdditionalKeys,
-          onChanged: (value) =>
-              unawaited(controller.setShowAdditionalKeys(value)),
-        ),
-        const Divider(height: 32),
-        Text(
-          selected == null ? controller.status : sessionState.message,
-          semanticsLabel:
+        const SizedBox(height: 24),
+        const _SectionLabel('Connection'),
+        const SizedBox(height: 8),
+        Semantics(
+          label:
               'Connection status: '
               '${selected == null ? controller.status : sessionState.message}',
+          child: Card(
+            child: ListTile(
+              leading: Icon(
+                selected == null
+                    ? Icons.info_outline
+                    : sessionState.isAttached
+                    ? Icons.link
+                    : Icons.link_off,
+              ),
+              title: Text(
+                selected == null ? controller.status : sessionState.message,
+              ),
+              subtitle: selected == null ? null : Text(selected!.name),
+            ),
+          ),
         ),
         if (selected != null) ...[
-          const SizedBox(height: 12),
+          const SizedBox(height: 10),
           OutlinedButton.icon(
             onPressed: onDisconnect,
             icon: const Icon(Icons.link_off),
             label: const Text('Disconnect'),
           ),
         ],
+        const SizedBox(height: 8),
       ],
+    ),
+  );
+}
+
+class _SectionLabel extends StatelessWidget {
+  const _SectionLabel(this.label);
+
+  final String label;
+
+  @override
+  Widget build(BuildContext context) => Padding(
+    padding: const EdgeInsets.symmetric(horizontal: 4),
+    child: Text(
+      label,
+      style: Theme.of(context).textTheme.labelMedium?.copyWith(
+        color: Theme.of(context).colorScheme.primary,
+        letterSpacing: 0.4,
+      ),
     ),
   );
 }

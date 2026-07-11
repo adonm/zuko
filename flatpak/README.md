@@ -16,8 +16,10 @@ This is a validated two-stage build. A fully offline Flatpak source manifest
 for Flutter would have to duplicate Flutter's pub, Cargo, and engine artifact
 resolvers. Instead:
 
-1. Flutter `3.44.6`, Rust `1.96.1`, `pubspec.lock`, and `Cargo.lock` produce the
-   Linux release bundle in the digest-pinned Freedesktop 25.08 SDK CI image.
+1. The official checksum-pinned Flutter `3.46.0-0.3.pre` beta archive in
+   `mise.toml`, Rust `1.96.1`, LLVM 20.1.8, `pubspec.lock`, and `Cargo.lock`
+   produce the Impeller Linux release bundle in the digest-pinned Freedesktop
+   25.08 SDK CI image.
 2. `scripts/package-flatpak.sh` hashes and normalizes that bundle, checks its
    native linkage, and imports only local files with `flatpak-builder
    --disable-download`. It then installs the result into a temporary user
@@ -97,13 +99,14 @@ Secret Service integration against the user's desktop:
 
 ```sh
 flatpak --user install --reinstall \
-  dist/linux/zuko-linux-v0.9.9-x86_64.flatpak
+  dist/linux/zuko-linux-v0.9.10-x86_64.flatpak
 flatpak run dev.adonm.zuko
 flatpak info --show-permissions dev.adonm.zuko
 (cd dist/linux && \
-  sha256sum --check zuko-linux-v0.9.9-x86_64.flatpak.sha256)
+  sha256sum --check zuko-linux-v0.9.10-x86_64.flatpak.sha256)
 ```
 
-The sandbox grants network access, native Wayland with fallback X11, DRI, and
-only the `org.freedesktop.secrets` session-bus name needed by libsecret. A host
-Secret Service provider such as GNOME Keyring or KWallet must be running.
+The sandbox grants network access, native Wayland, DRI, and only the
+`org.freedesktop.secrets` session-bus name needed by libsecret. X11 is not a
+supported package target. A host Secret Service provider such as GNOME Keyring
+or KWallet must be running.

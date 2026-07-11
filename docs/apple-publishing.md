@@ -9,7 +9,8 @@ separate, manual boundary:
   `lane=upload` starts a second job protected by the `apple-store` GitHub
   environment before validation and upload.
 
-Both workflows use Xcode 26.3, Flutter 3.44.6, Rust 1.96.1, Zig 0.15.2, and
+Both workflows use Xcode 26.3, the checksum-pinned Flutter `3.46.0-0.3.pre`
+beta archive in `mise.toml`, Rust 1.96.1, Zig 0.15.2, and
 bundle ID `dev.adonm.zuko`. The iOS workflow retains
 `scripts/prepare-libghostty-ios-static.py` before its device archive build.
 

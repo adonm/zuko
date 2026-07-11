@@ -68,7 +68,9 @@ jobs:
         uses: jdx/mise-action@e6a8b3978addb5a52f2b4cd9d91eafa7f0ab959d # v4.2.0
         with:
           cache: true
-          install_args: flutter rust just zig@0.15.2
+          install_args: rust just zig@0.15.2
+
+      - uses: ./.github/actions/setup-flutter
 
       - name: Set up Python 3.13.14
         uses: actions/setup-python@83679a892e2d95755f2dac6acb0bfd1e9ac5d548 # v6.1.0
@@ -92,7 +94,7 @@ jobs:
           key: flutter-ios-release
 
       - name: Resolve locked packages
-        run: mise exec -C flutter -- flutter pub get --enforce-lockfile
+        run: cd flutter && flutter pub get --enforce-lockfile
 
       - name: Analyze and test shared client
         run: mise run flutter-check
@@ -112,7 +114,8 @@ jobs:
       - name: Build signed Flutter IPA
         run: |
           set -euo pipefail
-          mise exec zig@0.15.2 -C flutter -- flutter build ipa \
+          cd flutter
+          mise exec zig@0.15.2 -- flutter build ipa \
             --release \
             --no-pub \
             --build-name "$ZUKO_VERSION" \

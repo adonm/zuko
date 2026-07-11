@@ -29,7 +29,8 @@ wasm-bindgen \
 
 cd "$CLIENT"
 rm -rf "$ROOT/target/book/web"
-mise exec -- flutter build web \
+mise exec -C "$CLIENT" -- flutter pub get --enforce-lockfile
+mise exec -C "$CLIENT" -- flutter build web \
   --release \
   --wasm \
   --no-web-resources-cdn \

@@ -7,6 +7,7 @@ import pathlib
 import re
 import sys
 import tomllib
+import xml.etree.ElementTree as ET
 
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
@@ -34,6 +35,11 @@ def main() -> None:
     expected_build = major * 1_000_000 + minor * 1_000 + patch
     if int(flutter_match.group(2)) != expected_build:
         fail(f"Flutter build number must be {expected_build} for Android upgrade continuity")
+
+    metainfo = ET.parse(ROOT / "flatpak/dev.adonm.zuko.metainfo.xml").getroot()
+    releases = metainfo.find("releases")
+    if releases is None or len(releases) == 0 or releases[0].attrib.get("version") != version:
+        fail(f"Flatpak's latest AppStream release must be {version}")
 
     print(f"release metadata: all package versions are {version}")
 

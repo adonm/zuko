@@ -9,7 +9,15 @@ MISE_TOOL_ID="github:adonm/zuko"
 MISE_INSTALLED=0
 ZUKO_INSTALLED=0
 NEEDS_RELAUNCH=0
+BOOTSTRAP_DIR=
 : "${HOME:?HOME is not set}"
+
+cleanup() {
+    if [ -n "$BOOTSTRAP_DIR" ]; then
+        rm -rf "$BOOTSTRAP_DIR"
+    fi
+}
+trap cleanup 0 HUP INT TERM
 
 say() {
     printf '%s\n' "$*"
@@ -32,24 +40,18 @@ find_mise() {
     fi
 }
 
-append_activation() {
+bootstrap_activation() {
     shell_path=${SHELL:-}
     shell_name=${shell_path##*/}
     case "$shell_name" in
         bash)
-            rc_file="$HOME/.bashrc"
-            line=$(printf 'eval "$("%s" activate bash)"' "$MISE_BIN")
-            marker='activate bash'
+            target=bashrc
             ;;
         zsh)
-            rc_file="${ZDOTDIR:-$HOME}/.zshrc"
-            line=$(printf 'eval "$("%s" activate zsh)"' "$MISE_BIN")
-            marker='activate zsh'
+            target=zshrc
             ;;
         fish)
-            rc_file="${XDG_CONFIG_HOME:-$HOME/.config}/fish/config.fish"
-            line=$(printf '"%s" activate fish | source' "$MISE_BIN")
-            marker='activate fish'
+            target=fish
             ;;
         *)
             say "Could not configure mise activation for ${shell_name:-unknown shell}."
@@ -58,13 +60,18 @@ append_activation() {
             ;;
     esac
 
-    rc_dir=${rc_file%/*}
-    [ "$rc_dir" = "$rc_file" ] || mkdir -p "$rc_dir"
-    if [ -f "$rc_file" ] && grep -Fq "$marker" "$rc_file"; then
-        return
-    fi
-    printf '\n# zuko installer: activate mise\n%s\n' "$line" >> "$rc_file"
-    say "Configured mise activation in $rc_file"
+    BOOTSTRAP_DIR=$(mktemp -d "${TMPDIR:-/tmp}/zuko-mise-bootstrap.XXXXXX")
+    printf '%s\n' \
+        '[settings]' \
+        'experimental = true' \
+        '' \
+        '[bootstrap.mise_shell_activate]' \
+        "$target = \"activate\"" > "$BOOTSTRAP_DIR/mise.toml"
+    "$MISE_BIN" trust --yes "$BOOTSTRAP_DIR/mise.toml"
+    "$MISE_BIN" bootstrap --yes --only mise-shell-activate -C "$BOOTSTRAP_DIR"
+    rm -rf "$BOOTSTRAP_DIR"
+    BOOTSTRAP_DIR=
+    say "Configured mise activation for $shell_name via mise bootstrap"
 }
 
 case "$(uname -s)" in
@@ -108,7 +115,7 @@ fi
 
 if [ -z "${MISE_SHELL:-}" ]; then
     NEEDS_RELAUNCH=1
-    append_activation
+    bootstrap_activation
 fi
 
 if "$MISE_BIN" where "$MISE_TOOL_ID" >/dev/null 2>&1; then
