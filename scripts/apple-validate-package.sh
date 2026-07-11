@@ -13,22 +13,43 @@ readonly EXPECTED_VERSION="$4"
 readonly EXPECTED_BUILD="${5:-}"
 readonly BUNDLE_ID=dev.adonm.zuko
 
+fail() {
+  echo "Apple package validation failed: $*" >&2
+  exit 1
+}
+
+require_directory() {
+  [ -d "$1" ] || fail "directory does not exist: $1"
+}
+
+require_file() {
+  [ -f "$1" ] || fail "file does not exist: $1"
+}
+
+require_equal() {
+  local description="$1"
+  local actual="$2"
+  local expected="$3"
+  [ "$actual" = "$expected" ] || \
+    fail "$description is '$actual', expected '$expected'"
+}
+
 validate_app() {
   local app="$1"
   local identifier version build executable signature_details team
-  test -d "$app"
+  require_directory "$app"
   identifier="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$app/Contents/Info.plist" 2>/dev/null || /usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$app/Info.plist")"
   version="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$app/Contents/Info.plist" 2>/dev/null || /usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$app/Info.plist")"
   build="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$app/Contents/Info.plist" 2>/dev/null || /usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$app/Info.plist")"
-  test "$identifier" = "$BUNDLE_ID"
-  test "$version" = "$EXPECTED_VERSION"
+  require_equal "bundle identifier" "$identifier" "$BUNDLE_ID"
+  require_equal "version" "$version" "$EXPECTED_VERSION"
   if [ -n "$EXPECTED_BUILD" ]; then
-    test "$build" = "$EXPECTED_BUILD"
+    require_equal "build number" "$build" "$EXPECTED_BUILD"
   fi
   codesign --verify --deep --strict --verbose=2 "$app"
   signature_details="$(codesign -d --verbose=4 "$app" 2>&1)"
   team="$(grep '^TeamIdentifier=' <<< "$signature_details" | cut -d= -f2-)"
-  test "$team" = "${TEAM_ID:?TEAM_ID is required}"
+  require_equal "signing team" "$team" "${TEAM_ID:?TEAM_ID is required}"
 
   if [ "$PLATFORM" = macos ]; then
     grep -Eq '^Authority=(3rd Party Mac Developer Application|Mac App Distribution):' <<< "$signature_details"
@@ -65,21 +86,26 @@ PY
 
 case "$PLATFORM" in
   ios)
-    test -d "$ARCHIVE"
-    test -f "$PACKAGE"
-    validate_app "$ARCHIVE/Products/Applications/Runner.app"
+    # The xcarchive is an intermediate input to Xcode's export operation. The
+    # exported app can have different signing metadata, so validate the App
+    # Store artifact rather than rejecting an otherwise valid export because
+    # of archive-only metadata.
+    require_directory "$ARCHIVE"
+    require_file "$PACKAGE"
     extracted="${RUNNER_TEMP:?RUNNER_TEMP is required}/validated-ipa"
     rm -rf "$extracted"
     ditto -x -k "$PACKAGE" "$extracted"
     shopt -s nullglob
     apps=("$extracted"/Payload/*.app)
-    [ "${#apps[@]}" -eq 1 ]
+    [ "${#apps[@]}" -eq 1 ] || \
+      fail "IPA contains ${#apps[@]} application bundles, expected 1"
     validate_app "${apps[0]}"
     xcode-project ipa-info "$PACKAGE"
+    echo "ios IPA metadata, signature, and store package are valid"
     ;;
   macos)
-    test -d "$ARCHIVE"
-    test -f "$PACKAGE"
+    require_directory "$ARCHIVE"
+    require_file "$PACKAGE"
     validate_app "$ARCHIVE"
     package_signature="$(pkgutil --check-signature "$PACKAGE")"
     grep -q "${TEAM_ID:?TEAM_ID is required}" <<< "$package_signature"
@@ -90,11 +116,10 @@ case "$PLATFORM" in
     pkgutil --expand "$PACKAGE" "$expanded"
     grep -q 'install-location="/Applications"' "$expanded"/*/PackageInfo
     xcode-project pkg-info "$PACKAGE"
+    echo "macos archive metadata, signature, and store package are valid"
     ;;
   *)
     echo "platform must be ios or macos" >&2
     exit 2
     ;;
 esac
-
-echo "$PLATFORM archive metadata, signature, and store package are valid"
