@@ -23,6 +23,8 @@ import urllib.parse
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 PACKAGE_CONFIG = ROOT / "flutter/.dart_tool/package_config.json"
+GHOSTTY_COMMIT = "91f66da24527fa02d92b5fd0b41cd020f553a64c"
+GHOSTTY_VERSION = "1.3.2-dev"
 
 
 def fail(message: str) -> None:
@@ -102,6 +104,8 @@ def main() -> None:
     pubspec = (package / "pubspec.yaml").read_text()
     if "version: 0.0.11\n" not in pubspec:
         fail("the patch must be reviewed for the resolved libghostty version")
+    if (package / "ghostty.version").read_text().strip() != GHOSTTY_COMMIT:
+        fail("the patch must be reviewed for the resolved Ghostty commit")
 
     hook = package / "hook/build.dart"
     provider = package / "lib/src/hook/library_provider.dart"
@@ -162,6 +166,14 @@ def main() -> None:
     final zig = os == .iOS && ios != .iPhoneSimulator
         ? '$baseZigTarget.18.0'
         : baseZigTarget;
+""",
+    )
+    replace_once(
+        provider,
+        """      '--release=fast',
+""",
+        f"""      '--release=fast',
+      '-Dversion-string={GHOSTTY_VERSION}',
 """,
     )
     replace_one_variant(
