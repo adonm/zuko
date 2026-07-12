@@ -42,9 +42,11 @@ info="$app/Info.plist"
 identifier="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$info")"
 version="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$info")"
 build="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$info")"
+minimum_os="$(/usr/libexec/PlistBuddy -c 'Print :MinimumOSVersion' "$info")"
 require_equal "bundle identifier" "$identifier" "$BUNDLE_ID"
 require_equal "version" "$version" "$EXPECTED_VERSION"
 require_equal "build number" "$build" "$EXPECTED_BUILD"
+require_equal "minimum iOS version" "$minimum_os" "18.0"
 
 codesign --verify --deep --strict --verbose=2 "$app"
 signature_details="$(codesign -d --verbose=4 "$app" 2>&1)"
@@ -58,10 +60,18 @@ lipo -archs "$app/$executable" | grep -qw arm64
 
 ghostty="$app/Frameworks/ghostty.framework/ghostty"
 [ -f "$ghostty" ] || fail "Ghostty framework is missing"
+ghostty_info="$(dirname "$ghostty")/Info.plist"
+[ -f "$ghostty_info" ] || fail "Ghostty framework Info.plist is missing"
+ghostty_minimum_os="$(
+  /usr/libexec/PlistBuddy -c 'Print :MinimumOSVersion' "$ghostty_info"
+)"
+require_equal "Ghostty framework minimum iOS version" \
+  "$ghostty_minimum_os" "$minimum_os"
 lipo -archs "$ghostty" | grep -qw arm64
 ghostty_load_commands="$(otool -l "$ghostty")"
 grep -q LC_ENCRYPTION_INFO_64 <<< "$ghostty_load_commands"
-grep -A 5 LC_BUILD_VERSION <<< "$ghostty_load_commands" | grep -q 'minos 18.0'
+grep -A 5 LC_BUILD_VERSION <<< "$ghostty_load_commands" | \
+  grep -q "minos $minimum_os"
 
 xcode-project ipa-info "$IPA"
 echo "iOS IPA metadata, signature, and store package are valid"

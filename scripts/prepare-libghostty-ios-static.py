@@ -1,16 +1,22 @@
 #!/usr/bin/env python3
-"""Patch libghostty to link device iOS libraries with Apple's linker.
+"""Prepare Flutter and libghostty for an App-Store-compatible iOS build.
 
 libghostty 0.0.11 bundles a Zig-linked dylib on iOS. App Store Connect rejects
 that Mach-O because it lacks Apple's LC_ENCRYPTION_INFO_64 load command. The
 upstream Ghostty build also emits a complete static archive. This patch compiles
 that archive and relinks it into the bundled dylib with Apple clang.
+
+Flutter 3.46.0-0.3.pre also hardcodes native-asset framework Info.plists to an
+iOS 13.0 minimum even when the binary targets iOS 18.0. Patch the pinned Flutter
+generator so its framework metadata matches the linked binary.
 """
 
 from __future__ import annotations
 
 import json
 import pathlib
+import shutil
+import subprocess
 import sys
 import urllib.parse
 
@@ -61,7 +67,34 @@ def package_root() -> pathlib.Path:
     return pathlib.Path(urllib.parse.unquote(root_uri.path))
 
 
+def patch_flutter_native_assets() -> None:
+    flutter = shutil.which("flutter")
+    if flutter is None:
+        fail("flutter is absent from PATH")
+    flutter_root = pathlib.Path(flutter).resolve().parent.parent
+    version_result = subprocess.run(
+        [flutter, "--version", "--machine"],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    version = json.loads(version_result.stdout)["frameworkVersion"]
+    if version != "3.46.0-0.3.pre":
+        fail(f"the patch must be reviewed for Flutter {version}")
+
+    native_assets = (
+        flutter_root
+        / "packages/flutter_tools/lib/src/isolated/native_assets/ios/native_assets.dart"
+    )
+    replace_once(
+        native_assets,
+        "const targetIOSVersion = 13;",
+        "const targetIOSVersion = 18;",
+    )
+
+
 def main() -> None:
+    patch_flutter_native_assets()
     package = package_root()
     pubspec = (package / "pubspec.yaml").read_text()
     if "version: 0.0.11\n" not in pubspec:

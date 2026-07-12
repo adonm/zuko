@@ -38,7 +38,17 @@ workflows:
           echo "RUNNER_TEMP=$RUNNER_TEMP" >> "$CM_ENV"
 
       - name: Resolve validation metadata
-        script: $HOME/.local/bin/mise exec -- just build-context
+        script: |
+          $HOME/.local/bin/mise exec -- just build-context
+          if [ -n "${IOS_BUILD_NUMBER_OVERRIDE:-}" ]; then
+            [[ "$IOS_BUILD_NUMBER_OVERRIDE" =~ ^[0-9]+$ ]]
+            version="$(scripts/version.sh)"
+            IFS=. read -r major minor patch <<< "$version"
+            base_build=$((1800000000 + major * 1000000 + minor * 1000 + patch))
+            test "$IOS_BUILD_NUMBER_OVERRIDE" -gt "$base_build"
+            test "$IOS_BUILD_NUMBER_OVERRIDE" -le 2100000000
+            echo "ZUKO_BUILD_NUMBER=$IOS_BUILD_NUMBER_OVERRIDE" >> "$CM_ENV"
+          fi
 
       - &select_xcode
         name: Verify Xcode 26.3
@@ -180,16 +190,23 @@ workflows:
           [[ "${RECOVERY_TAG:-}" =~ ^v([0-9]+)\.([0-9]+)\.([0-9]+)$ ]]
           [[ "${RECOVERY_BUILD_ID:-}" =~ ^[0-9a-f]{24}$ ]]
           [[ "${RECOVERY_IPA_SHA256:-}" =~ ^[0-9a-f]{64}$ ]]
+          [[ "${RECOVERY_SOURCE_COMMIT:-}" =~ ^[0-9a-f]{40}$ ]]
           git fetch --force origin "refs/tags/$RECOVERY_TAG:refs/tags/$RECOVERY_TAG"
           test "$(git cat-file -t "$RECOVERY_TAG")" = tag
-          release_commit="$(git rev-parse "$RECOVERY_TAG^{commit}")"
+          test "$CM_COMMIT" = "$RECOVERY_SOURCE_COMMIT"
+          git merge-base --is-ancestor \
+            "$(git rev-parse "$RECOVERY_TAG^{commit}")" \
+            "$RECOVERY_SOURCE_COMMIT"
           version="${RECOVERY_TAG#v}"
           IFS=. read -r major minor patch <<< "$version"
-          build_number=$((1800000000 + major * 1000000 + minor * 1000 + patch))
+          release_build=$((1800000000 + major * 1000000 + minor * 1000 + patch))
+          [[ "${RECOVERY_BUILD_NUMBER:-}" =~ ^[0-9]+$ ]]
+          test "$RECOVERY_BUILD_NUMBER" -ge "$release_build"
+          test "$RECOVERY_BUILD_NUMBER" -le 2100000000
           {
-            echo "RECOVERY_COMMIT=$release_commit"
+            echo "RECOVERY_COMMIT=$RECOVERY_SOURCE_COMMIT"
             echo "ZUKO_VERSION=$version"
-            echo "ZUKO_BUILD_NUMBER=$build_number"
+            echo "ZUKO_BUILD_NUMBER=$RECOVERY_BUILD_NUMBER"
           } >> "$CM_ENV"
 
       - *install_codemagic_cli

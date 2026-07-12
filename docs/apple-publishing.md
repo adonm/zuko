@@ -59,10 +59,14 @@ privacy declarations, export compliance, pricing, and final review submission
 remain App Store Connect operations.
 
 Artifact recovery is API-triggered with `RECOVERY_TAG`, `RECOVERY_BUILD_ID`,
-and `RECOVERY_IPA_SHA256`. It verifies the annotated tag, source workflow,
-exact release commit, successful source actions, checksum, version, build,
-signature, profile, architecture, and deployment floor before upload. It never
-rebuilds the IPA.
+`RECOVERY_SOURCE_COMMIT`, `RECOVERY_BUILD_NUMBER`, and
+`RECOVERY_IPA_SHA256`. It verifies that the source is an exact successful
+signing-validation build from the specified commit, that the commit contains
+the release tag, and that the checksum, version, build, signature, profile,
+architecture, and deployment floor match before upload. It never rebuilds the
+IPA. For an App Store correction of an existing version, trigger signing
+validation with `IOS_BUILD_NUMBER_OVERRIDE` set to a new build number, then
+recover that exact artifact.
 
 The automated macOS workflow currently provides development compile artifacts,
 not a Mac App Store package. Add a Codemagic-native macOS Store workflow before
