@@ -20,6 +20,7 @@ final class AppController extends ChangeNotifier {
   List<SavedHost> get hosts => _state.hosts;
   AppThemePreference get theme => _state.theme;
   double get terminalFontSize => _state.terminalFontSize;
+  bool get terminalFontSizeCustomized => _state.terminalFontSizeCustomized;
   bool get showAdditionalKeys => _state.showAdditionalKeys;
 
   static Future<AppController> create() async {
@@ -102,8 +103,12 @@ final class AppController extends ChangeNotifier {
   Future<void> setTheme(AppThemePreference value) =>
       _commit((state) => state.copyWith(theme: value));
 
-  Future<void> setTerminalFontSize(double value) =>
-      _commit((state) => state.copyWith(terminalFontSize: value));
+  Future<void> setTerminalFontSize(double value) => _commit(
+    (state) => state.copyWith(
+      terminalFontSize: value,
+      terminalFontSizeCustomized: true,
+    ),
+  );
 
   Future<void> setShowAdditionalKeys(bool value) =>
       _commit((state) => state.copyWith(showAdditionalKeys: value));

@@ -26,7 +26,7 @@ The former Compose Android client, TypeScript web client, and Relm4 Flatpak
 client and native Swift client were removed. They will not receive parallel
 feature work.
 
-## Current priority: ship one credible Flutter client
+## Current priority: steadily improve one credible Flutter client
 
 All Android, iOS, macOS, web, Linux, and Windows client work now lands in
 `flutter/`.
@@ -55,6 +55,47 @@ users should expect to pair again after this cutover. The web app remains at
 The Flutter iOS replacement likewise retains `dev.adonm.zuko` but intentionally
 starts with new Keychain state and session-token derivation; pre-1.0 testers
 must pair again and revoke the old native client authorization when finished.
+
+## Continuous quality program
+
+Shipping the shared client is not the end state. Quality work should land in
+small, measured increments across `flterm`, every Flutter target, and the
+host/client boundary.
+
+`flterm` is a long-lived product dependency and will receive substantial
+ongoing work rather than only compatibility patches needed by Zuko. Priorities
+include:
+
+- expand terminal conformance coverage for escape sequences, Unicode grapheme
+  and cell-width behavior, cursor/style state, scrollback, alternate screen,
+  selection, clipboard, links, and Kitty graphics;
+- make keyboard, IME, mouse, wheel, touch, and DEC input modes consistent on
+  phones, tablets, browsers, and desktop systems;
+- add deterministic renderer goldens, fuzz/property tests at parser and input
+  boundaries, long-session tests, and measured performance/memory baselines;
+- improve accessibility semantics, API documentation, diagnostics, examples,
+  and release hygiene so downstream Flutter clients can depend on behavior
+  rather than implementation details;
+- upstream generally useful fixes in `flterm` first and pin Zuko to reviewed,
+  tested commits instead of carrying hidden application-only forks.
+
+Shared Flutter quality work should continuously exercise real small phones,
+tablets, desktop windows, narrow browsers, lifecycle transitions, credential
+storage, reconnect, upgrade, and uninstall behavior. A successful compile is
+not sufficient evidence of client quality.
+
+Host/client user experience is part of the same program: pairing and
+revocation should be understandable, connection and retry states actionable,
+diagnostics safe to share, errors specific about the next step, and host
+install/upgrade/reset behavior predictable from every supported client.
+
+Binary size remains a release constraint. CI should record compressed and
+installed sizes per target, compare them with the previous release, and make
+large regressions explicit. Prefer shared assets, targeted font subsets,
+tree-shaking, symbol stripping, and one native implementation per capability;
+do not add parallel frameworks or broad asset bundles when a measured smaller
+choice meets the same user need. Size work must preserve terminal correctness,
+accessibility, security, and offline fallback behavior.
 
 ## Delivery plan
 
@@ -142,5 +183,6 @@ When work competes, choose in this order:
 1. prevent unauthorized shell access, identity loss, or weaker secret storage;
 2. preserve framing, terminal correctness, reconnect, and recovery;
 3. close shared Flutter terminal, accessibility, and lifecycle gaps;
-4. make signed packages, upgrades, and releases repeatable;
-5. add new features or platforms.
+4. improve pairing, diagnostics, recovery, and host/client operational UX;
+5. make signed packages, upgrades, releases, and size reporting repeatable;
+6. add new features or platforms.

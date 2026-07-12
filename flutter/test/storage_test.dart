@@ -8,7 +8,7 @@ import 'package:zuko/src/storage.dart';
 void main() {
   final key = Uint8List.fromList(List.generate(32, (index) => index));
 
-  test('migrates the legacy key and removes only that key', () async {
+  test('migrates the version 1 key and removes only that key', () async {
     final storage = _MemoryStorage({
       'zuko-client-state-v1': jsonEncode({
         'version': 1,
@@ -23,9 +23,35 @@ void main() {
 
     expect(state.clientKey, key);
     expect(storage.values['zuko-client-state-v1'], isNull);
-    expect(storage.values['zuko-client-state-v3'], isNotNull);
+    expect(storage.values['zuko-client-state-v4'], isNotNull);
     expect(storage.values['unrelated'], 'preserve-me');
     expect(store.recoveredInvalidState, isFalse);
+  });
+
+  test('migrates version 3 preferences without losing client state', () async {
+    final storage = _MemoryStorage({
+      'zuko-client-state-v3': jsonEncode({
+        'version': 3,
+        'clientKey': base64Encode(key),
+        'hosts': <Object?>[],
+        'theme': AppThemePreference.dark.name,
+        'terminalFontSize': 17,
+        'showAdditionalKeys': false,
+      }),
+      'unrelated': 'preserve-me',
+    });
+    final store = ClientStateStore.withStorage(storage);
+
+    final state = await store.load();
+
+    expect(state.clientKey, key);
+    expect(state.theme, AppThemePreference.dark);
+    expect(state.terminalFontSize, 17);
+    expect(state.terminalFontSizeCustomized, isTrue);
+    expect(state.showAdditionalKeys, isFalse);
+    expect(storage.values['zuko-client-state-v3'], isNull);
+    expect(storage.values['zuko-client-state-v4'], isNotNull);
+    expect(storage.values['unrelated'], 'preserve-me');
   });
 
   test('invalid state resets only Zuko state', () async {
@@ -42,7 +68,7 @@ void main() {
     expect(state.hosts, isEmpty);
     expect(storage.values['zuko-client-state-v1'], isNull);
     expect(
-      ClientState.decode(storage.values['zuko-client-state-v3']!),
+      ClientState.decode(storage.values['zuko-client-state-v4']!),
       isA<ClientState>(),
     );
     expect(storage.values['unrelated'], 'preserve-me');

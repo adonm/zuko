@@ -3,6 +3,33 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:zuko/src/app.dart';
 
 void main() {
+  test('narrow screens start at 5pt until the user chooses a size', () {
+    expect(
+      effectiveTerminalFontSize(
+        width: 390,
+        configuredSize: 14,
+        customized: false,
+      ),
+      5,
+    );
+    expect(
+      effectiveTerminalFontSize(
+        width: 1280,
+        configuredSize: 14,
+        customized: false,
+      ),
+      14,
+    );
+    expect(
+      effectiveTerminalFontSize(
+        width: 390,
+        configuredSize: 9,
+        customized: true,
+      ),
+      9,
+    );
+  });
+
   test('wide native desktop windows use the system title bar', () {
     for (final platform in [
       TargetPlatform.linux,

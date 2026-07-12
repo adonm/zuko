@@ -7,8 +7,8 @@ Tags matching `vX.Y.Z` trigger the coordinated CLI and Flutter release graph:
 - Flutter Linux x86_64 Flatpak;
 - Flutter Windows x86_64 bundle;
 
-Codemagic builds, validates, and uploads Flutter iOS to TestFlight for release
-tags. Mac App Store distribution uses a manual protected GitHub workflow.
+Codemagic revalidates and uploads the exact signed Flutter iOS artifact built
+from each release commit. Mac App Store packaging is not currently automated.
 Flutter web is deployed by the Pages workflow after changes reach `main`.
 
 Published assets follow these names (`TAG` includes the leading `v`):

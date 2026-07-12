@@ -25,6 +25,7 @@ void main() {
 
     expect(state.theme, AppThemePreference.system);
     expect(state.terminalFontSize, 14);
+    expect(state.terminalFontSizeCustomized, isFalse);
     expect(state.showAdditionalKeys, isTrue);
     expect(state.hosts.single.authorizedClientLabel, isNull);
   });
@@ -34,6 +35,7 @@ void main() {
       clientKey: key,
       theme: AppThemePreference.light,
       terminalFontSize: 17,
+      terminalFontSizeCustomized: true,
       showAdditionalKeys: false,
       hosts: const [
         SavedHost(
@@ -49,8 +51,25 @@ void main() {
     final decoded = ClientState.decode(original.encode());
     expect(decoded.theme, AppThemePreference.light);
     expect(decoded.terminalFontSize, 17);
+    expect(decoded.terminalFontSizeCustomized, isTrue);
     expect(decoded.showAdditionalKeys, isFalse);
     expect(decoded.hosts.single.authorizedClientLabel, 'zuko-android-a1b2c3');
+  });
+
+  test('version 3 font preferences migrate to responsive defaults', () {
+    ClientState decode(double size) => ClientState.decode(
+      jsonEncode({
+        'version': 3,
+        'clientKey': base64Encode(key),
+        'hosts': <Object?>[],
+        'theme': AppThemePreference.system.name,
+        'terminalFontSize': size,
+        'showAdditionalKeys': true,
+      }),
+    );
+
+    expect(decode(14).terminalFontSizeCustomized, isFalse);
+    expect(decode(17).terminalFontSizeCustomized, isTrue);
   });
 
   test('rejects unsupported and structurally invalid state', () {
@@ -73,7 +92,7 @@ void main() {
 
   test('terminal font size rejects invalid values and stays practical', () {
     expect(normalizeTerminalFontSize(double.nan), 14);
-    expect(normalizeTerminalFontSize(2), 10);
+    expect(normalizeTerminalFontSize(2), 5);
     expect(normalizeTerminalFontSize(40), 24);
   });
 }

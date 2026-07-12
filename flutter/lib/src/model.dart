@@ -51,13 +51,14 @@ final class SavedHost {
 enum AppThemePreference { system, dark, light }
 
 final class ClientState {
-  static const currentVersion = 3;
+  static const currentVersion = 4;
 
   ClientState({
     required Uint8List clientKey,
     required List<SavedHost> hosts,
     this.theme = AppThemePreference.system,
     double terminalFontSize = 14,
+    this.terminalFontSizeCustomized = false,
     this.showAdditionalKeys = true,
   }) : clientKey = Uint8List.fromList(clientKey),
        hosts = List.unmodifiable(hosts),
@@ -67,6 +68,7 @@ final class ClientState {
   final List<SavedHost> hosts;
   final AppThemePreference theme;
   final double terminalFontSize;
+  final bool terminalFontSizeCustomized;
   final bool showAdditionalKeys;
 
   factory ClientState.decode(String value) {
@@ -104,6 +106,12 @@ final class ClientState {
       if (fontSize != null && fontSize is! num) {
         throw const FormatException('invalid terminal font size');
       }
+      final fontSizeCustomized = version >= 4
+          ? decoded['terminalFontSizeCustomized']
+          : fontSize != null && fontSize != 14;
+      if (fontSizeCustomized is! bool) {
+        throw const FormatException('invalid terminal font size preference');
+      }
       final showAdditionalKeys = version >= 3
           ? decoded['showAdditionalKeys']
           : true;
@@ -115,6 +123,7 @@ final class ClientState {
         hosts: hosts,
         theme: theme ?? AppThemePreference.system,
         terminalFontSize: (fontSize as num?)?.toDouble() ?? 14,
+        terminalFontSizeCustomized: fontSizeCustomized,
         showAdditionalKeys: showAdditionalKeys,
       );
     } on FormatException {
@@ -128,12 +137,15 @@ final class ClientState {
     List<SavedHost>? hosts,
     AppThemePreference? theme,
     double? terminalFontSize,
+    bool? terminalFontSizeCustomized,
     bool? showAdditionalKeys,
   }) => ClientState(
     clientKey: clientKey,
     hosts: hosts ?? this.hosts,
     theme: theme ?? this.theme,
     terminalFontSize: terminalFontSize ?? this.terminalFontSize,
+    terminalFontSizeCustomized:
+        terminalFontSizeCustomized ?? this.terminalFontSizeCustomized,
     showAdditionalKeys: showAdditionalKeys ?? this.showAdditionalKeys,
   );
 
@@ -143,6 +155,7 @@ final class ClientState {
     'hosts': hosts.map((host) => host.toJson()).toList(),
     'theme': theme.name,
     'terminalFontSize': terminalFontSize,
+    'terminalFontSizeCustomized': terminalFontSizeCustomized,
     'showAdditionalKeys': showAdditionalKeys,
   });
 }
@@ -161,5 +174,5 @@ String _requiredString(
 
 double normalizeTerminalFontSize(double value) {
   if (!value.isFinite) return 14;
-  return value.clamp(10, 24).toDouble();
+  return value.clamp(5, 24).toDouble();
 }

@@ -14,7 +14,8 @@ final class ClientStateStore {
   @visibleForTesting
   ClientStateStore.withStorage(SecureStateStorage storage) : _storage = storage;
 
-  static const _stateKey = 'zuko-client-state-v3';
+  static const _stateKey = 'zuko-client-state-v4';
+  static const _previousStateKey = 'zuko-client-state-v3';
   static const _legacyStateKey = 'zuko-client-state-v1';
   static const _iosOptions = IOSOptions(
     accountName: 'dev.adonm.zuko',
@@ -31,12 +32,13 @@ final class ClientStateStore {
     final current = await _storage.read(_stateKey);
     if (current != null) return _decodeOrReset(current);
 
-    final legacy = await _storage.read(_legacyStateKey);
-    if (legacy != null) {
-      final state = await _decodeOrReset(legacy);
+    for (final previousKey in [_previousStateKey, _legacyStateKey]) {
+      final previous = await _storage.read(previousKey);
+      if (previous == null) continue;
+      final state = await _decodeOrReset(previous);
       if (recoveredInvalidState) return state;
       await save(state);
-      await _storage.delete(_legacyStateKey);
+      await _storage.delete(previousKey);
       return state;
     }
     return _createState();
@@ -48,6 +50,7 @@ final class ClientStateStore {
     } on FormatException {
       recoveredInvalidState = true;
       await _storage.delete(_stateKey);
+      await _storage.delete(_previousStateKey);
       await _storage.delete(_legacyStateKey);
       return _createState();
     }

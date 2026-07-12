@@ -249,9 +249,12 @@ TerminalTheme buildZukoTerminalTheme({
     ),
     fontFamily: 'JetBrains Mono',
     fontFamilyFallback: const [
+      'JetBrainsMono Nerd Font Mono',
       'Noto Sans Mono',
       'Noto Emoji',
       'Noto Sans Symbols 2',
+      'Noto Sans JP',
+      'Noto Sans KR',
     ],
     fontSize: fontSize,
   );

@@ -1,7 +1,7 @@
 name: zuko
 description: Private remote shells over Iroh for Android, Apple platforms, web, Linux, and Windows.
 publish_to: 'none'
-version: 0.9.14+1800009014
+version: 0.9.15+1800009015
 
 environment:
   sdk: ^3.12.2
@@ -45,3 +45,12 @@ flutter:
     - family: Noto Sans Symbols 2
       fonts:
         - asset: assets/fonts/NotoSansSymbols2-Regular.ttf
+    - family: JetBrainsMono Nerd Font Mono
+      fonts:
+        - asset: assets/fonts/JetBrainsMonoNerdFontMono-Regular.ttf
+    - family: Noto Sans JP
+      fonts:
+        - asset: assets/fonts/NotoSansJP-Regular.otf
+    - family: Noto Sans KR
+      fonts:
+        - asset: assets/fonts/NotoSansKR-Regular.otf

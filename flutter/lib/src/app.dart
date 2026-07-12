@@ -21,6 +21,12 @@ const _installCommand =
 const _shareCommand = 'zuko install\nzuko share';
 const _wideLayoutBreakpoint = 760.0;
 
+double effectiveTerminalFontSize({
+  required double width,
+  required double configuredSize,
+  required bool customized,
+}) => !customized && width < _wideLayoutBreakpoint ? 5 : configuredSize;
+
 bool usesIntegratedDesktopHeader({
   required double width,
   required TargetPlatform platform,
@@ -325,6 +331,11 @@ class _HomeState extends State<_Home> with WidgetsBindingObserver {
     builder: (context, _) {
       final width = MediaQuery.sizeOf(context).width;
       final wide = width >= _wideLayoutBreakpoint;
+      final terminalFontSize = effectiveTerminalFontSize(
+        width: width,
+        configuredSize: widget.controller.terminalFontSize,
+        customized: widget.controller.terminalFontSizeCustomized,
+      );
       final integratedDesktopHeader = usesIntegratedDesktopHeader(
         width: width,
         platform: defaultTargetPlatform,
@@ -332,6 +343,7 @@ class _HomeState extends State<_Home> with WidgetsBindingObserver {
       );
       final sidebar = _Sidebar(
         controller: widget.controller,
+        terminalFontSize: terminalFontSize,
         selected: selected,
         sessionState: sessionState,
         onPair: _pair,
@@ -341,7 +353,7 @@ class _HomeState extends State<_Home> with WidgetsBindingObserver {
       );
       final terminalTheme = buildZukoTerminalTheme(
         brightness: Theme.of(context).brightness,
-        fontSize: widget.controller.terminalFontSize,
+        fontSize: terminalFontSize,
       );
       final selectedHost = selected;
       return Scaffold(
@@ -779,6 +791,7 @@ class _AccessoryIcon extends StatelessWidget {
 class _Sidebar extends StatelessWidget {
   const _Sidebar({
     required this.controller,
+    required this.terminalFontSize,
     required this.selected,
     required this.sessionState,
     required this.onPair,
@@ -788,6 +801,7 @@ class _Sidebar extends StatelessWidget {
   });
 
   final AppController controller;
+  final double terminalFontSize;
   final SavedHost? selected;
   final SessionState sessionState;
   final Future<void> Function() onPair;
@@ -1018,11 +1032,11 @@ class _Sidebar extends StatelessWidget {
                     const Expanded(child: Text('Terminal text')),
                     IconButton(
                       tooltip: 'Decrease font size',
-                      onPressed: controller.terminalFontSize <= 10
+                      onPressed: terminalFontSize <= 5
                           ? null
                           : () => unawaited(
                               controller.setTerminalFontSize(
-                                controller.terminalFontSize - 1,
+                                terminalFontSize - 1,
                               ),
                             ),
                       icon: const Icon(Icons.remove),
@@ -1030,17 +1044,17 @@ class _Sidebar extends StatelessWidget {
                     SizedBox(
                       width: 24,
                       child: Text(
-                        '${controller.terminalFontSize.round()}',
+                        '${terminalFontSize.round()}',
                         textAlign: TextAlign.center,
                       ),
                     ),
                     IconButton(
                       tooltip: 'Increase font size',
-                      onPressed: controller.terminalFontSize >= 24
+                      onPressed: terminalFontSize >= 24
                           ? null
                           : () => unawaited(
                               controller.setTerminalFontSize(
-                                controller.terminalFontSize + 1,
+                                terminalFontSize + 1,
                               ),
                             ),
                       icon: const Icon(Icons.add),

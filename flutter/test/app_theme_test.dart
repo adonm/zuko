@@ -45,6 +45,14 @@ void main() {
     expect(dark.foreground, zukoIvory);
     expect(dark.palette.ansiColors[1], zukoRed);
     expect(dark.fontSize, 16);
+    expect(
+      dark.fontFamilyFallback,
+      containsAll([
+        'JetBrainsMono Nerd Font Mono',
+        'Noto Sans JP',
+        'Noto Sans KR',
+      ]),
+    );
     expect(light.background, const Color(0xfffcfbf2));
     expect(light.foreground, zukoCharcoal);
     expect(light.palette.ansiColors[1], zukoRed);
