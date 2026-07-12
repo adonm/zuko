@@ -542,6 +542,7 @@ workflows:
       vars:
         CM_CLONE_UNSHALLOW: true
         CM_RECURSIVE_SUBMODULE_INIT: true
+        PYTHON: python
     triggering:
       events:
         - push
@@ -568,7 +569,7 @@ workflows:
       - name: Build Windows client
         script: |
           $mise = Join-Path $HOME ".local/bin/mise.exe"
-          & $mise exec -- just build-flutter-windows-release v0.0.0
+          & $mise exec -- just --shell pwsh --shell-arg=-NoProfile --shell-arg=-Command build-flutter-windows-release v0.0.0
 
     artifacts:
       - dist/windows/*
@@ -581,24 +582,39 @@ workflows:
       vars:
         CM_CLONE_UNSHALLOW: true
         CM_RECURSIVE_SUBMODULE_INIT: true
+        PYTHON: python
     scripts:
       - name: Install pinned repository toolchain
         script: pwsh -NoProfile -File scripts/install-mise-codemagic.ps1
 
       - name: Verify immutable release identity
         script: |
+          $ErrorActionPreference = "Stop"
+          $PSNativeCommandUseErrorActionPreference = $true
           if ([string]::IsNullOrWhiteSpace($env:CM_TAG)) {
             throw "CM_TAG is required"
           }
-          if ((git rev-parse HEAD) -ne $env:CM_COMMIT) {
+          if ($env:CM_TAG -notmatch '^v[0-9]+\.[0-9]+\.[0-9]+$') {
+            throw "release tag must match vX.Y.Z"
+          }
+          python scripts/check-release-metadata.py
+          $version = (python -c "import tomllib; print(tomllib.load(open('Cargo.toml', 'rb'))['workspace']['package']['version'])").Trim()
+          if ($env:CM_TAG -ne "v$version") {
+            throw "release tag does not match source version"
+          }
+          if ((git cat-file -t $env:CM_TAG) -ne "tag") {
+            throw "release tag must be annotated"
+          }
+          $head = (git rev-parse HEAD).Trim()
+          $tagCommit = (git rev-parse "$env:CM_TAG^{commit}").Trim()
+          if ($head -ne $env:CM_COMMIT -or $tagCommit -ne $env:CM_COMMIT) {
             throw "checkout does not match CM_COMMIT"
           }
-          bash scripts/release-context.sh $env:CM_TAG
 
       - name: Build and package Windows client
         script: |
           $mise = Join-Path $HOME ".local/bin/mise.exe"
-          & $mise exec -- just build-flutter-windows-release $env:CM_TAG
+          & $mise exec -- just --shell pwsh --shell-arg=-NoProfile --shell-arg=-Command build-flutter-windows-release $env:CM_TAG
           New-Item -ItemType Directory -Force dist/codemagic | Out-Null
           Compress-Archive -Path dist/windows/* -DestinationPath "dist/codemagic/zuko-flutter-windows-$env:CM_TAG-artifacts.zip"
 

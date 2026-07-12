@@ -73,7 +73,7 @@ flutter-check: flutter-get flutter-vendor-check
 
 [group('flutter')]
 patch-iroh-flutter: flutter-get
-    python3 scripts/patch-iroh-flutter.py flutter
+    {{ env_var_or_default('PYTHON', 'python3') }} scripts/patch-iroh-flutter.py flutter
 
 [group('flutter')]
 build-flutter-android: flutter-get

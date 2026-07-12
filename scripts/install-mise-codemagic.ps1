@@ -7,13 +7,6 @@ $archive = "mise-v$version-windows-x64.zip"
 $url = "https://github.com/jdx/mise/releases/download/v$version/$archive"
 $binDirectory = Join-Path $HOME ".local/bin"
 $bin = Join-Path $binDirectory "mise.exe"
-$gitRoot = Split-Path (Split-Path (Get-Command git).Source -Parent) -Parent
-$gitBin = Join-Path $gitRoot "bin"
-$bash = Join-Path $gitBin "bash.exe"
-
-if (-not (Test-Path $bash)) {
-    throw "Git Bash is missing: $bash"
-}
 
 New-Item -ItemType Directory -Force $binDirectory | Out-Null
 $temporary = Join-Path ([System.IO.Path]::GetTempPath()) ([System.IO.Path]::GetRandomFileName())
@@ -33,11 +26,6 @@ try {
 } finally {
     Remove-Item -Force -ErrorAction SilentlyContinue $temporary
     Remove-Item -Recurse -Force -ErrorAction SilentlyContinue $expanded
-}
-
-$env:PATH = "$binDirectory;$gitBin;$env:PATH"
-if (-not [string]::IsNullOrWhiteSpace($env:CM_ENV)) {
-    "PATH=$env:PATH" | Add-Content -Encoding utf8 $env:CM_ENV
 }
 
 & $bin --version | Select-String -SimpleMatch $version
