@@ -5,6 +5,8 @@ distribution channel. FlatPark is an independent community repository and is
 not affiliated with Flathub. The package will become installable after its
 registry submission is reviewed and published.
 
+![Zuko Linux client](zuko-linux.png)
+
 Zuko does not build, sign, or host a Flatpak repository. Each immutable GitHub
 Release instead contains the official x86_64 Flutter Linux payload:
 
