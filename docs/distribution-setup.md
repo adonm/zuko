@@ -72,9 +72,10 @@ Details: [Android store publishing](android-publishing.md).
   profile.
 - [ ] Create a dedicated App Store Connect App Manager API key and retain its
   issuer ID, key ID, and one-time `.p8` securely.
-- [ ] Run Codemagic's manual `ios-signing-validation` first. An annotated
-  release tag uploads iOS to TestFlight automatically; validation never
-  uploads. GitHub requires no Apple signing secrets.
+- [ ] Run Codemagic's manual `ios-signing-validation` to check new signing
+  configuration. Each annotated release tag then makes GitHub API-trigger an
+  exact-commit validation and TestFlight upload. GitHub requires no Apple
+  signing secrets.
 
 Details: [Apple store publishing](apple-publishing.md).
 

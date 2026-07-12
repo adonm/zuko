@@ -107,13 +107,6 @@ workflows:
       vars:
         CM_CLONE_UNSHALLOW: true
         TEAM_ID: R8PN382RC4
-    triggering:
-      events:
-        - tag
-      tag_patterns:
-        - pattern: v*
-          include: true
-      cancel_previous_builds: false
     scripts:
       - name: Verify immutable release identity
         script: |

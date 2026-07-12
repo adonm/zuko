@@ -142,11 +142,11 @@ flutter/build/macos/Build/Products/Release/Zuko.app
 
 Codemagic's `flutter-apple-ci` compiles and packages both targets for relevant
 pull requests and `main` changes. Those development artifacts are not GitHub
-Release assets. Every annotated release tag separately runs
-`ios-testflight-release`, producing a signed IPA and uploading it for internal
-TestFlight processing. Maintainers can run `ios-signing-validation` against a
-branch without publishing. Apple builds use bundle ID `dev.adonm.zuko` and all
-signing credentials remain in Codemagic.
+Release assets. For every annotated release tag, GitHub explicitly triggers an
+exact-commit `ios-signing-validation` build and then the artifact-only
+`ios-testflight-release` upload. Maintainers can also run signing validation
+against a branch without publishing. Apple builds use bundle ID
+`dev.adonm.zuko` and all signing credentials remain in Codemagic.
 
 ## Matching CI
 

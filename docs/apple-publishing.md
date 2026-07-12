@@ -5,9 +5,10 @@ Apple certificates, provisioning profiles, or App Store Connect credentials.
 The repository-root `codemagic.yaml` defines:
 
 - `flutter-apple-ci`: unsigned iOS Simulator and macOS compile gate;
-- `ios-signing-validation`: manual signed IPA build without publishing;
-- `ios-testflight-release`: signed IPA build and TestFlight upload for every
-  annotated `vX.Y.Z` release tag;
+- `ios-signing-validation`: signed IPA build without publishing, run manually
+  for ad hoc checks and API-triggered for releases;
+- `ios-testflight-release`: artifact-only signed IPA validation and TestFlight
+  upload, API-triggered after release validation succeeds;
 - `ios-testflight-artifact-recovery`: revalidates and uploads an exact IPA from
   a successful Codemagic signing-validation build when a rebuild is flaky.
 
@@ -50,9 +51,11 @@ Codemagic:
 6. uploads the validated IPA through `zuko-app-store` for TestFlight
    processing.
 
-Run `ios-signing-validation` on the intended release commit before tagging.
-That workflow is the single signed build and Flutter test gate; the tag workflow
-is artifact-only, avoiding flaky or divergent release rebuilds.
+GitHub's release workflow triggers `ios-signing-validation` on the exact tag,
+waits for its signed IPA, then triggers the artifact-only
+`ios-testflight-release` workflow. This explicit API handoff does not depend on
+Codemagic's repository tag webhook. The validation workflow remains available
+manually for signing checks before release.
 
 An upload does not submit the app for review. Tester groups, screenshots,
 privacy declarations, export compliance, pricing, and final review submission

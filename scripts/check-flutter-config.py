@@ -95,6 +95,7 @@ def main() -> None:
         ("codemagic.yaml", "flutter-windows-release:"),
         ("codemagic.yaml", "package-codemagic-android-unsigned"),
         (".github/workflows/release.yml", "collect-codemagic-release.py"),
+        (".github/workflows/release.yml", "publish-testflight-release.py"),
         (".github/workflows/release.yml", "sign-codemagic-android-release.sh"),
         ("scripts/collect-codemagic-release.py", "zuko-android-{tag}-unsigned.apk"),
         ("scripts/package-linux-release.sh", "zuko-linux-$TAG-x86_64.tar.gz"),

@@ -131,14 +131,14 @@ Codemagic's `flutter-apple-ci` workflow is the ordinary iOS Simulator and
 macOS compile gate. It retains development ZIP artifacts while store signing
 and upload remain isolated:
 
-- Codemagic's `ios-testflight-release` workflow handles every `vX.Y.Z` tag and
-  creates, validates, retains, and uploads `Zuko-Flutter.ipa` for internal
-  TestFlight processing;
-- Codemagic's manual `ios-signing-validation` workflow creates and validates a
-  signed IPA from the selected branch without uploading it or claiming a
-  release identity;
-- GitHub stores no Apple signing or App Store Connect credentials and has no
-  Apple publishing workflow;
+- GitHub explicitly triggers Codemagic's `ios-signing-validation` workflow for
+  every exact `vX.Y.Z` commit, then triggers `ios-testflight-release` to retain
+  and upload that validated `Zuko-Flutter.ipa` for internal TestFlight
+  processing;
+- `ios-signing-validation` also remains manually runnable against a selected
+  branch without uploading it or claiming a release identity;
+- GitHub stores only the Codemagic API token; Apple signing and App Store
+  Connect credentials remain isolated in Codemagic;
 - macOS remains a Codemagic development compile artifact, not an automated Mac
   App Store package.
 
