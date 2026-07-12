@@ -83,7 +83,14 @@ The first focused terminal-experience increment is clickable links. `flterm`
 detects OSC 8 hyperlinks and plain-text URLs, and Zuko wires supported web
 links to the existing platform URL launcher while rejecting unsupported
 schemes. This small cross-platform improvement exercises an existing reviewed
-`flterm` capability before the larger screen-reader semantics project.
+`flterm` capability.
+
+The accessibility baseline now exposes the visible, non-concealed terminal
+viewport and a terminal-focus action through `flterm` semantics. Zuko supplies
+the remote-terminal label and hint. Output is deliberately not a live region,
+so continuous command output does not create announcement spam. Structured
+cursor/selection navigation and representative VoiceOver, TalkBack, and
+desktop screen-reader testing remain follow-up work.
 
 Shared Flutter quality work should continuously exercise real small phones,
 tablets, desktop windows, narrow browsers, lifecycle transitions, credential
@@ -142,8 +149,9 @@ The Flutter client must provide:
   explains host-side revocation.
 
 `flterm` supplies the shared terminal surface. Typed recovery states, foreground
-redial, mobile shortcut controls, host management, themes, and font sizing now
-exist. Accessibility semantics, QR input, URI delivery, lifecycle tests, and
+redial, mobile shortcut controls, host management, themes, font sizing, and
+baseline terminal viewport semantics now exist. Complete screen-reader
+navigation and testing, QR input, URI delivery, lifecycle tests, and
 representative physical-device coverage remain open.
 
 ### 3. Ship each target through its normal channel

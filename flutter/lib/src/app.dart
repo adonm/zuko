@@ -425,17 +425,17 @@ class _HomeState extends State<_Home> with WidgetsBindingObserver {
                     child: Stack(
                       fit: StackFit.expand,
                       children: [
-                        Semantics(
-                          label: 'Remote terminal',
-                          child: TerminalView(
-                            controller: terminal,
-                            autofocus: true,
-                            theme: terminalTheme,
-                            linkSettings: LinkSettings(
-                              types: const {LinkType.osc8, LinkType.text},
-                              onActivate: (link) =>
-                                  unawaited(_openTerminalLink(link)),
-                            ),
+                        TerminalView(
+                          controller: terminal,
+                          autofocus: true,
+                          theme: terminalTheme,
+                          semanticsLabel: 'Remote terminal',
+                          semanticsHint:
+                              'Activate to focus remote terminal input',
+                          linkSettings: LinkSettings(
+                            types: const {LinkType.osc8, LinkType.text},
+                            onActivate: (link) =>
+                                unawaited(_openTerminalLink(link)),
                           ),
                         ),
                         if (!sessionState.isAttached)

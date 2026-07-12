@@ -48,7 +48,8 @@ targets unless a platform note below says otherwise:
   command when its authorized-client label is known;
 - render a resizable `flterm`/`libghostty` terminal with scrollback, selection,
   copy, guarded multi-line paste, desktop keyboard/IME input, and mobile
-  accessory keys;
+  accessory keys, plus a screen-reader-readable visible viewport and terminal
+  focus action;
 - persist system/light/dark theme and terminal font-size preferences.
 
 This is a remote shell client, not a durable session manager: it has no output
