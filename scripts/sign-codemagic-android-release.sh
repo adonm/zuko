@@ -51,8 +51,10 @@ build_tools="$ANDROID_HOME/build-tools/36.0.0"
   --ks-pass env:ANDROID_KEYSTORE_PASSWORD \
   --ks-key-alias "$ANDROID_KEY_ALIAS" \
   --key-pass env:ANDROID_KEY_PASSWORD \
+  --v4-signing-enabled false \
   --out "$signed_apk" \
   "$aligned_apk"
+test ! -e "$signed_apk.idsig"
 apk_verification="$("$build_tools/apksigner" verify --verbose --print-certs "$signed_apk")"
 printf '%s\n' "$apk_verification"
 actual_fingerprint="$(sed -n 's/^Signer #1 certificate SHA-256 digest: //p' <<< "$apk_verification" | tr -d ':' | tr A-F a-f)"
