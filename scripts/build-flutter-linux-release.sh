@@ -35,7 +35,9 @@ export CXX_aarch64_unknown_linux_gnu=clang++
 export AR_aarch64_unknown_linux_gnu=llvm-ar
 export CFLAGS_aarch64_unknown_linux_gnu="--target=aarch64-linux-gnu --sysroot=$sysroot"
 export CXXFLAGS_aarch64_unknown_linux_gnu="$CFLAGS_aarch64_unknown_linux_gnu"
-export LDFLAGS=-fuse-ld=lld
+export CFLAGS="--sysroot=$sysroot"
+export CXXFLAGS="$CFLAGS"
+export LDFLAGS="--sysroot=$sysroot -fuse-ld=lld"
 
 exec flutter build linux --release --no-pub \
   --target-platform linux-arm64 \
