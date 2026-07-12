@@ -128,3 +128,9 @@ The sandbox grants network access, native Wayland, DRI, and only the
 `org.freedesktop.secrets` session-bus name needed by libsecret. X11 is not a
 supported package target. A host Secret Service provider such as GNOME Keyring
 or KWallet must be running.
+
+If the login keyring is locked, Zuko keeps the encrypted client identity and
+saved hosts unchanged and shows an unlock-and-retry screen. Unlock the login
+keyring in the desktop password or wallet manager, then select **Retry**. Zuko
+does not fall back to plaintext storage or reset state when the keyring is
+locked.

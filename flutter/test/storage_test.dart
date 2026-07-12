@@ -1,7 +1,7 @@
 import 'dart:convert';
-import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter/services.dart';
 import 'package:zuko/src/model.dart';
 import 'package:zuko/src/storage.dart';
 
@@ -74,6 +74,51 @@ void main() {
     expect(storage.values['unrelated'], 'preserve-me');
     expect(store.recoveredInvalidState, isTrue);
   });
+
+  test('locked keyring fails closed without changing state', () async {
+    final storage = _ThrowingStorage(
+      PlatformException(code: 'KeyringLocked', message: 'KeyringLocked'),
+    );
+    final store = ClientStateStore.withStorage(storage);
+
+    await expectLater(store.load(), throwsA(isA<KeyringLockedException>()));
+
+    expect(storage.operations, ['read']);
+    expect(store.recoveredInvalidState, isFalse);
+  });
+
+  test('locked keyring writes surface the recoverable error', () async {
+    final storage = _ThrowingStorage(
+      PlatformException(code: 'KeyringLocked', message: 'KeyringLocked'),
+    );
+    final store = ClientStateStore.withStorage(storage);
+    final state = ClientState(clientKey: key, hosts: const []);
+
+    await expectLater(
+      store.save(state),
+      throwsA(isA<KeyringLockedException>()),
+    );
+
+    expect(storage.operations, ['write']);
+  });
+
+  test('other platform storage errors are preserved', () async {
+    final storage = _ThrowingStorage(
+      PlatformException(code: 'StorageError', message: 'unavailable'),
+    );
+    final store = ClientStateStore.withStorage(storage);
+
+    await expectLater(
+      store.load(),
+      throwsA(
+        isA<PlatformException>().having(
+          (error) => error.code,
+          'code',
+          'StorageError',
+        ),
+      ),
+    );
+  });
 }
 
 final class _MemoryStorage implements SecureStateStorage {
@@ -89,4 +134,29 @@ final class _MemoryStorage implements SecureStateStorage {
 
   @override
   Future<void> write(String key, String value) async => values[key] = value;
+}
+
+final class _ThrowingStorage implements SecureStateStorage {
+  _ThrowingStorage(this.error);
+
+  final Object error;
+  final List<String> operations = [];
+
+  @override
+  Future<void> delete(String key) async {
+    operations.add('delete');
+    throw error;
+  }
+
+  @override
+  Future<String?> read(String key) async {
+    operations.add('read');
+    throw error;
+  }
+
+  @override
+  Future<void> write(String key, String value) async {
+    operations.add('write');
+    throw error;
+  }
 }

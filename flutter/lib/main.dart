@@ -2,8 +2,7 @@ import 'package:flterm/flterm.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
-import 'src/app.dart';
-import 'src/app_controller.dart';
+import 'src/bootstrap.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -14,6 +13,5 @@ Future<void> main() async {
       ),
     );
   }
-  final controller = await AppController.create();
-  runApp(ZukoApp(controller: controller));
+  runApp(const ZukoBootstrap());
 }

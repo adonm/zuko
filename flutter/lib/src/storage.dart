@@ -1,6 +1,7 @@
 import 'dart:math';
 
 import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
 import 'model.dart';
@@ -28,7 +29,9 @@ final class ClientStateStore {
   final SecureStateStorage _storage;
   bool recoveredInvalidState = false;
 
-  Future<ClientState> load() async {
+  Future<ClientState> load() => _translatePlatformErrors(_load);
+
+  Future<ClientState> _load() async {
     final current = await _storage.read(_stateKey);
     if (current != null) return _decodeOrReset(current);
 
@@ -69,7 +72,25 @@ final class ClientStateStore {
   }
 
   Future<void> save(ClientState state) =>
-      _storage.write(_stateKey, state.encode());
+      _translatePlatformErrors(() => _storage.write(_stateKey, state.encode()));
+
+  Future<T> _translatePlatformErrors<T>(Future<T> Function() operation) async {
+    try {
+      return await operation();
+    } on PlatformException catch (error) {
+      if (error.code == 'KeyringLocked') {
+        throw const KeyringLockedException();
+      }
+      rethrow;
+    }
+  }
+}
+
+final class KeyringLockedException implements Exception {
+  const KeyringLockedException();
+
+  @override
+  String toString() => 'The desktop keyring is locked.';
 }
 
 @visibleForTesting
