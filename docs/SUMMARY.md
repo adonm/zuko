@@ -23,6 +23,7 @@
 - [Design notes](design.md)
 - [Releasing](releasing.md)
   - [Distribution setup checklist](distribution-setup.md)
+  - [Linux delivery through FlatPark](flatpark.md)
   - [Apple store publishing](apple-publishing.md)
   - [Android store publishing](android-publishing.md)
   - [Microsoft Store publishing](windows-publishing.md)

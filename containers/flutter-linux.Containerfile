@@ -24,12 +24,11 @@ ENV MISE_DATA_DIR=/opt/mise/data \
     TAR_OPTIONS=--no-same-owner \
     PATH=/app/llvm/bin:/app/bin:/opt/mise/data/shims:/usr/bin:/bin
 
-COPY scripts/install-flatpak-llvm.sh /app/bin/install-flatpak-llvm
+COPY scripts/install-freedesktop-llvm.sh /app/bin/install-freedesktop-llvm
 
 RUN set -eux; \
-    chmod 0755 /app/bin/install-flatpak-llvm; \
-    /app/bin/install-flatpak-llvm /app/llvm; \
-    dbus-uuidgen --ensure=/etc/machine-id
+    chmod 0755 /app/bin/install-freedesktop-llvm; \
+    /app/bin/install-freedesktop-llvm /app/llvm
 
 COPY mise.toml /opt/zuko/mise.toml
 

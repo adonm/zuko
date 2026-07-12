@@ -91,8 +91,9 @@ flutter/build/linux/x64/release/bundle/zuko
 
 Keep the complete `bundle/` directory together. The supported packaged target
 is Wayland with Impeller/OpenGL; runtime machines also need GTK 3, libsecret,
-and an active Secret Service provider such as GNOME Keyring. See the [packaged
-Linux notes](../flutter/linux/README.md).
+and an active Secret Service provider such as GNOME Keyring. Tagged releases
+package this directory for [FlatPark](flatpark.md). See the [Linux runtime
+notes](../flutter/linux/README.md).
 
 ## Windows desktop
 
@@ -163,7 +164,7 @@ Current automation coverage is:
 |--------|-----------------------------|----------------------|
 | Shared Dart + web | Codemagic analyze, unit/widget tests, relay-only web build | Pages deploys after `main`; no release asset |
 | Android | Codemagic ARM64 debug APK | Codemagic unsigned APK/AAB signed, verified, and published by GitHub; the signed APK is then sent to Appetize |
-| Linux | Codemagic x86_64 release bundle | Codemagic x86_64 Wayland Flatpak verified and published by GitHub |
+| Linux | Codemagic x86_64 release bundle | Checksummed x86_64 bundle archive published by GitHub and consumed by FlatPark |
 | Windows | Codemagic x86_64 release bundle | Codemagic x86_64 ZIP verified and published by GitHub |
 | iOS/iPadOS | debug ARM64 Simulator app | signed IPA to internal TestFlight; matching-tag Simulator build to Appetize |
 | macOS | release application bundle | no automatic release asset; protected store package workflow is manual |

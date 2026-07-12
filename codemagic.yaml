@@ -420,7 +420,6 @@ workflows:
       changeset:
         includes:
           - flutter/**
-          - flatpak/**
           - codemagic.yaml
           - Justfile
           - mise.toml
@@ -502,7 +501,7 @@ workflows:
           $HOME/.local/bin/mise exec -- just build-flutter-android
           $HOME/.local/bin/mise exec -- just package-codemagic-android-unsigned "$CM_TAG"
 
-      - name: Build and smoke-test x86_64 Flatpak in pinned SDK
+      - name: Build and package x86_64 Linux client in pinned SDK
         script: |
           docker run --rm --privileged \
             --env CI=true \
@@ -521,12 +520,10 @@ workflows:
               git config --global --add safe.directory /workspace
               flutter_root="$(mise where http:flutter)"
               git config --global --add safe.directory "$flutter_root"
-              mise exec -- just install-flatpak-llvm /opt/llvm
+              mise exec -- just install-freedesktop-llvm /opt/llvm
               export PATH=/opt/llvm/bin:$PATH
-              dbus-uuidgen --ensure=/etc/machine-id
               mise exec -- just build-flutter-linux-release "$CM_COMMIT"
-              mise exec -- just prepare-flatpak-release "$CM_TAG" "$CM_COMMIT"
-              mise exec -- just package-flatpak-release "$CM_TAG" "$CM_COMMIT"
+              mise exec -- just package-linux-release "$CM_TAG" "$CM_COMMIT"
             '
 
       - name: Package Codemagic artifact handoff
@@ -613,10 +610,6 @@ workflows:
           $expectedBuild = 1800000000 + [int]$parts[0] * 1000000 + [int]$parts[1] * 1000 + [int]$parts[2]
           if ($pubspecVersion -ne "$version+$expectedBuild") {
             throw "Flutter version does not match Cargo metadata"
-          }
-          [xml]$appstream = Get-Content flatpak/dev.adonm.zuko.metainfo.xml
-          if ($appstream.component.releases.release[0].version -ne $version) {
-            throw "Flatpak version does not match Cargo metadata"
           }
           if ((git cat-file -t $env:CM_TAG) -ne "tag") {
             throw "release tag must be annotated"

@@ -3,7 +3,6 @@
 
 from __future__ import annotations
 
-import json
 import pathlib
 import plistlib
 import tomllib
@@ -89,13 +88,6 @@ def main() -> None:
     require_text("flutter/web/flutter_bootstrap.js", "enableWimp: true")
     require_text("flutter/web/flutter_bootstrap.js", "renderer: 'skwasm'")
 
-    manifest = json.loads((ROOT / "flatpak/dev.adonm.zuko.json").read_text())
-    permissions = set(manifest["finish-args"])
-    if "--socket=wayland" not in permissions:
-        raise SystemExit("Flutter config: Flatpak must expose Wayland")
-    if any("x11" in permission.lower() for permission in permissions):
-        raise SystemExit("Flutter config: Flatpak must not expose X11")
-
     for path, value in [
         ("codemagic.yaml", "flutter-linux-ci:"),
         ("codemagic.yaml", "flutter-linux-android-release:"),
@@ -105,19 +97,25 @@ def main() -> None:
         (".github/workflows/release.yml", "collect-codemagic-release.py"),
         (".github/workflows/release.yml", "sign-codemagic-android-release.sh"),
         ("scripts/collect-codemagic-release.py", "zuko-android-{tag}-unsigned.apk"),
-        ("scripts/package-flatpak.sh", "zuko-linux-$tag-x86_64.flatpak"),
+        ("scripts/package-linux-release.sh", "zuko-linux-$TAG-x86_64.tar.gz"),
+        ("scripts/collect-codemagic-release.py", "zuko-linux-{tag}-x86_64.tar.gz"),
+        ("scripts/publish-github-release.sh", "zuko-linux-$tag-x86_64.tar.gz"),
     ]:
         require_text(path, value)
-    forbid_text("scripts/package-flatpak.sh", "aarch64")
+    forbid_text("scripts/package-linux-release.sh", "aarch64")
     forbid_text("codemagic.yaml", "flutter-linux-aarch64")
     forbid_text(".github/workflows/release.yml", "linux-arm-build")
     for removed in [
         "scripts/build-flutter-linux-release.sh",
+        "scripts/build-flatpak-repository.sh",
         "scripts/install-flatpak-sysroot.sh",
+        "scripts/package-flatpak.sh",
+        "scripts/prepare-flatpak-release.py",
         "scripts/patch-flutter-linux-cross.py",
+        "scripts/validate-flatpak.sh",
     ]:
         if (ROOT / removed).exists():
-            raise SystemExit(f"Flutter config: obsolete ARM helper still exists: {removed}")
+            raise SystemExit(f"Flutter config: obsolete Linux packaging helper still exists: {removed}")
 
     print(f"Flutter config: Impeller policy uses beta revision {revision}")
 

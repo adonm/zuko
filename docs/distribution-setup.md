@@ -7,8 +7,8 @@ inputs.
 
 ## Common release controls
 
-- [ ] Keep Cargo and Flutter versions aligned (`0.9.20` and
-  `0.9.20+1800009020` at the time of writing); run
+- [ ] Keep Cargo and Flutter versions aligned (`0.9.21` and
+  `0.9.21+1800009021` at the time of writing); run
   `just check-release-metadata`.
 - [ ] Use application/package/bundle ID `dev.adonm.zuko` everywhere except the
   Partner Center-assigned Microsoft package identity.
@@ -24,7 +24,6 @@ inputs.
 | Scope | Name | Required values |
 |-------|------|-----------------|
 | Repository secrets | coordinated Flutter release | `CODEMAGIC_API_TOKEN` with access to Codemagic app `6a52dc14add8531e99f88b8a`; `ANDROID_KEYSTORE_BASE64`, `ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS`, and `ANDROID_KEY_PASSWORD` for signing exact Codemagic Android outputs |
-| Repository secret | static Flatpak testing repository | `FLATPAK_GPG_PRIVATE_KEY_BASE64`, containing the base64-encoded private export matching `flatpak/zuko-flatpak-repo.gpg` |
 | `google-play` environment | Play publication | `ANDROID_KEYSTORE_BASE64`, `ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS`, `ANDROID_KEY_PASSWORD`, and `GOOGLE_PLAY_SERVICE_ACCOUNT_JSON` |
 | `microsoft-store-package` environment | package/sign | variables `MSSTORE_PRODUCT_ID`, `MSSTORE_PACKAGE_IDENTITY_NAME`, `MSSTORE_PACKAGE_PUBLISHER`, `MSSTORE_PACKAGE_FAMILY_NAME`, `MSSTORE_PACKAGE_DISPLAY_NAME`, `MSSTORE_PUBLISHER_DISPLAY_NAME`; secrets `MSSTORE_SIGNING_PFX_BASE64`, `MSSTORE_SIGNING_PFX_PASSWORD` |
 | `microsoft-store-draft` environment | draft upload | the six package variables above plus `MSSTORE_TENANT_ID`, `MSSTORE_SELLER_ID`, `MSSTORE_CLIENT_ID`; secret `MSSTORE_CLIENT_SECRET` |
@@ -108,25 +107,23 @@ Details: [Microsoft Store publishing](windows-publishing.md) and the
   removed from local Cargo storage, but its endpoint scope did not permit API
   self-revocation.
 
-### Linux Flatpak and Flathub
+### Linux and FlatPark
 
-- [x] Create the dedicated static-repository signing identity, commit only its
-  public key, and store its private export in the repository secret.
-- [x] Publish the latest release bundle as a signed archive-z2 repository and
-  from-empty static delta under `/flatpak/` on the documentation site.
-- [ ] Build and test the release-attached bundle with `just container-flatpak`.
-- [ ] Install Flathub's official author tool with `just flatpak-author-setup`,
-  then run `just flatpak-author-lint`.
-- [ ] Capture and host real application screenshots, add them to AppStream, and
-  clear both `metainfo-missing-screenshots` and
-  `appstream-screenshots-not-mirrored-in-ostree` in repository lint.
-- [ ] Treat `flatpak/dev.adonm.zuko.json` as a release-bundle manifest, not a
-  Flathub source-build submission. Read the current
-  [submission guide](https://docs.flathub.org/docs/for-app-authors/submission)
-  and [requirements](https://docs.flathub.org/docs/for-app-authors/requirements)
-  before preparing any separate submission.
+- [ ] Publish the versioned x86_64 Flutter Linux `bundle/` archive and SHA-256
+  sidecar on every immutable GitHub Release.
+- [ ] Keep the FlatPark manifest on Freedesktop 25.08 while it is the catalog's
+  current runtime, with only network, IPC, Wayland, DRI, and Secret Service
+  access.
+- [ ] Test the FlatPark package build, installation, launch, locked/unlocked
+  keyring behavior, and a real Iroh connection before submitting it.
+- [ ] Keep FlatPark's update resolver restricted to the exact versioned archive
+  on the official `adonm/zuko` GitHub Release.
+- [ ] Review automated FlatPark checksum/update pull requests; do not modify or
+  replace immutable release assets.
 
-Details: [Flatpak packaging](../flatpak/README.md).
+Zuko stores no Flatpak repository signing credential. FlatPark owns package
+signing and repository hosting. Details: [Linux delivery through
+FlatPark](flatpark.md).
 
 ## Release order
 
@@ -134,7 +131,8 @@ Details: [Flatpak packaging](../flatpak/README.md).
    GitHub environments.
 2. Publish the `crossterm-zuko` bootstrap dependency and verify Zuko packaging.
 3. Cut the tag and let GitHub trigger exact Codemagic release builds, verify
-   their checksummed handoff, and publish the coordinated GitHub Release.
+   their checksummed handoff, and publish the coordinated GitHub Release. The
+   Linux archive then becomes the immutable input to FlatPark.
 4. Confirm the automatic TestFlight build, then publish Google Play internal,
    Mac App Store, and Microsoft draft builds through their protected workflows.
 5. Review each portal's retained artifact, metadata, policy answers, and human approval before production submission.

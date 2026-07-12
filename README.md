@@ -53,7 +53,7 @@ logs, and first connection. Windows hosts can use the documented
 | Tier | Surface | Commitment |
 |------|---------|------------|
 | **Core** | Linux/macOS host and Rust CLI | Primary supported workflow |
-| **Beta** | Flutter Android, iOS/iPadOS, macOS, and Linux clients | Shared graphical client with signed or packaged delivery paths |
+| **Beta** | Flutter Android, iOS/iPadOS, macOS, and Linux clients | Shared graphical client with store, preview, or community package delivery paths |
 | **Labs** | Flutter web/Windows clients and Linux `zuko app` | Deployed or buildable, with channel-specific gaps documented below |
 
 See [Clients](docs/clients.md) for the exact capabilities and delivery channel
@@ -61,7 +61,7 @@ of each target, and the [client build guide](docs/building-clients.md) for fresh
 Android, Apple, web, Linux, and Windows builds.
 
 Fully signed public-store delivery across the graphical targets is still being
-worked on. For testing, the checksummed packages on the
+worked on. For testing, the checksummed artifacts on the
 [latest GitHub Release](https://github.com/adonm/zuko/releases/latest) are the
 preferred source; the Clients page documents platform-specific gaps and the
 separate internal TestFlight channel.

@@ -129,43 +129,17 @@ package-apple-development:
 package-ios-preview version:
     scripts/package-ios-preview.sh "{{ version }}"
 
-[group('flatpak')]
-flatpak-validate:
-    bash scripts/validate-flatpak.sh
-
-[group('flatpak')]
-flatpak-author-setup:
-    flatpak remote-add --if-not-exists --user flathub https://dl.flathub.org/repo/flathub.flatpakrepo
-    flatpak install --user --noninteractive -y flathub org.flatpak.Builder
-
-[group('flatpak')]
-flatpak-author-lint:
-    flatpak run --command=flatpak-builder-lint org.flatpak.Builder manifest flatpak/dev.adonm.zuko.json
-    if test -d build/flatpak/repo; then flatpak run --command=flatpak-builder-lint org.flatpak.Builder repo build/flatpak/repo; fi
-
-[group('flatpak')]
-flatpak-package tag='': build-flutter-linux
-    bash scripts/package-flatpak.sh "{{ tag }}"
-
-[group('flatpak')]
-install-flatpak-llvm destination='/opt/llvm':
-    bash scripts/install-flatpak-llvm.sh "{{ destination }}"
-
-[group('flatpak')]
-prepare-flatpak-release tag sha:
-    python3 scripts/prepare-flatpak-release.py "{{ tag }}" "{{ sha }}"
-
-[group('flatpak')]
-package-flatpak-release tag sha:
-    export SOURCE_DATE_EPOCH="$(git show -s --format=%ct '{{ sha }}')"; dbus-run-session -- bash scripts/package-flatpak.sh "{{ tag }}"
+[group('flutter')]
+package-linux-release tag sha:
+    bash scripts/package-linux-release.sh "{{ tag }}" "{{ sha }}"
 
 [group('flutter')]
-container-flutter mode='check':
-    bash scripts/container-flutter.sh "{{ mode }}"
+install-freedesktop-llvm destination='/opt/llvm':
+    bash scripts/install-freedesktop-llvm.sh "{{ destination }}"
 
-[group('flatpak')]
-container-flatpak:
-    bash scripts/container-flutter.sh flatpak
+[group('flutter')]
+container-linux mode='check':
+    bash scripts/container-linux.sh "{{ mode }}"
 
 [group('docs')]
 build-docs:

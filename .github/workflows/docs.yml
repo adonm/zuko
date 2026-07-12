@@ -13,18 +13,13 @@ on:
     branches: [main]
     paths:
       - "docs/**"
-      - "flatpak/**"
       - "book.toml"
       - "Justfile"
       - "mise.toml"
       - "scripts/build-web.sh"
       - "scripts/finalize-web-build.py"
-      - "scripts/build-flatpak-repository.sh"
       - "flutter/**"
       - ".github/workflows/docs.yml"
-  workflow_run:
-    workflows: [release]
-    types: [completed]
   workflow_dispatch:
 
 permissions:
@@ -41,7 +36,6 @@ concurrency:
 jobs:
   build:
     name: build mdbook
-    if: ${{ github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
@@ -66,7 +60,7 @@ jobs:
         run: mise exec -- just test-installer
 
       - name: Install site build system deps
-        run: sudo apt-get update && sudo apt-get install -y clang flatpak ostree
+        run: sudo apt-get update && sudo apt-get install -y clang
 
       - name: Build site
         run: mise exec -- just build-docs
@@ -76,26 +70,6 @@ jobs:
 
       - name: Build web client
         run: mise exec -- just build-web
-
-      - name: Build signed Flatpak testing repository
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          FLATPAK_GPG_PRIVATE_KEY_BASE64: ${{ secrets.FLATPAK_GPG_PRIVATE_KEY_BASE64 }}
-        run: |
-          tag="$(gh release view --repo "$GITHUB_REPOSITORY" --json tagName --jq .tagName)"
-          asset="zuko-linux-${tag}-x86_64.flatpak"
-          mkdir -p .tmp/site-flatpak target/book/flatpak
-          gh release download "$tag" \
-            --repo "$GITHUB_REPOSITORY" \
-            --pattern "$asset" \
-            --pattern "$asset.sha256" \
-            --dir .tmp/site-flatpak
-          (cd .tmp/site-flatpak && sha256sum --check "$asset.sha256")
-          scripts/build-flatpak-repository.sh \
-            ".tmp/site-flatpak/$asset" target/book/flatpak/repo
-          install -m 0644 flatpak/zuko.flatpakrepo target/book/flatpak/
-          install -m 0644 flatpak/zuko.flatpakref target/book/flatpak/
-          test -s target/book/flatpak/repo/summary.sig
 
       - name: Setup Pages
         uses: actions/configure-pages@983d7736d9b0ae728b81ab479565c72886d7745b # v5.0.0

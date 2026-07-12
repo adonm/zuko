@@ -136,8 +136,8 @@ def expected_files(tag: str) -> dict[str, set[str]]:
         f"zuko-android-{tag}-unsigned.aab",
     }
     linux = {
-        f"zuko-linux-{tag}-x86_64.flatpak",
-        f"zuko-linux-{tag}-x86_64.flatpak.sha256",
+        f"zuko-linux-{tag}-x86_64.tar.gz",
+        f"zuko-linux-{tag}-x86_64.tar.gz.sha256",
     }
     windows = {
         f"zuko-windows-{tag}-x86_64.zip",

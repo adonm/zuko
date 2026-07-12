@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-readonly IMAGE=localhost/zuko-flutter-flatpak:2026.07
-readonly CONTAINERFILE=containers/flutter-flatpak.Containerfile
-readonly IGNORE_FILE=containers/flutter-flatpak.ignore
+readonly IMAGE=localhost/zuko-flutter-linux:2026.07
+readonly CONTAINERFILE=containers/flutter-linux.Containerfile
+readonly IGNORE_FILE=containers/flutter-linux.ignore
 
 root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 mode=${1:-check}
@@ -20,14 +20,11 @@ case "$mode" in
   linux)
     command='rm -rf flutter/build/linux && just build-flutter-linux'
     ;;
-  flatpak)
-    command='rm -rf flutter/build/linux && dbus-run-session -- just flatpak-package'
-    ;;
   all)
-    command='just flutter-check && rm -rf flutter/build/linux && dbus-run-session -- just flatpak-package'
+    command='just flutter-check && rm -rf flutter/build/linux && just build-flutter-linux && just package-linux-release "v$(scripts/version.sh)" HEAD'
     ;;
   *)
-    echo "usage: container-flutter.sh <check|linux|flatpak|all>" >&2
+    echo "usage: container-linux.sh <check|linux|all>" >&2
     exit 2
     ;;
 esac

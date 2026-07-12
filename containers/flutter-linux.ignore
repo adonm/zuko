@@ -3,4 +3,4 @@
 !.flutter-version
 !scripts/
 !scripts/flutter-sdk.py
-!scripts/install-flatpak-llvm.sh
+!scripts/install-freedesktop-llvm.sh

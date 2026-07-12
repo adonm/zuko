@@ -160,7 +160,7 @@ representative physical-device coverage remain open.
 |--------|--------------|
 | **Android** | Signed APK/AAB, Appetize preview, upgrade test, physical phone/tablet tests, Play-ready metadata |
 | **Web** | Chrome/Firefox/Safari tests, strict CSP, origin review, deployed `/web/` smoke test |
-| **Linux** | Reproducible Wayland-only Flatpak, Impeller rendering, Secret Service behavior, install/uninstall documentation |
+| **Linux** | Reproducible Wayland-only release archive and FlatPark package, Impeller rendering, Secret Service behavior, install/uninstall documentation |
 | **Windows** | Promote the protected MSIX/MSIXBundle path, verify protected-storage behavior, URI registration, and upgrade/uninstall tests |
 | **iOS/iPadOS** | Signed TestFlight build, physical-device Iroh/terminal/lifecycle tests, replacement migration decision |
 | **macOS** | Mac App Store package/upload validation, Keychain behavior, keyboard/accessibility and upgrade tests |

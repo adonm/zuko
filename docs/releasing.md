@@ -4,7 +4,7 @@ Tags matching `vX.Y.Z` trigger the coordinated CLI and Flutter release graph:
 
 - Rust CLI/host tarballs for Linux and macOS, x86_64 and aarch64;
 - signed Flutter Android APK and AAB;
-- Flutter Linux x86_64 Flatpak;
+- Flutter Linux x86_64 archive consumed by FlatPark;
 - Flutter Windows x86_64 bundle;
 
 Codemagic builds the Android, Linux, Windows, and Apple clients from each
@@ -21,7 +21,7 @@ Published assets follow these names (`TAG` includes the leading `v`):
 |---------|-------|
 | CLI/host | `zuko-<rust-target>.tar.gz` |
 | Android | `zuko-android-TAG-signed.apk` and `.aab` |
-| Linux client | `zuko-linux-TAG-x86_64.flatpak` |
+| Linux client | `zuko-linux-TAG-x86_64.tar.gz` |
 | Windows client | `zuko-windows-TAG-x86_64.zip` |
 
 Each payload has a matching `.sha256` sidecar. End-user notes are in
@@ -113,15 +113,17 @@ documented in [Android store publishing](android-publishing.md).
 
 ## Linux and Windows
 
-Flutter Linux ships as an x86_64 Flatpak built and smoke-tested in the pinned
-Freedesktop container on Codemagic. Windows is built on Codemagic's Windows
-runner and ships as a versioned x86_64 ZIP while Microsoft Store packaging is
-validated. Both have SHA-256 sidecars.
+Flutter Linux ships as a deterministic x86_64 `bundle/` archive built and
+linkage-checked against the pinned Freedesktop SDK on Codemagic. The FlatPark
+package will download that official archive by immutable release URL and pin
+its checksum and size; FlatPark owns Flatpak wrapping, signing, repository
+hosting, and updates. Windows is built on Codemagic's Windows runner and ships
+as a versioned x86_64 ZIP while Microsoft Store packaging is validated. Both
+have SHA-256 sidecars.
 The protected Store workflow is documented in
 [Microsoft Store publishing](windows-publishing.md).
-The release-attached Flatpak is separate from Flathub submission. Use Flathub's
-official `org.flatpak.Builder` for submission-oriented linting and follow the
-current policy caveats in [Flatpak packaging](../flatpak/README.md).
+The FlatPark registry package is maintained separately from this source tree;
+see [Linux delivery through FlatPark](flatpark.md).
 
 ## Flutter Apple distribution
 
@@ -153,7 +155,7 @@ Codemagic owns Flutter tests and platform builds on its target runners:
 
 - shared Dart analysis/tests and the web compile gate;
 - Android debug and unsigned release builds; GitHub owns release signing;
-- x86_64 Linux bundle and Flatpak release builds;
+- x86_64 Linux bundle and release archive builds;
 - x86_64 Windows bundle and ZIP release builds;
 - iOS Simulator and macOS compile gates for Flutter changes;
 - signed iOS validation and immutable-tag TestFlight uploads;
