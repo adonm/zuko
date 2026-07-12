@@ -7,8 +7,8 @@ inputs.
 
 ## Common release controls
 
-- [ ] Keep Cargo and Flutter versions aligned (`0.9.16` and
-  `0.9.16+1800009016` at the time of writing); run
+- [ ] Keep Cargo and Flutter versions aligned (`0.9.17` and
+  `0.9.17+1800009017` at the time of writing); run
   `just check-release-metadata`.
 - [ ] Use application/package/bundle ID `dev.adonm.zuko` everywhere except the
   Partner Center-assigned Microsoft package identity.
@@ -23,7 +23,7 @@ inputs.
 
 | Scope | Name | Required values |
 |-------|------|-----------------|
-| Repository secret | coordinated Flutter release | `CODEMAGIC_API_TOKEN` with access to start builds and download artifacts for Codemagic app `6a52dc14add8531e99f88b8a` |
+| Repository secrets | coordinated Flutter release | `CODEMAGIC_API_TOKEN` with access to Codemagic app `6a52dc14add8531e99f88b8a`; `ANDROID_KEYSTORE_BASE64`, `ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS`, and `ANDROID_KEY_PASSWORD` for signing exact Codemagic Android outputs |
 | `google-play` environment | Play publication | `ANDROID_KEYSTORE_BASE64`, `ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS`, `ANDROID_KEY_PASSWORD`, and `GOOGLE_PLAY_SERVICE_ACCOUNT_JSON` |
 | `microsoft-store-package` environment | package/sign | variables `MSSTORE_PRODUCT_ID`, `MSSTORE_PACKAGE_IDENTITY_NAME`, `MSSTORE_PACKAGE_PUBLISHER`, `MSSTORE_PACKAGE_FAMILY_NAME`, `MSSTORE_PACKAGE_DISPLAY_NAME`, `MSSTORE_PUBLISHER_DISPLAY_NAME`; secrets `MSSTORE_SIGNING_PFX_BASE64`, `MSSTORE_SIGNING_PFX_PASSWORD` |
 | `microsoft-store-draft` environment | draft upload | the six package variables above plus `MSSTORE_TENANT_ID`, `MSSTORE_SELLER_ID`, `MSSTORE_CLIENT_ID`; secret `MSSTORE_CLIENT_SECRET` |
@@ -40,13 +40,14 @@ repeat `MSSTORE_CLIENT_SECRET` in both draft and submit.
 |-------|------|-----------------|
 | Developer Portal integration | `zuko-app-store` | App Store Connect App Manager issuer ID, key ID, and `.p8` key |
 | iOS signing identity | `dev.adonm.zuko` | matching Apple Distribution certificate and App Store provisioning profile |
-| Android signing identity | `zuko-android` | existing release keystore, alias, store password, and key password |
+| Android signing identity | `zuko-android` | optional for the manual Appetize workflow; existing release keystore, alias, store password, and key password |
 | Variable group | `codemagic_api` | secret `CODEMAGIC_API_TOKEN` used by the existing iOS artifact handoff |
 | Variable group | `appetize_credentials` | `APPETIZE_API_TOKEN`, `APPETIZE_ANDROID_PUBLIC_KEY`, `APPETIZE_IOS_PUBLIC_KEY` |
 
 Codemagic's YAML workflows expose signing identities only to the workflows that
-need them. Compile gates have no store or Appetize credentials. GitHub receives
-only the Codemagic API token; Android and Apple signing material remains in
+need them. Compile gates have no store or Appetize credentials. The coordinated
+release passes no GitHub credential into Codemagic: GitHub retrieves unsigned
+Android outputs and signs them locally, while Apple signing material remains in
 Codemagic.
 
 ## First-time portal work

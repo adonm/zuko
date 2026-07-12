@@ -162,7 +162,7 @@ Current automation coverage is:
 | Target | Pull request / `main` build | Release-tag delivery |
 |--------|-----------------------------|----------------------|
 | Shared Dart + web | Codemagic analyze, unit/widget tests, relay-only web build | Pages deploys after `main`; no release asset |
-| Android | Codemagic ARM64 debug APK | Codemagic signed APK/AAB verified and published by GitHub; manual Appetize update |
+| Android | Codemagic ARM64 debug APK | Codemagic unsigned APK/AAB signed, verified, and published by GitHub; manual Appetize update |
 | Linux | Codemagic x86_64 release bundle | Codemagic x86_64 Wayland Flatpak verified and published by GitHub |
 | Windows | Codemagic x86_64 release bundle | Codemagic x86_64 ZIP verified and published by GitHub |
 | iOS/iPadOS | debug ARM64 Simulator app | signed IPA to internal TestFlight; manual Appetize Simulator update |

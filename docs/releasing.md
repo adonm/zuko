@@ -95,10 +95,11 @@ repository.
 
 ## Mobile Appetize previews
 
-Retain Codemagic's `zuko-android` signing identity and application ID
-`dev.adonm.zuko` so package upgrades remain valid. The
-`flutter-linux-android-release` workflow verifies APK and AAB signatures and
-writes SHA-256 sidecars before GitHub retrieves the exact artifacts.
+Retain the existing Android signing key and application ID `dev.adonm.zuko` so
+package upgrades remain valid. Codemagic's `flutter-linux-android-release`
+workflow builds unsigned APK and AAB inputs. GitHub retrieves those exact
+artifacts, signs them with repository-scoped secrets, verifies their signing
+certificate and metadata, and writes SHA-256 sidecars before publication.
 Codemagic's manual `mobile-appetize-release` workflow independently builds a
 signed Android APK and unsigned ARM iOS Simulator package from an immutable
 tag, validates them, and updates both Appetize apps after its credentials are
@@ -149,7 +150,7 @@ documented in [Apple store publishing](apple-publishing.md).
 Codemagic owns Flutter tests and platform builds on its target runners:
 
 - shared Dart analysis/tests and the web compile gate;
-- Android debug and signed release builds;
+- Android debug and unsigned release builds; GitHub owns release signing;
 - x86_64 Linux bundle and Flatpak release builds;
 - x86_64 Windows bundle and ZIP release builds;
 - iOS Simulator and macOS compile gates for Flutter changes;

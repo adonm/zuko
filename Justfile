@@ -216,6 +216,10 @@ package-android-release tag signing_mode:
     scripts/package-android-release.sh "{{ tag }}" "{{ signing_mode }}"
 
 [group('release')]
+package-codemagic-android-unsigned tag:
+    scripts/package-codemagic-android-unsigned.sh "{{ tag }}"
+
+[group('release')]
 prepare-android-store-aab tag asset package version build_number:
     scripts/prepare-android-store-aab.sh "{{ tag }}" "{{ asset }}" "{{ package }}" "{{ version }}" "{{ build_number }}"
 

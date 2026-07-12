@@ -132,10 +132,8 @@ def download(
 
 def expected_files(tag: str) -> dict[str, set[str]]:
     android = {
-        f"zuko-android-{tag}-signed.apk",
-        f"zuko-android-{tag}-signed.apk.sha256",
-        f"zuko-android-{tag}-signed.aab",
-        f"zuko-android-{tag}-signed.aab.sha256",
+        f"zuko-android-{tag}-unsigned.apk",
+        f"zuko-android-{tag}-unsigned.aab",
     }
     linux = {
         f"zuko-linux-{tag}-x86_64.flatpak",

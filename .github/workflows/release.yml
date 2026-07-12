@@ -137,6 +137,30 @@ jobs:
           python3 scripts/collect-codemagic-release.py
           "$TAG" "$RELEASE_SHA" codemagic-assets
 
+      - name: Set up Java 17
+        uses: actions/setup-java@0f481fcb613427c0f801b606911222b5b6f3083a # v5.5.0
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Android signing tools
+        uses: android-actions/setup-android@40fd30fb8d7440372e1316f5d1809ec01dcd3699 # v4.0.1
+        with:
+          packages: >-
+            platform-tools
+            build-tools;36.0.0
+
+      - uses: ./.github/actions/setup-codemagic
+
+      - name: Sign and verify exact Android artifacts
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+          TAG: ${{ needs.prepare.outputs.tag }}
+        run: scripts/sign-codemagic-android-release.sh "$TAG" codemagic-assets
+
       - name: Upload collected Flutter release assets
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:

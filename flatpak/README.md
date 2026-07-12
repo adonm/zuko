@@ -99,11 +99,11 @@ Secret Service integration against the user's desktop:
 
 ```sh
 flatpak --user install --reinstall \
-  dist/linux/zuko-linux-v0.9.16-x86_64.flatpak
+  dist/linux/zuko-linux-v0.9.17-x86_64.flatpak
 flatpak run dev.adonm.zuko
 flatpak info --show-permissions dev.adonm.zuko
 (cd dist/linux && \
-  sha256sum --check zuko-linux-v0.9.16-x86_64.flatpak.sha256)
+  sha256sum --check zuko-linux-v0.9.17-x86_64.flatpak.sha256)
 ```
 
 The sandbox grants network access, native Wayland, DRI, and only the

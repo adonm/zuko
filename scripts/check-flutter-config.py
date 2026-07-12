@@ -101,7 +101,10 @@ def main() -> None:
         ("codemagic.yaml", "flutter-linux-android-release:"),
         ("codemagic.yaml", "flutter-windows-ci:"),
         ("codemagic.yaml", "flutter-windows-release:"),
+        ("codemagic.yaml", "package-codemagic-android-unsigned"),
         (".github/workflows/release.yml", "collect-codemagic-release.py"),
+        (".github/workflows/release.yml", "sign-codemagic-android-release.sh"),
+        ("scripts/collect-codemagic-release.py", "zuko-android-{tag}-unsigned.apk"),
         ("scripts/package-flatpak.sh", "zuko-linux-$tag-x86_64.flatpak"),
     ]:
         require_text(path, value)
