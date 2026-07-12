@@ -23,6 +23,7 @@ if [[ "$target" != linux-arm64 ]] || [[ ! -d "$sysroot/usr" ]]; then
   exit 1
 fi
 
+python3 ../scripts/patch-flutter-linux-cross.py "$(command -v flutter)"
 export PKG_CONFIG_ALLOW_CROSS=1
 export PKG_CONFIG_SYSROOT_DIR="$sysroot"
 export PKG_CONFIG_LIBDIR="$sysroot/usr/lib/aarch64-linux-gnu/pkgconfig:$sysroot/usr/share/pkgconfig"

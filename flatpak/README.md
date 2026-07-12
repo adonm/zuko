@@ -19,8 +19,10 @@ resolvers. Instead:
 1. The official checksum-pinned Flutter `3.46.0-0.3.pre` beta archive in
    `mise.toml`, Rust `1.96.1`, LLVM 20.1.8, `pubspec.lock`, and `Cargo.lock`
    produce the Impeller Linux release bundle. ARM64 is cross-built with
-   Flutter's supported `linux-arm64` target and Ubuntu's multi-target clang/lld
-   against the pinned aarch64 Freedesktop SDK sysroot.
+   Flutter's `linux-arm64` target and Ubuntu's multi-target clang/lld against
+   the pinned aarch64 Freedesktop SDK sysroot. A fail-closed source patch
+   removes the pinned Flutter revision's legacy guard around its implemented
+   x64-to-arm64 CMake path.
 2. `scripts/package-flatpak.sh` hashes and normalizes that bundle, checks its
    native linkage, and imports only local files with `flatpak-builder
    --disable-download`. It then installs the result into a temporary user

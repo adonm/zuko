@@ -97,6 +97,10 @@ def main() -> None:
     for path, value in [
         (".github/workflows/release.yml", "runs-on: ubuntu-24.04-arm"),
         (".github/workflows/release.yml", "linux-arm64 /opt/aarch64-sysroot"),
+        (
+            "scripts/patch-flutter-linux-cross.py",
+            "Cross-build from Linux x64 host to Linux arm64 target is not currently supported.",
+        ),
         ("scripts/package-flatpak.sh", "zuko-linux-$tag-$arch.flatpak"),
         (
             "scripts/package-flatpak.sh",
