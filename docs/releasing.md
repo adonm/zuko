@@ -100,11 +100,11 @@ closed if any is missing:
 
 Retain the existing signing key and application ID `dev.adonm.zuko` so package
 upgrades remain valid. The GitHub workflow verifies APK and AAB signatures and
-writes SHA-256 sidecars for release assets. Codemagic's
+writes SHA-256 sidecars for release assets. Codemagic's manual
 `mobile-appetize-release` workflow independently rebuilds a signed Android APK
-and unsigned ARM iOS Simulator package from the same immutable tag, validates
-them, and updates both Appetize apps. Appetize setup is documented in
-[mobile previews](appetize.md).
+and unsigned ARM iOS Simulator package from an immutable tag, validates them,
+and updates both Appetize apps after its credentials are configured. Appetize
+setup is documented in [mobile previews](appetize.md).
 
 Pull-request CI builds a debug APK. Debug or unsigned outputs are never attached
 to a GitHub Release. Google Play draft/release publication is documented in
@@ -132,12 +132,10 @@ and upload remain isolated:
 - Codemagic's manual `ios-signing-validation` workflow creates and validates a
   signed IPA from the selected branch without uploading it or claiming a
   release identity;
-- GitHub's manual iOS workflow remains available for independent signing
-  validation and emergency upload of a checksum-pinned GitHub artifact;
-- macOS `lane=build` creates and validates a signed, sandboxed Mac App Store
-  installer package;
-- macOS `lane=upload` passes through the protected `apple-store` environment
-  before validating and uploading that package.
+- GitHub stores no Apple signing or App Store Connect credentials and has no
+  Apple publishing workflow;
+- macOS remains a Codemagic development compile artifact, not an automated Mac
+  App Store package.
 
 The Apple client uses bundle ID `dev.adonm.zuko` and the same deterministic
 semantic build number as Android. Codemagic's hosted Apple Silicon environment
@@ -153,14 +151,14 @@ mobile signing identities, and App Store Connect integration:
 
 - iOS Simulator and macOS compile gates for Flutter changes;
 - signed iOS validation and immutable-tag TestFlight uploads;
-- signed Android and ARM iOS Simulator Appetize previews.
+- manually started signed Android and ARM iOS Simulator Appetize previews.
 
 GitHub remains the source-of-truth orchestrator for Rust checks and binaries,
 documentation and web deployment, Android/Linux/Windows release assets,
 Flatpak container builds, and the coordinated GitHub Release. Approval-gated
-crates.io, Google Play, Mac App Store, and Microsoft Store operations remain in
-GitHub environments until Codemagic offers an equivalent reviewer boundary and
-cross-provider release assets can be handed off without rebuilding.
+crates.io, Google Play, and Microsoft Store operations remain in GitHub
+environments. Apple signing and TestFlight credentials exist only in
+Codemagic.
 
 ## Linux `zuko app` support
 

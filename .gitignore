@@ -59,9 +59,8 @@ testflight_feedback/
 REVIEW.md
 ISSUES.md
 
-# Apple signing material produced by `mise run setup-ios-signing`. Default
-# workspace is outside the repo (~/.config/zuko/ios-signing), but gitignore
-# these anyway in case someone overrides ZUKO_IOS_SIGNING_DIR into the tree.
+# Apple signing material must remain in Codemagic or the maintainer's secret
+# store and must never be committed.
 *.p12
 *.cer
 *.mobileprovision

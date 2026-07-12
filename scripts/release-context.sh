@@ -25,6 +25,14 @@ fi
 # A supplied tag is a publication identity and must resolve to this exact
 # checkout. Omitting it is reserved for non-publishing branch validation.
 if [ "$#" -eq 1 ]; then
+  tag_type="$(git cat-file -t "$TAG" 2>/dev/null)" || {
+    echo "release tag does not exist in this checkout: $TAG" >&2
+    exit 1
+  }
+  if [ "$tag_type" != tag ]; then
+    echo "release tag must be annotated: $TAG" >&2
+    exit 1
+  fi
   tag_sha="$(git rev-parse "$TAG^{commit}" 2>/dev/null)" || {
     echo "release tag does not exist in this checkout: $TAG" >&2
     exit 1

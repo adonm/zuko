@@ -1,6 +1,7 @@
 # Appetize mobile previews
 
-Tagged releases update two existing Appetize apps:
+The manual Codemagic release workflow updates two existing Appetize apps from
+an immutable annotated release tag:
 
 - Android receives a signed Flutter APK rebuilt from the immutable release tag
   with the same upload key as the GitHub Release APK.
@@ -32,8 +33,10 @@ Appetize is a preview channel, not a source of release artifacts or credentials.
    keystore with reference name `zuko-android`, its alias, and both passwords.
 
 The `mobile-appetize-release` workflow imports that variable group and signing
-identity only for immutable tag builds. Pull requests and ordinary branch
-builds cannot upload to Appetize.
+identity only when a maintainer explicitly starts it against an immutable tag.
+It is intentionally not an automatic tag trigger until both preview channels
+are configured. Pull requests and ordinary branch builds cannot upload to
+Appetize.
 
 ## Verify credentials
 

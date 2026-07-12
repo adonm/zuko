@@ -33,10 +33,6 @@ jobs:
       - name: Clippy + tests
         run: mise exec -- just test
 
-      - name: Build (release)
-        if: ${{ github.event_name != 'pull_request' }}
-        run: mise exec -- just build
-
       - name: End-to-end (connect, pairing, revocation)
         if: ${{ matrix.os == 'ubuntu-latest' }}
         # Runs the #[ignore] e2e integration test in tests/e2e.rs: spawns
@@ -60,11 +56,3 @@ jobs:
         # actionlint validates workflow syntax, action versions/SHAs,
         # permissions, expression contexts. Ubuntu leg only.
         run: mise exec -- just lint-ci
-
-      - name: Upload binary
-        if: ${{ github.event_name != 'pull_request' }}
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: zuko-${{ runner.os }}
-          path: target/release/zuko
-          if-no-files-found: error

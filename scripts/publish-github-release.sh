@@ -12,8 +12,12 @@ tag="$1"
 echo "Publishing $tag with:"
 ls -1 assets
 if gh release view "$tag" >/dev/null 2>&1; then
-  release_id="$(gh release view "$tag" --json databaseId --jq .databaseId)"
-  gh release edit "$tag" --draft
+  release_json="$(gh release view "$tag" --json databaseId,isDraft)"
+  release_id="$(jq -r .databaseId <<< "$release_json")"
+  if [ "$(jq -r .isDraft <<< "$release_json")" != true ]; then
+    echo "refusing to modify published immutable release: $tag" >&2
+    exit 1
+  fi
 else
   gh release create "$tag" --draft --title "$tag" --generate-notes --verify-tag
   release_id="$(gh release view "$tag" --json databaseId --jq .databaseId)"

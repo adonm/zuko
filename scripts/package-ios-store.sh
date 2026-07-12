@@ -10,7 +10,7 @@ ipas=(flutter/build/ios/ipa/*.ipa)
 [ "${#ipas[@]}" -eq 1 ] || { echo "expected one IPA" >&2; exit 1; }
 archive="${archives[0]}"
 ipa="${ipas[0]}"
-scripts/apple-validate-package.sh ios "$archive" "$ipa" \
+scripts/apple-validate-package.sh "$archive" "$ipa" \
   "$ZUKO_VERSION" "$ZUKO_BUILD_NUMBER"
 mkdir -p dist/flutter-ios
 cp "$ipa" dist/flutter-ios/Zuko-Flutter.ipa

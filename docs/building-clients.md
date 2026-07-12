@@ -139,24 +139,21 @@ flutter/build/ios/iphonesimulator/Runner.app
 flutter/build/macos/Build/Products/Release/Zuko.app
 ```
 
-Flutter Apple CI compiles both targets on pull requests, `main`, and manual
-runs. It uploads the simulator and macOS ZIP artifacts only for `main` and
-manual runs; those development artifacts are retained for seven days and are
-not GitHub Release assets. Every release tag separately runs
-`release-flutter-ios`, producing a signed IPA and uploading it to internal
-TestFlight. Maintainers can manually dispatch the workflow for signed IPA
-validation, but manual runs never upload to TestFlight. Apple builds use bundle ID
-`dev.adonm.zuko` and the protected `apple-store` environment.
+Codemagic's `flutter-apple-ci` compiles and packages both targets for relevant
+pull requests and `main` changes. Those development artifacts are not GitHub
+Release assets. Every annotated release tag separately runs
+`ios-testflight-release`, producing a signed IPA and uploading it for internal
+TestFlight processing. Maintainers can run `ios-signing-validation` against a
+branch without publishing. Apple builds use bundle ID `dev.adonm.zuko` and all
+signing credentials remain in Codemagic.
 
 ## Matching CI
 
 The source of truth for build environments is:
 
-- `.github/workflows/build-flutter.yml` for development artifacts;
+- `codemagic.yaml` for Apple development artifacts and normal TestFlight;
+- `.github/workflows/build-flutter.yml` for non-Apple Flutter CI;
 - `.github/workflows/release.yml` for signed/versioned Flutter packages;
-- `.github/workflows/release-flutter-ios.yml` for signed Flutter IPA/TestFlight;
-- `.github/workflows/release-flutter-macos.yml` for the signed Mac App Store
-  package and optional upload;
 - `Justfile` for supported local recipes.
 
 Current automation coverage is:
@@ -164,10 +161,10 @@ Current automation coverage is:
 | Target | Pull request / `main` build | Release-tag delivery |
 |--------|-----------------------------|----------------------|
 | Shared Dart + web | analyze, unit/widget tests, relay-only web build | Pages deploys after `main`; no release asset |
-| Android | ARM64 debug APK | signed APK/AAB release assets and Android Appetize update |
+| Android | ARM64 debug APK | signed APK/AAB release assets; manual Appetize update |
 | Linux | x86_64 release bundle | x86_64 Wayland Flatpak release asset |
 | Windows | x86_64 release bundle | x86_64 ZIP release asset |
-| iOS/iPadOS | debug ARM64 Simulator app | Appetize Simulator update plus signed IPA to internal TestFlight |
+| iOS/iPadOS | debug ARM64 Simulator app | signed IPA to internal TestFlight; manual Appetize Simulator update |
 | macOS | release application bundle | no automatic release asset; protected store package workflow is manual |
 
 Compilation in this matrix does not imply store publication or the

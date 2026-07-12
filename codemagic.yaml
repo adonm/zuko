@@ -100,15 +100,14 @@ workflows:
           include: true
       cancel_previous_builds: false
     scripts:
-      - *install_toolchain
-      - *install_codemagic_cli
-
       - name: Verify immutable release identity
         script: |
           test -n "${CM_TAG:-}"
-          test "$(git cat-file -t "$CM_TAG")" = tag
           test "$(git rev-parse HEAD)" = "$CM_COMMIT"
-          $HOME/.local/bin/mise exec -- just release-context "$CM_TAG"
+          scripts/release-context.sh "$CM_TAG"
+
+      - *install_toolchain
+      - *install_codemagic_cli
 
       - *select_xcode
       - *flutter_check
@@ -193,25 +192,15 @@ workflows:
         MISE_TRUSTED_CONFIG_PATHS: $CM_BUILD_DIR
         MISE_YES: 1
     cache: *ios_cache
-    triggering:
-      events:
-        - tag
-      tag_patterns:
-        - pattern: v*
-          include: true
-      cancel_previous_builds: false
     scripts:
-      - *install_toolchain
-
       - name: Verify immutable release identity
         script: |
           test -n "${CM_TAG:-}"
-          test "$(git cat-file -t "$CM_TAG")" = tag
           test "$(git rev-parse HEAD)" = "$CM_COMMIT"
-          $HOME/.local/bin/mise exec -- just release-context "$CM_TAG"
+          scripts/release-context.sh "$CM_TAG"
 
+      - *install_toolchain
       - *select_xcode
-      - *flutter_check
 
       - name: Ensure pinned Android SDK components
         script: |

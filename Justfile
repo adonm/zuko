@@ -228,32 +228,12 @@ prepare-ios-ghostty:
     python3 scripts/prepare-libghostty-ios-static.py
 
 [group('release')]
-configure-apple-signing platform:
-    scripts/apple-setup-signing.sh "{{ platform }}"
-
-[group('release')]
 build-ios-store:
     cd flutter && flutter build ipa --release --no-pub --build-name "$ZUKO_VERSION" --build-number "$ZUKO_BUILD_NUMBER" --export-options-plist "$APPLE_EXPORT_OPTIONS"
 
 [group('release')]
 package-ios-store:
     scripts/package-ios-store.sh
-
-[group('release')]
-build-macos-store:
-    cd flutter && flutter build macos --release --no-pub --build-name "$ZUKO_VERSION" --build-number "$ZUKO_BUILD_NUMBER"
-
-[group('release')]
-package-macos-store:
-    scripts/package-macos-store.sh
-
-[group('release')]
-upload-apple-store platform file:
-    scripts/apple-upload.sh "{{ platform }}" "{{ file }}"
-
-[group('release')]
-upload-macos-store:
-    scripts/upload-macos-store.sh
 
 [group('release')]
 package-windows-store tag sha:
@@ -291,14 +271,6 @@ publish-crate:
 [group('release')]
 publish-github-release tag:
     scripts/publish-github-release.sh "{{ tag }}"
-
-[group('operations')]
-setup-ios-signing:
-    sh scripts/setup-ios-signing.sh
-
-[group('operations')]
-ios-signing-status:
-    sh scripts/ios-signing-status.sh
 
 [group('operations')]
 select-xcode:

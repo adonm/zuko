@@ -1,7 +1,7 @@
 name: zuko
 description: Private remote shells over Iroh for Android, Apple platforms, web, Linux, and Windows.
 publish_to: 'none'
-version: 0.9.13+1800009013
+version: 0.9.14+1800009014
 
 environment:
   sdk: ^3.12.2

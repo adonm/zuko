@@ -58,4 +58,4 @@ git push origin "$TAG"
 echo
 echo "done. watch the release at:"
 echo "  https://github.com/adonm/zuko/actions/workflows/release.yml"
-echo "  https://github.com/adonm/zuko/actions/workflows/release-flutter-ios.yml"
+echo "  https://codemagic.io/app/6a52dc14add8531e99f88b8a"
