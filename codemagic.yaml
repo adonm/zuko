@@ -385,7 +385,7 @@ workflows:
 
   flutter-linux-ci:
     name: Flutter Linux, Android, and web compile gate
-    instance_type: linux_x4
+    instance_type: linux_x2
     max_build_duration: 120
     environment:
       vars:
@@ -456,7 +456,7 @@ workflows:
 
   flutter-linux-android-release:
     name: Flutter Linux and Android release artifacts
-    instance_type: linux_x4
+    instance_type: linux_x2
     max_build_duration: 120
     environment:
       android_signing:
