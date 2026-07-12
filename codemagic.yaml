@@ -87,11 +87,16 @@ workflows:
   ios-testflight-release:
     name: iOS TestFlight release
     instance_type: mac_mini_m2
-    max_build_duration: 120
+    max_build_duration: 30
     integrations:
       app_store_connect: zuko-app-store
-    environment: *ios_environment
-    cache: *ios_cache
+    environment:
+      groups:
+        - codemagic_api
+      xcode: 26.3
+      vars:
+        CM_CLONE_UNSHALLOW: true
+        TEAM_ID: R8PN382RC4
     triggering:
       events:
         - tag
@@ -106,17 +111,49 @@ workflows:
           test "$(git rev-parse HEAD)" = "$CM_COMMIT"
           scripts/release-context.sh "$CM_TAG"
 
-      - *install_toolchain
       - *install_codemagic_cli
 
-      - *select_xcode
-      - *flutter_check
-      - *prepare_ghostty
-      - *configure_signing
-      - *build_ipa
-      - *package_ipa
+      - name: Verify Xcode 26.3
+        script: scripts/select-xcode.sh
 
-    artifacts: *ios_artifacts
+      - name: Download validated IPA for tagged commit
+        script: |
+          mkdir -p dist/flutter-ios
+          builds_json="$RUNNER_TEMP/builds.json"
+          curl --fail --silent --show-error \
+            --header "x-auth-token: $CODEMAGIC_API_TOKEN" \
+            "https://api.codemagic.io/builds?appId=$CM_PROJECT_ID" \
+            > "$builds_json"
+          selection="$(
+            python3 scripts/select-codemagic-ios-artifact.py \
+              "$builds_json" "$CM_COMMIT"
+          )"
+          source_build_id="$(sed -n 's/^source_build_id=//p' <<< "$selection")"
+          artifact_url="$(sed -n 's/^artifact_url=//p' <<< "$selection")"
+          test -n "$source_build_id"
+          test -n "$artifact_url"
+          echo "Recovering signed IPA from validation build $source_build_id"
+          curl --fail --silent --show-error --location \
+            --header "x-auth-token: $CODEMAGIC_API_TOKEN" \
+            "$artifact_url" \
+            -o dist/flutter-ios/Zuko-Flutter.ipa
+          ipa_sha="$(shasum -a 256 dist/flutter-ios/Zuko-Flutter.ipa | awk '{print $1}')"
+          printf '%s  %s\n' "$ipa_sha" Zuko-Flutter.ipa \
+            > dist/flutter-ios/Zuko-Flutter.ipa.sha256
+
+      - name: Revalidate tagged IPA
+        script: |
+          mkdir -p "$RUNNER_TEMP/recovered.xcarchive"
+          scripts/apple-validate-package.sh \
+            "$RUNNER_TEMP/recovered.xcarchive" \
+            "$CM_BUILD_DIR/dist/flutter-ios/Zuko-Flutter.ipa" \
+            "$ZUKO_VERSION" "$ZUKO_BUILD_NUMBER"
+
+    artifacts:
+      - dist/flutter-ios/Zuko-Flutter.ipa
+      - dist/flutter-ios/Zuko-Flutter.ipa.sha256
+      - /tmp/xcodebuild_logs/*.log
+      - $HOME/Library/Logs/DiagnosticReports/*
     publishing:
       app_store_connect:
         auth: integration
@@ -168,10 +205,14 @@ workflows:
             --header "x-auth-token: $CODEMAGIC_API_TOKEN" \
             "https://api.codemagic.io/builds/$RECOVERY_BUILD_ID" \
             > "$build_json"
-          artifact_url="$(
+          selection="$(
             python3 scripts/select-codemagic-ios-artifact.py \
               "$build_json" "$RECOVERY_COMMIT"
           )"
+          source_build_id="$(sed -n 's/^source_build_id=//p' <<< "$selection")"
+          artifact_url="$(sed -n 's/^artifact_url=//p' <<< "$selection")"
+          test "$source_build_id" = "$RECOVERY_BUILD_ID"
+          test -n "$artifact_url"
           curl --fail --silent --show-error --location \
             --header "x-auth-token: $CODEMAGIC_API_TOKEN" \
             "$artifact_url" \

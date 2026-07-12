@@ -28,7 +28,8 @@ hash-locked `scripts/codemagic-requirements.txt` closure.
 4. Rescan `main` and run `ios-signing-validation`. The profile must show a
    matching certificate, and the workflow must produce a validated IPA.
 5. Store a Codemagic API token as secret `CODEMAGIC_API_TOKEN` in the
-   app-scoped `codemagic_api` group. Only artifact recovery imports it.
+   app-scoped `codemagic_api` group. Only TestFlight artifact selection imports
+   it.
 
 The signing validation completed successfully in Codemagic build
 `6a52e7354b78f62f917e3ffc`.
@@ -39,16 +40,19 @@ The signing validation completed successfully in Codemagic build
 checkouts that do not equal the tagged commit. For an accepted annotated tag,
 Codemagic:
 
-1. validates the immutable release identity before installing the toolchain;
-2. analyzes and tests the Flutter client;
-3. prepares the App-Store-compatible Ghostty library;
-4. imports the matching Codemagic signing identities;
-5. builds `Zuko-Flutter.ipa` with the deterministic version and build number;
-6. verifies the bundle ID, version, build, team, signature, profile, ARM64
+1. validates the immutable release identity;
+2. selects the latest successful `ios-signing-validation` IPA built from the
+   exact tagged commit;
+3. downloads that retained Codemagic artifact without rebuilding it;
+4. verifies the bundle ID, version, build, team, signature, profile, ARM64
    architecture, Ghostty framework, and iOS 18.0 deployment floor;
-7. retains the IPA, SHA-256 sidecar, xcarchive, and diagnostics;
-8. uploads the validated IPA through `zuko-app-store` for TestFlight
+5. retains the IPA and SHA-256 sidecar;
+6. uploads the validated IPA through `zuko-app-store` for TestFlight
    processing.
+
+Run `ios-signing-validation` on the intended release commit before tagging.
+That workflow is the single signed build and Flutter test gate; the tag workflow
+is artifact-only, avoiding flaky or divergent release rebuilds.
 
 An upload does not submit the app for review. Tester groups, screenshots,
 privacy declarations, export compliance, pricing, and final review submission
