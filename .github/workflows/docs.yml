@@ -66,7 +66,7 @@ jobs:
         run: mise exec -- just test-installer
 
       - name: Install site build system deps
-        run: sudo apt-get update && sudo apt-get install -y clang flatpak
+        run: sudo apt-get update && sudo apt-get install -y clang flatpak ostree
 
       - name: Build site
         run: mise exec -- just build-docs
