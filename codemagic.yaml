@@ -313,11 +313,8 @@ workflows:
     environment:
       groups:
         - appetize_credentials
-      android_signing:
-        - zuko-android
       xcode: 26.3
       cocoapods: 1.16.2
-      java: 17
       vars:
         CM_CLONE_UNSHALLOW: true
         CM_RECURSIVE_SUBMODULE_INIT: true
@@ -326,47 +323,61 @@ workflows:
         MISE_YES: 1
     cache: *ios_cache
     scripts:
-      - name: Verify immutable release identity
+      - name: Check out and verify immutable release identity
         script: |
-          test -n "${CM_TAG:-}"
-          test "$(git rev-parse HEAD)" = "$CM_COMMIT"
-          scripts/release-context.sh "$CM_TAG"
+          if [ -n "${APPETIZE_RELEASE_TAG:-}" ]; then
+            test -z "${CM_TAG:-}"
+            test "${CM_BRANCH:-}" = main
+            [[ "$APPETIZE_RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]
+            [[ "${APPETIZE_RELEASE_SHA:-}" =~ ^[0-9a-f]{40}$ ]]
+            git fetch origin "refs/tags/$APPETIZE_RELEASE_TAG:refs/tags/$APPETIZE_RELEASE_TAG"
+            test "$(git cat-file -t "$APPETIZE_RELEASE_TAG")" = tag
+            test "$(git rev-parse "$APPETIZE_RELEASE_TAG^{commit}")" = "$APPETIZE_RELEASE_SHA"
+            git checkout --detach "$APPETIZE_RELEASE_SHA"
+            git submodule update --init --recursive
+            release_tag="$APPETIZE_RELEASE_TAG"
+          else
+            test -n "${CM_TAG:-}"
+            test "$(git rev-parse HEAD)" = "$CM_COMMIT"
+            release_tag="$CM_TAG"
+          fi
+          scripts/release-context.sh "$release_tag"
+          echo "APPETIZE_TAG=$release_tag" >> "$CM_ENV"
+
+      - name: Verify Appetize configuration
+        script: |
+          test -n "${APPETIZE_API_TOKEN:-}"
+          [[ "${APPETIZE_ANDROID_PUBLIC_KEY:-}" =~ ^[A-Za-z0-9_-]+$ ]]
+          [[ "${APPETIZE_IOS_PUBLIC_KEY:-}" =~ ^[A-Za-z0-9_-]+$ ]]
 
       - *install_toolchain
       - *select_xcode
 
-      - name: Ensure pinned Android SDK components
+      - name: Download signed Android release package
         script: |
-          export ANDROID_HOME="${ANDROID_HOME:-$ANDROID_SDK_ROOT}"
-          "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager" \
-            'platform-tools' \
-            'platforms;android-36' \
-            'build-tools;36.0.0' \
-            'ndk;28.2.13676358'
-          test -x "$ANDROID_HOME/build-tools/36.0.0/apksigner"
-
-      - name: Build signed Android release packages
-        script: |
-          export ANDROID_HOME="${ANDROID_HOME:-$ANDROID_SDK_ROOT}"
-          export ANDROID_KEYSTORE_PATH="$CM_KEYSTORE_PATH"
-          export ANDROID_KEYSTORE_PASSWORD="$CM_KEYSTORE_PASSWORD"
-          export ANDROID_KEY_ALIAS="$CM_KEY_ALIAS"
-          export ANDROID_KEY_PASSWORD="$CM_KEY_PASSWORD"
-          $HOME/.local/bin/mise exec -- just build-flutter-android
-          $HOME/.local/bin/mise exec -- just package-android-release "$CM_TAG" signed
+          apk="zuko-android-${APPETIZE_TAG}-signed.apk"
+          base="https://github.com/adonm/zuko/releases/download/$APPETIZE_TAG"
+          mkdir -p dist/android
+          curl --fail --silent --show-error --location \
+            --proto '=https' --tlsv1.2 "$base/$apk" \
+            -o "dist/android/$apk"
+          curl --fail --silent --show-error --location \
+            --proto '=https' --tlsv1.2 "$base/$apk.sha256" \
+            -o "dist/android/$apk.sha256"
+          (cd dist/android && shasum -a 256 --check "$apk.sha256")
 
       - name: Build ARM iOS Simulator package
         script: |
-          $HOME/.local/bin/mise exec -- just package-ios-preview "${CM_TAG#v}"
+          $HOME/.local/bin/mise exec -- just package-ios-preview "${APPETIZE_TAG#v}"
 
       - name: Upload signed Android APK to Appetize
         script: |
           test -n "${APPETIZE_API_TOKEN:-}"
           test -n "${APPETIZE_ANDROID_PUBLIC_KEY:-}"
           $HOME/.local/bin/mise exec -- just upload-appetize android \
-            "dist/android/zuko-android-${CM_TAG}-signed.apk" \
+            "dist/android/zuko-android-${APPETIZE_TAG}-signed.apk" \
             "$APPETIZE_ANDROID_PUBLIC_KEY" \
-            "Zuko ${CM_TAG} from Codemagic"
+            "Zuko ${APPETIZE_TAG} release"
 
       - name: Upload iOS Simulator package to Appetize
         script: |
@@ -375,7 +386,7 @@ workflows:
           $HOME/.local/bin/mise exec -- just upload-appetize ios \
             "dist/ios-preview/Zuko-Flutter-ios-simulator.zip" \
             "$APPETIZE_IOS_PUBLIC_KEY" \
-            "Zuko ${CM_TAG} iOS Simulator from Codemagic"
+            "Zuko ${APPETIZE_TAG} iOS Simulator release"
 
     artifacts:
       - dist/android/*

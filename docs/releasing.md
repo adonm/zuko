@@ -100,10 +100,12 @@ package upgrades remain valid. Codemagic's `flutter-linux-android-release`
 workflow builds unsigned APK and AAB inputs. GitHub retrieves those exact
 artifacts, signs them with repository-scoped secrets, verifies their signing
 certificate and metadata, and writes SHA-256 sidecars before publication.
-Codemagic's manual `mobile-appetize-release` workflow independently builds a
-signed Android APK and unsigned ARM iOS Simulator package from an immutable
-tag, validates them, and updates both Appetize apps after its credentials are
-configured. Appetize setup is documented in [mobile previews](appetize.md).
+After GitHub publishes the coordinated release, it starts Codemagic's
+`mobile-appetize-release` workflow for the same immutable tag and waits for
+both previews. Appetize receives the checksummed GitHub Release APK and an ARM
+iOS Simulator package built from that tag. This keeps Appetize aligned with the
+release and TestFlight without copying the Android signing key into Codemagic.
+Appetize setup is documented in [mobile previews](appetize.md).
 
 Pull-request CI builds a debug APK in Codemagic. Debug or unsigned outputs are
 never attached to a GitHub Release. Google Play draft/release publication is
@@ -155,7 +157,7 @@ Codemagic owns Flutter tests and platform builds on its target runners:
 - x86_64 Windows bundle and ZIP release builds;
 - iOS Simulator and macOS compile gates for Flutter changes;
 - signed iOS validation and immutable-tag TestFlight uploads;
-- manually started signed Android and ARM iOS Simulator Appetize previews.
+- release-orchestrated Android and ARM iOS Simulator Appetize previews.
 
 GitHub remains the source-of-truth verifier and publisher: it owns Rust checks
 and binaries, documentation and web deployment, triggers exact Codemagic tag

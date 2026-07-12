@@ -41,7 +41,6 @@ repeat `MSSTORE_CLIENT_SECRET` in both draft and submit.
 |-------|------|-----------------|
 | Developer Portal integration | `zuko-app-store` | App Store Connect App Manager issuer ID, key ID, and `.p8` key |
 | iOS signing identity | `dev.adonm.zuko` | matching Apple Distribution certificate and App Store provisioning profile |
-| Android signing identity | `zuko-android` | optional for the manual Appetize workflow; existing release keystore, alias, store password, and key password |
 | Variable group | `codemagic_api` | secret `CODEMAGIC_API_TOKEN` used by the existing iOS artifact handoff |
 | Variable group | `appetize_credentials` | `APPETIZE_API_TOKEN`, `APPETIZE_ANDROID_PUBLIC_KEY`, `APPETIZE_IOS_PUBLIC_KEY` |
 
@@ -49,7 +48,8 @@ Codemagic's YAML workflows expose signing identities only to the workflows that
 need them. Compile gates have no store or Appetize credentials. The coordinated
 release passes no GitHub credential into Codemagic: GitHub retrieves unsigned
 Android outputs and signs them locally, while Apple signing material remains in
-Codemagic.
+Codemagic. Appetize reuses the public, checksummed release APK after publication
+and therefore needs no Android signing identity in Codemagic.
 
 ## First-time portal work
 

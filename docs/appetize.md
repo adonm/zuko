@@ -1,10 +1,11 @@
 # Appetize mobile previews
 
-The manual Codemagic release workflow updates two existing Appetize apps from
-an immutable annotated release tag:
+The coordinated GitHub release workflow updates two existing Appetize apps
+from the same immutable annotated release tag used by GitHub Releases and
+TestFlight:
 
-- Android receives a signed Flutter APK rebuilt from the immutable release tag
-  with the same upload key as the GitHub Release APK.
+- Android receives the checksummed, signed APK already published in the GitHub
+  Release.
 - iOS receives an unsigned ARM Flutter Simulator `.app` zip built from that
   same tag. Appetize cannot run the signed device IPA.
 
@@ -29,14 +30,14 @@ Appetize is a preview channel, not a source of release artifacts or credentials.
    Mark the API token secret. The public keys are identifiers rather than
    credentials, but may also be marked secret to keep all three values scoped
    to the release workflow.
-5. Under Team settings > Code signing identities, upload the existing Android
-   keystore with reference name `zuko-android`, its alias, and both passwords.
 
-The `mobile-appetize-release` workflow imports that variable group and signing
-identity only when a maintainer explicitly starts it against an immutable tag.
-It is intentionally not an automatic tag trigger until both preview channels
-are configured. Pull requests and ordinary branch builds cannot upload to
-Appetize.
+After GitHub publishes all assets for a tag, its release workflow starts
+Codemagic's `mobile-appetize-release` workflow for that exact tag and waits for
+both uploads. Codemagic verifies the immutable release identity, downloads and
+checks the release APK checksum, and builds the iOS Simulator package from the
+same source commit. The Android signing key remains only in GitHub; Codemagic
+does not need a duplicate signing identity. Pull requests and ordinary branch
+builds cannot upload to Appetize.
 
 ## Verify credentials
 
@@ -65,4 +66,6 @@ build.
 - Keep preview access authenticated unless a public demo is intentional.
 - Revoke temporary Appetize client authorization on the host after testing.
 
-Implementation: `scripts/upload-appetize.sh` and `codemagic.yaml`.
+Implementation: `scripts/upload-appetize.sh`,
+`scripts/publish-appetize-release.py`, `codemagic.yaml`, and
+`.github/workflows/release.yml`.
