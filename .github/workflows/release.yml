@@ -170,59 +170,6 @@ jobs:
           path: dist/android/*
           if-no-files-found: error
 
-      - name: Upload signed APK to Appetize
-        id: appetize
-        env:
-          APPETIZE_API_TOKEN: ${{ secrets.APPETIZE_API_TOKEN }}
-          APPETIZE_PUBLIC_KEY: ${{ secrets.APPETIZE_ANDROID_PUBLIC_KEY }}
-          TAG: ${{ needs.prepare.outputs.tag }}
-        run: |
-          test -n "$APPETIZE_API_TOKEN"
-          mise exec -- just upload-appetize android \
-            "dist/android/zuko-android-${TAG}-signed.apk" \
-            "${APPETIZE_PUBLIC_KEY:--}" \
-            "Zuko ${TAG} from GitHub Actions"
-
-  ios-preview:
-    name: build Flutter iOS Appetize preview
-    needs: prepare
-    runs-on: macos-latest
-    timeout-minutes: 90
-    steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
-        with:
-          ref: ${{ needs.prepare.outputs.sha }}
-          submodules: recursive
-
-      - uses: jdx/mise-action@e6a8b3978addb5a52f2b4cd9d91eafa7f0ab959d # v4.2.0
-        with:
-          cache: true
-
-      - name: Select Xcode 26.3
-        run: mise exec -- just select-xcode
-
-      - uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
-        with:
-          path: ~/.pub-cache
-          key: ${{ runner.os }}-${{ runner.arch }}-flutter-pub-${{ hashFiles('flutter/pubspec.lock') }}
-
-
-      - name: Build locked ARM iOS Simulator client
-        env:
-          VERSION: ${{ needs.prepare.outputs.tag }}
-        run: mise exec -- just package-ios-preview "${VERSION#v}"
-
-      - name: Upload Simulator package to Appetize
-        env:
-          APPETIZE_API_TOKEN: ${{ secrets.APPETIZE_API_TOKEN }}
-          APPETIZE_PUBLIC_KEY: ${{ secrets.APPETIZE_IOS_PUBLIC_KEY }}
-          TAG: ${{ needs.prepare.outputs.tag }}
-          APP_FILE: dist/ios-preview/Zuko-Flutter-ios-simulator.zip
-        run: |
-          test -n "$APPETIZE_API_TOKEN"
-          mise exec -- just upload-appetize ios "$APP_FILE" "${APPETIZE_PUBLIC_KEY:--}" \
-            "Zuko ${TAG} iOS Simulator from GitHub Actions"
-
   linux:
     name: build Flutter Linux Flatpak
     needs: prepare
@@ -309,7 +256,7 @@ jobs:
 
   release:
     name: publish GitHub Release
-    needs: [prepare, build, android, ios-preview, linux, windows]
+    needs: [prepare, build, android, linux, windows]
     runs-on: ubuntu-latest
     permissions:
       contents: write

@@ -24,7 +24,6 @@ inputs.
 | Scope | Name | Required values |
 |-------|------|-----------------|
 | Repository secrets | coordinated Android release | `ANDROID_KEYSTORE_BASE64`, `ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS`, `ANDROID_KEY_PASSWORD` |
-| Repository secrets | Appetize previews | `APPETIZE_API_TOKEN`, `APPETIZE_ANDROID_PUBLIC_KEY`, `APPETIZE_IOS_PUBLIC_KEY` |
 | `google-play` environment | Play publication | the four Android signing secrets above plus `GOOGLE_PLAY_SERVICE_ACCOUNT_JSON` |
 | `apple-store` environment | iOS and macOS | `TEAM_ID`, `BUILD_CERTIFICATE_BASE64`, `P12_PASSWORD`, `PROVISIONING_PROFILE_BASE64`, `MACOS_APPLICATION_CERTIFICATE_BASE64`, `MACOS_APPLICATION_CERTIFICATE_PASSWORD`, `MACOS_INSTALLER_CERTIFICATE_BASE64`, `MACOS_INSTALLER_CERTIFICATE_PASSWORD`, `MACOS_PROVISIONING_PROFILE_BASE64`, `ASC_KEY_ID`, `ASC_ISSUER_ID`, `ASC_KEY_CONTENT` |
 | `microsoft-store-package` environment | package/sign | variables `MSSTORE_PRODUCT_ID`, `MSSTORE_PACKAGE_IDENTITY_NAME`, `MSSTORE_PACKAGE_PUBLISHER`, `MSSTORE_PACKAGE_FAMILY_NAME`, `MSSTORE_PACKAGE_DISPLAY_NAME`, `MSSTORE_PUBLISHER_DISPLAY_NAME`; secrets `MSSTORE_SIGNING_PFX_BASE64`, `MSSTORE_SIGNING_PFX_PASSWORD` |
@@ -35,6 +34,18 @@ inputs.
 Environment values are not shared between GitHub environments. Repeat the
 Microsoft identity variables in every environment that consumes them, and
 repeat `MSSTORE_CLIENT_SECRET` in both draft and submit.
+
+## Codemagic configuration matrix
+
+| Scope | Name | Required values |
+|-------|------|-----------------|
+| Developer Portal integration | `zuko-app-store` | App Store Connect App Manager issuer ID, key ID, and `.p8` key |
+| iOS signing identity | `dev.adonm.zuko` | matching Apple Distribution certificate and App Store provisioning profile |
+| Android signing identity | `zuko-android` | existing release keystore, alias, store password, and key password |
+| Variable group | `appetize_credentials` | `APPETIZE_API_TOKEN`, `APPETIZE_ANDROID_PUBLIC_KEY`, `APPETIZE_IOS_PUBLIC_KEY` |
+
+Codemagic's YAML workflows expose signing identities only to the workflows that
+need them. The Apple compile gate has no store or Appetize credentials.
 
 ## First-time portal work
 
@@ -58,10 +69,10 @@ Details: [Android store publishing](android-publishing.md).
   Distribution, Mac Installer Distribution, and a Mac App Store profile.
 - [ ] Create a dedicated App Store Connect App Manager API key and retain its
   issuer ID, key ID, and one-time `.p8` securely.
-- [ ] Run the manual iOS signing smoke test and macOS `lane=build` first. A
-  release tag uploads iOS to internal TestFlight automatically; the manual iOS
-  run never uploads. Use macOS `lane=upload` only after inspecting its signed
-  package.
+- [ ] Run Codemagic's manual `ios-signing-validation` and GitHub's macOS
+  `lane=build` first. A release tag uploads iOS to internal TestFlight
+  automatically; the manual iOS run never uploads. Use macOS `lane=upload`
+  only after inspecting its signed package.
 
 Details: [Apple store publishing](apple-publishing.md).
 
@@ -112,7 +123,8 @@ Details: [Flatpak packaging](../flatpak/README.md).
 
 ## Release order
 
-1. Complete the portal records and protected GitHub environments.
+1. Complete the portal records, Codemagic identities/groups, and protected
+   GitHub environments.
 2. Publish the `crossterm-zuko` bootstrap dependency and verify Zuko packaging.
 3. Cut the tag and let the coordinated GitHub release produce checksummed artifacts.
 4. Confirm the automatic TestFlight build, then publish Google Play internal,

@@ -7,7 +7,12 @@ readonly ROOT
 readonly VENV="${RUNNER_TEMP:-/tmp}/zuko-codemagic-cli"
 
 python_version="$(python3 -c 'import platform; print(platform.python_version())')"
-test "$python_version" = 3.13.14
+python3 - <<'PY'
+import sys
+
+if sys.version_info < (3, 8):
+    raise SystemExit("Codemagic CLI Tools requires Python 3.8 or newer")
+PY
 
 python3 -m venv "$VENV"
 "$VENV/bin/python" -m pip install \
@@ -29,5 +34,8 @@ esac
 if [ -n "${GITHUB_PATH:-}" ]; then
   printf '%s\n' "$VENV/bin" >> "$GITHUB_PATH"
 fi
+if [ -n "${CM_ENV:-}" ]; then
+  printf 'PATH=%s:%s\n' "$VENV/bin" "$PATH" >> "$CM_ENV"
+fi
 
-echo "Codemagic CLI Tools $CODEMAGIC_VERSION installed from the hash-locked closure"
+echo "Codemagic CLI Tools $CODEMAGIC_VERSION installed from the hash-locked closure with Python $python_version"

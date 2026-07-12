@@ -2,37 +2,38 @@
 
 Tagged releases update two existing Appetize apps:
 
-- Android receives the exact signed Flutter APK attached to GitHub Releases.
-- iOS receives an unsigned ARM Flutter Simulator `.app` zip built by the same
-  release run. Appetize cannot run the signed device IPA.
+- Android receives a signed Flutter APK rebuilt from the immutable release tag
+  with the same upload key as the GitHub Release APK.
+- iOS receives an unsigned ARM Flutter Simulator `.app` zip built from that
+  same tag. Appetize cannot run the signed device IPA.
 
 Appetize is a preview channel, not a source of release artifacts or credentials.
 
 ## One-time setup
 
 1. In [Appetize API Tokens](https://appetize.io/organization/api-tokens), create
-   a least-privilege Developer token named `zuko-github-actions`.
+   a least-privilege Developer token named `zuko-codemagic`.
 2. At [Appetize Upload](https://appetize.io/upload), create separate apps from a
    signed Android APK and an ARM iOS Simulator `.app` zip.
 3. Copy each app's `publicKey` from its share URL or settings.
-4. Add these GitHub Actions secrets:
+4. In Codemagic application settings, create the variable group
+   `appetize_credentials` with these values:
 
-   | Secret | Value |
-   |--------|-------|
+   | Variable | Value |
+   |----------|-------|
    | `APPETIZE_API_TOKEN` | Organization API token |
    | `APPETIZE_ANDROID_PUBLIC_KEY` | Android app public key |
    | `APPETIZE_IOS_PUBLIC_KEY` | iOS Simulator app public key |
 
-The GitHub CLI prompts without placing values in shell history:
+   Mark the API token secret. The public keys are identifiers rather than
+   credentials, but may also be marked secret to keep all three values scoped
+   to the release workflow.
+5. Under Team settings > Code signing identities, upload the existing Android
+   keystore with reference name `zuko-android`, its alias, and both passwords.
 
-```sh
-gh secret set APPETIZE_API_TOKEN
-gh secret set APPETIZE_ANDROID_PUBLIC_KEY
-gh secret set APPETIZE_IOS_PUBLIC_KEY
-```
-
-Repository secrets are unavailable to untrusted pull requests, and ordinary PR
-builds never upload to Appetize.
+The `mobile-appetize-release` workflow imports that variable group and signing
+identity only for immutable tag builds. Pull requests and ordinary branch
+builds cannot upload to Appetize.
 
 ## Verify credentials
 
@@ -48,17 +49,17 @@ sh scripts/upload-appetize.sh ios ./Zuko-Flutter-ios-simulator.zip \
 unset APPETIZE_API_TOKEN
 ```
 
-Confirm both dashboard entries report the expected version and launch. The APK
-must match the GitHub Release checksum; the iOS entry must report an ARM
-`iPhoneSimulator` build.
+Confirm both dashboard entries report the expected version and launch. The
+Android package must have the same application ID and signing certificate as
+the GitHub Release APK; the iOS entry must report an ARM `iPhoneSimulator`
+build.
 
 ## Rotation
 
 - Rotate the organization token in Appetize, then replace
-  `APPETIZE_API_TOKEN` in GitHub.
+  `APPETIZE_API_TOKEN` in Codemagic's `appetize_credentials` group.
 - If an app is recreated, replace its platform public-key secret.
 - Keep preview access authenticated unless a public demo is intentional.
 - Revoke temporary Appetize client authorization on the host after testing.
 
-Implementation: `scripts/upload-appetize.sh` and
-`.github/workflows/release.yml`.
+Implementation: `scripts/upload-appetize.sh` and `codemagic.yaml`.

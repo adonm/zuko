@@ -43,10 +43,14 @@ Complete this one-time setup in Codemagic:
 
 The Codemagic runner uses Xcode 26.3 explicitly. A checksum-verified mise
 2026.7.5 binary installs the exact Flutter, Rust, Zig, and `just` versions from
-`mise.toml`; no floating Codemagic Flutter channel is used. Codemagic injects
-the selected signing identities into its ephemeral keychain and publishes the
-validated IPA through the named integration. IPA, checksum, xcarchive, Xcode
-logs, and crash diagnostics are retained as build artifacts.
+`mise.toml`; no floating Codemagic Flutter channel is used. The workflow also
+installs the repository's hash-locked Codemagic CLI Tools 0.68.0 closure,
+checks its version, and uses `xcode-project use-profiles` to generate explicit
+export options without allowing Apple to rewrite the deterministic version or
+build number. Codemagic injects the selected signing identities into its
+ephemeral keychain and publishes the validated IPA through the named
+integration. IPA, checksum, xcarchive, Xcode logs, and crash diagnostics are
+retained as build artifacts.
 
 ## GitHub recovery boundary
 

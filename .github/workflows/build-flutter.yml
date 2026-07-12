@@ -12,8 +12,6 @@ on:
       - 'scripts/check-flutter-config.py'
       - 'scripts/finalize-web-build.py'
       - 'scripts/patch-iroh-flutter.py'
-      - 'scripts/package-apple-development.sh'
-      - 'scripts/select-xcode.sh'
       - '.github/workflows/build-flutter.yml'
   pull_request:
     paths:
@@ -25,8 +23,6 @@ on:
       - 'scripts/check-flutter-config.py'
       - 'scripts/finalize-web-build.py'
       - 'scripts/patch-iroh-flutter.py'
-      - 'scripts/package-apple-development.sh'
-      - 'scripts/select-xcode.sh'
       - '.github/workflows/build-flutter.yml'
   workflow_dispatch:
 
@@ -127,35 +123,5 @@ jobs:
         with:
           name: zuko-flutter-windows-${{ github.sha }}
           path: flutter/build/windows/x64/runner/Release/**
-          if-no-files-found: error
-          retention-days: 7
-
-  apple:
-    name: iOS simulator and macOS
-    runs-on: macos-latest
-    timeout-minutes: 90
-    steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
-        with:
-          submodules: recursive
-      - uses: jdx/mise-action@e6a8b3978addb5a52f2b4cd9d91eafa7f0ab959d # v4.2.0
-        with:
-          cache: true
-      - name: Select Xcode 26.3
-        run: mise exec -- just select-xcode
-      - uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
-        with:
-          path: ~/.pub-cache
-          key: ${{ runner.os }}-${{ runner.arch }}-flutter-pub-${{ hashFiles('flutter/pubspec.lock') }}
-      - name: Build Apple clients
-        run: mise exec -- just build-apple-development
-      - name: Package Apple clients
-        if: ${{ github.event_name != 'pull_request' }}
-        run: mise exec -- just package-apple-development
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        if: ${{ github.event_name != 'pull_request' }}
-        with:
-          name: zuko-flutter-apple-${{ github.sha }}
-          path: flutter/build/apple-artifacts/*.zip
           if-no-files-found: error
           retention-days: 7

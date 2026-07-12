@@ -25,5 +25,9 @@ cp "$apk" "dist/android/zuko-android-$tag-$mode.apk"
 cp "$aab" "dist/android/zuko-android-$tag-$mode.aab"
 cd dist/android
 for asset in *.apk *.aab; do
-  sha256sum "$asset" > "$asset.sha256"
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum "$asset" > "$asset.sha256"
+  else
+    shasum -a 256 "$asset" > "$asset.sha256"
+  fi
 done

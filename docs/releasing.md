@@ -90,8 +90,8 @@ repository.
 
 ## Mobile Appetize previews
 
-Release Android builds require all four secrets and fail closed if any is
-missing:
+GitHub Release Android builds require all four repository secrets and fail
+closed if any is missing:
 
 - `ANDROID_KEYSTORE_BASE64`
 - `ANDROID_KEYSTORE_PASSWORD`
@@ -99,10 +99,12 @@ missing:
 - `ANDROID_KEY_PASSWORD`
 
 Retain the existing signing key and application ID `dev.adonm.zuko` so package
-upgrades remain valid. The workflow verifies APK and AAB signatures, writes
-SHA-256 sidecars, and uploads the exact signed APK to Appetize. A separate
-tag-gated macOS job uploads an unsigned ARM iOS Simulator build. Appetize setup
-is documented in [mobile previews](appetize.md).
+upgrades remain valid. The GitHub workflow verifies APK and AAB signatures and
+writes SHA-256 sidecars for release assets. Codemagic's
+`mobile-appetize-release` workflow independently rebuilds a signed Android APK
+and unsigned ARM iOS Simulator package from the same immutable tag, validates
+them, and updates both Appetize apps. Appetize setup is documented in
+[mobile previews](appetize.md).
 
 Pull-request CI builds a debug APK. Debug or unsigned outputs are never attached
 to a GitHub Release. Google Play draft/release publication is documented in
@@ -120,9 +122,9 @@ current policy caveats in [Flatpak packaging](../flatpak/README.md).
 
 ## Flutter Apple distribution
 
-The Apple job in `build-flutter.yml` remains the ordinary iOS Simulator and
-macOS compile gate. It uploads seven-day development ZIP artifacts only for
-non-PR runs. Store signing and upload are isolated from ordinary GitHub CI:
+Codemagic's `flutter-apple-ci` workflow is the ordinary iOS Simulator and
+macOS compile gate. It retains development ZIP artifacts while store signing
+and upload remain isolated:
 
 - Codemagic's `ios-testflight-release` workflow handles every `vX.Y.Z` tag and
   creates, validates, retains, and uploads `Zuko-Flutter.ipa` for internal
@@ -143,6 +145,22 @@ owns iOS signing and App Store Connect upload; repository scripts continue to
 own release identity and package validation. Portal records, credentials,
 certificate types, sandbox requirements, and final submission steps are
 documented in [Apple store publishing](apple-publishing.md).
+
+## CI/CD provider responsibilities
+
+Codemagic owns the mobile operations that benefit from managed Apple Silicon,
+mobile signing identities, and App Store Connect integration:
+
+- iOS Simulator and macOS compile gates for Flutter changes;
+- signed iOS validation and immutable-tag TestFlight uploads;
+- signed Android and ARM iOS Simulator Appetize previews.
+
+GitHub remains the source-of-truth orchestrator for Rust checks and binaries,
+documentation and web deployment, Android/Linux/Windows release assets,
+Flatpak container builds, and the coordinated GitHub Release. Approval-gated
+crates.io, Google Play, Mac App Store, and Microsoft Store operations remain in
+GitHub environments until Codemagic offers an equivalent reviewer boundary and
+cross-provider release assets can be handed off without rebuilding.
 
 ## Linux `zuko app` support
 

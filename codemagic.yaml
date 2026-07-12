@@ -28,6 +28,15 @@ workflows:
         name: Install pinned repository toolchain
         script: scripts/install-mise-codemagic.sh
 
+      - &install_codemagic_cli
+        name: Install pinned Codemagic CLI Tools
+        script: |
+          export RUNNER_TEMP="$CM_BUILD_DIR/.tmp/codemagic"
+          mkdir -p "$RUNNER_TEMP"
+          scripts/install-codemagic.sh
+          "$RUNNER_TEMP/zuko-codemagic-cli/bin/codemagic-cli-tools" --version
+          echo "RUNNER_TEMP=$RUNNER_TEMP" >> "$CM_ENV"
+
       - name: Resolve validation metadata
         script: $HOME/.local/bin/mise exec -- just build-context
 
@@ -92,6 +101,7 @@ workflows:
       cancel_previous_builds: false
     scripts:
       - *install_toolchain
+      - *install_codemagic_cli
 
       - name: Verify immutable release identity
         script: |
@@ -114,3 +124,139 @@ workflows:
         # Upload for TestFlight processing. Beta-review submission remains a
         # deliberate App Store Connect operation.
         submit_to_testflight: false
+
+  flutter-apple-ci:
+    name: Flutter Apple compile gate
+    instance_type: mac_mini_m2
+    max_build_duration: 90
+    environment:
+      xcode: 26.3
+      cocoapods: 1.16.2
+      vars:
+        CM_CLONE_UNSHALLOW: true
+        CM_RECURSIVE_SUBMODULE_INIT: true
+        MISE_LOG_LEVEL: info
+        MISE_TRUSTED_CONFIG_PATHS: $CM_BUILD_DIR
+        MISE_YES: 1
+    cache: *ios_cache
+    triggering:
+      events:
+        - push
+        - pull_request
+      branch_patterns:
+        - pattern: main
+          include: true
+          source: false
+      cancel_previous_builds: true
+    when:
+      changeset:
+        includes:
+          - flutter/**
+          - codemagic.yaml
+          - Justfile
+          - mise.toml
+          - scripts/install-mise-codemagic.sh
+          - scripts/package-apple-development.sh
+          - scripts/patch-iroh-flutter.py
+          - scripts/select-xcode.sh
+    scripts:
+      - *install_toolchain
+      - *select_xcode
+
+      - name: Build iOS Simulator and macOS clients
+        script: $HOME/.local/bin/mise exec -- just build-apple-development
+
+      - name: Package Apple development clients
+        script: $HOME/.local/bin/mise exec -- just package-apple-development
+
+    artifacts:
+      - flutter/build/apple-artifacts/*.zip
+      - /tmp/xcodebuild_logs/*.log
+      - $HOME/Library/Logs/DiagnosticReports/*
+
+  mobile-appetize-release:
+    name: Mobile Appetize previews
+    instance_type: mac_mini_m2
+    max_build_duration: 120
+    environment:
+      groups:
+        - appetize_credentials
+      android_signing:
+        - zuko-android
+      xcode: 26.3
+      cocoapods: 1.16.2
+      java: 17
+      vars:
+        CM_CLONE_UNSHALLOW: true
+        CM_RECURSIVE_SUBMODULE_INIT: true
+        MISE_LOG_LEVEL: info
+        MISE_TRUSTED_CONFIG_PATHS: $CM_BUILD_DIR
+        MISE_YES: 1
+    cache: *ios_cache
+    triggering:
+      events:
+        - tag
+      tag_patterns:
+        - pattern: v*
+          include: true
+      cancel_previous_builds: false
+    scripts:
+      - *install_toolchain
+
+      - name: Verify immutable release identity
+        script: |
+          test -n "${CM_TAG:-}"
+          test "$(git cat-file -t "$CM_TAG")" = tag
+          test "$(git rev-parse HEAD)" = "$CM_COMMIT"
+          $HOME/.local/bin/mise exec -- just release-context "$CM_TAG"
+
+      - *select_xcode
+      - *flutter_check
+
+      - name: Ensure pinned Android SDK components
+        script: |
+          export ANDROID_HOME="${ANDROID_HOME:-$ANDROID_SDK_ROOT}"
+          "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager" \
+            'platform-tools' \
+            'platforms;android-36' \
+            'build-tools;36.0.0' \
+            'ndk;28.2.13676358'
+          test -x "$ANDROID_HOME/build-tools/36.0.0/apksigner"
+
+      - name: Build signed Android release packages
+        script: |
+          export ANDROID_HOME="${ANDROID_HOME:-$ANDROID_SDK_ROOT}"
+          export ANDROID_KEYSTORE_PATH="$CM_KEYSTORE_PATH"
+          export ANDROID_KEYSTORE_PASSWORD="$CM_KEYSTORE_PASSWORD"
+          export ANDROID_KEY_ALIAS="$CM_KEY_ALIAS"
+          export ANDROID_KEY_PASSWORD="$CM_KEY_PASSWORD"
+          $HOME/.local/bin/mise exec -- just build-flutter-android
+          $HOME/.local/bin/mise exec -- just package-android-release "$CM_TAG" signed
+
+      - name: Build ARM iOS Simulator package
+        script: |
+          $HOME/.local/bin/mise exec -- just package-ios-preview "${CM_TAG#v}"
+
+      - name: Upload signed Android APK to Appetize
+        script: |
+          test -n "${APPETIZE_API_TOKEN:-}"
+          test -n "${APPETIZE_ANDROID_PUBLIC_KEY:-}"
+          $HOME/.local/bin/mise exec -- just upload-appetize android \
+            "dist/android/zuko-android-${CM_TAG}-signed.apk" \
+            "$APPETIZE_ANDROID_PUBLIC_KEY" \
+            "Zuko ${CM_TAG} from Codemagic"
+
+      - name: Upload iOS Simulator package to Appetize
+        script: |
+          test -n "${APPETIZE_API_TOKEN:-}"
+          test -n "${APPETIZE_IOS_PUBLIC_KEY:-}"
+          $HOME/.local/bin/mise exec -- just upload-appetize ios \
+            "dist/ios-preview/Zuko-Flutter-ios-simulator.zip" \
+            "$APPETIZE_IOS_PUBLIC_KEY" \
+            "Zuko ${CM_TAG} iOS Simulator from Codemagic"
+
+    artifacts:
+      - dist/android/*
+      - dist/ios-preview/Zuko-Flutter-ios-simulator.zip
+      - /tmp/xcodebuild_logs/*.log
+      - $HOME/Library/Logs/DiagnosticReports/*
