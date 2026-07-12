@@ -30,13 +30,14 @@ def fail(message: str) -> None:
     raise SystemExit(1)
 
 
-def replace_once(path: pathlib.Path, old: str, new: str) -> None:
+def replace_once(path: pathlib.Path, old: str, new: str) -> bool:
     text = path.read_text()
     if new in text:
-        return
+        return False
     if text.count(old) != 1:
         fail(f"unexpected upstream source in {path}")
     path.write_text(text.replace(old, new))
+    return True
 
 
 def replace_one_variant(path: pathlib.Path, variants: tuple[str, ...], new: str) -> None:
@@ -86,11 +87,14 @@ def patch_flutter_native_assets() -> None:
         flutter_root
         / "packages/flutter_tools/lib/src/isolated/native_assets/ios/native_assets.dart"
     )
-    replace_once(
+    flutter_changed = replace_once(
         native_assets,
         "const targetIOSVersion = 13;",
         "const targetIOSVersion = 18;",
     )
+    if flutter_changed:
+        (flutter_root / "bin/cache/flutter_tools.snapshot").unlink(missing_ok=True)
+        (flutter_root / "bin/cache/flutter_tools.stamp").unlink(missing_ok=True)
 
 
 def main() -> None:
