@@ -22,9 +22,23 @@ listing, review, installer, upgrade, and signing path is complete. iOS/iPadOS
 testing continues through the separate internal TestFlight channel.
 
 - Android: install the signed APK; the AAB is for store upload.
-- Linux: install the Flatpak bundle; credentials use the host Secret Service.
+- Linux: install from the signed Zuko testing repository, or use the standalone
+  Flatpak bundle; credentials use the host Secret Service.
 - Windows: extract the complete ZIP and run `zuko.exe`; do not move the EXE
   away from its DLL and data files.
+
+The Linux testing repository is hosted with the static documentation site and
+uses Flathub only for the Freedesktop runtime:
+
+```sh
+flatpak install --user https://zuko.adonm.dev/flatpak/zuko.flatpakref
+flatpak run dev.adonm.zuko
+```
+
+The repository and its commits are signed by the dedicated Zuko Flatpak key
+with fingerprint `6A98 9D45 ADA5 B04F 54EA 298F 192D 2930 3235 4E08`.
+This is Zuko's testing repository, not a Flathub listing. Tagged GitHub Release
+bundles remain available for one-file installation and checksum inspection.
 
 The Windows ZIP attached to GitHub Releases is not an installer and does not
 provide automatic updates. A separate protected workflow can build and sign

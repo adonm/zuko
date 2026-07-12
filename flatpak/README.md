@@ -10,6 +10,24 @@ requires a top-level manifest that builds entirely from declared sources with
 no network during the build; source code and prebuilt artifacts must not be
 committed to the submission repository.
 
+## Signed testing repository
+
+The documentation workflow imports the latest release bundle into a signed
+archive-z2 repository, generates a from-empty static delta, and publishes it at
+`https://zuko.adonm.dev/flatpak/repo/`. Users can install it through the
+colocated `.flatpakref`:
+
+```sh
+flatpak install --user https://zuko.adonm.dev/flatpak/zuko.flatpakref
+```
+
+`flatpak/zuko-flatpak-repo.gpg` is the committed public key. The matching
+private key exists only as the GitHub Actions secret
+`FLATPAK_GPG_PRIVATE_KEY_BASE64`; the build script rejects a key that does not
+match the public key and the key embedded in both repository descriptors. The
+repository uses Flathub for its Freedesktop runtime but is an independent Zuko
+testing channel, not a Flathub listing.
+
 ## Reproducibility model
 
 This is a validated two-stage build. A fully offline Flatpak source manifest

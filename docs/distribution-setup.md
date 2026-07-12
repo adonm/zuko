@@ -24,6 +24,7 @@ inputs.
 | Scope | Name | Required values |
 |-------|------|-----------------|
 | Repository secrets | coordinated Flutter release | `CODEMAGIC_API_TOKEN` with access to Codemagic app `6a52dc14add8531e99f88b8a`; `ANDROID_KEYSTORE_BASE64`, `ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS`, and `ANDROID_KEY_PASSWORD` for signing exact Codemagic Android outputs |
+| Repository secret | static Flatpak testing repository | `FLATPAK_GPG_PRIVATE_KEY_BASE64`, containing the base64-encoded private export matching `flatpak/zuko-flatpak-repo.gpg` |
 | `google-play` environment | Play publication | `ANDROID_KEYSTORE_BASE64`, `ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS`, `ANDROID_KEY_PASSWORD`, and `GOOGLE_PLAY_SERVICE_ACCOUNT_JSON` |
 | `microsoft-store-package` environment | package/sign | variables `MSSTORE_PRODUCT_ID`, `MSSTORE_PACKAGE_IDENTITY_NAME`, `MSSTORE_PACKAGE_PUBLISHER`, `MSSTORE_PACKAGE_FAMILY_NAME`, `MSSTORE_PACKAGE_DISPLAY_NAME`, `MSSTORE_PUBLISHER_DISPLAY_NAME`; secrets `MSSTORE_SIGNING_PFX_BASE64`, `MSSTORE_SIGNING_PFX_PASSWORD` |
 | `microsoft-store-draft` environment | draft upload | the six package variables above plus `MSSTORE_TENANT_ID`, `MSSTORE_SELLER_ID`, `MSSTORE_CLIENT_ID`; secret `MSSTORE_CLIENT_SECRET` |
@@ -109,6 +110,10 @@ Details: [Microsoft Store publishing](windows-publishing.md) and the
 
 ### Linux Flatpak and Flathub
 
+- [x] Create the dedicated static-repository signing identity, commit only its
+  public key, and store its private export in the repository secret.
+- [x] Publish the latest release bundle as a signed archive-z2 repository and
+  from-empty static delta under `/flatpak/` on the documentation site.
 - [ ] Build and test the release-attached bundle with `just container-flatpak`.
 - [ ] Install Flathub's official author tool with `just flatpak-author-setup`,
   then run `just flatpak-author-lint`.

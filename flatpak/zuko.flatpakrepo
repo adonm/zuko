@@ -1,0 +1,8 @@
+[Flatpak Repo]
+Title=Zuko
+Url=https://zuko.adonm.dev/flatpak/repo/
+Homepage=https://zuko.adonm.dev/
+Comment=Signed Zuko testing builds
+Description=Checksummed release builds for testing the Zuko Flutter client.
+Icon=https://zuko.adonm.dev/zuko-logo.png
+GPGKey=mDMEalPcWxYJKwYBBAHaRw8BAQdAiBeq491e5naQUNaxP2QaFHqCjLfoN++O9AWKMl05SvO0MFp1a28gRmxhdHBhayBSZXBvc2l0b3J5IDxmbGF0cGFrQHp1a28uYWRvbm0uZGV2PoiTBBMWCgA7FiEEapidRa2lsE9U6imPGS0pMDI1TggFAmpT3FsCGwMFCwkIBwICIgIGFQoJCAsCBBYCAwECHgcCF4AACgkQGS0pMDI1TghM7QD9FxhN7brkFKDQGGL7MwcGdya45QZaCtHroarobgFKxGoBAPg0jloHSou+HODIaiNS8u74RF4LezEstZZh/VzXU0UI
