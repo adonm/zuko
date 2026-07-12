@@ -29,6 +29,7 @@ def main() -> None:
         print(f"patched {path}")
     elif PATCH not in source:
         raise SystemExit(f"Flutter Linux cross-build guard changed: {path}")
+    (root / "bin/cache/flutter_tools.stamp").unlink(missing_ok=True)
 
 
 if __name__ == "__main__":
