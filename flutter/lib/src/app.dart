@@ -708,39 +708,42 @@ class _TerminalAccessory extends StatelessWidget {
                     label: 'Esc',
                     onPressed: () => controller.sendKey(Key.escape),
                   ),
-                  _AccessoryKey(
-                    label: 'Tab',
+                  _AccessoryIcon(
+                    tooltip: 'Tab',
+                    icon: Icons.keyboard_tab,
                     onPressed: () => controller.sendKey(Key.tab),
                   ),
                   if (showAdditionalKeys) ...[
-                    _AccessoryKey(
-                      label: 'Ctrl',
+                    _AccessoryIcon(
+                      tooltip: 'Control modifier',
+                      icon: Icons.keyboard_control_key,
                       selected: controller.virtualMods.hasCtrl,
                       onPressed: () => controller.toggleMod(const Mods.ctrl()),
                     ),
-                    _AccessoryKey(
-                      label: 'Alt',
+                    _AccessoryIcon(
+                      tooltip: 'Alt modifier',
+                      icon: Icons.keyboard_alt,
                       selected: controller.virtualMods.hasAlt,
                       onPressed: () => controller.toggleMod(const Mods.alt()),
                     ),
                     _AccessoryIcon(
                       tooltip: 'Left',
-                      icon: Icons.arrow_left,
+                      icon: Icons.keyboard_arrow_left,
                       onPressed: () => controller.sendKey(Key.arrowLeft),
                     ),
                     _AccessoryIcon(
                       tooltip: 'Up',
-                      icon: Icons.arrow_drop_up,
+                      icon: Icons.keyboard_arrow_up,
                       onPressed: () => controller.sendKey(Key.arrowUp),
                     ),
                     _AccessoryIcon(
                       tooltip: 'Down',
-                      icon: Icons.arrow_drop_down,
+                      icon: Icons.keyboard_arrow_down,
                       onPressed: () => controller.sendKey(Key.arrowDown),
                     ),
                     _AccessoryIcon(
                       tooltip: 'Right',
-                      icon: Icons.arrow_right,
+                      icon: Icons.keyboard_arrow_right,
                       onPressed: () => controller.sendKey(Key.arrowRight),
                     ),
                   ],
@@ -787,26 +790,15 @@ class _TerminalAccessory extends StatelessWidget {
 }
 
 class _AccessoryKey extends StatelessWidget {
-  const _AccessoryKey({
-    required this.label,
-    required this.onPressed,
-    this.selected = false,
-  });
+  const _AccessoryKey({required this.label, required this.onPressed});
   final String label;
   final VoidCallback onPressed;
-  final bool selected;
 
   @override
   Widget build(BuildContext context) => Padding(
     padding: const EdgeInsets.symmetric(horizontal: 1, vertical: 3),
     child: TextButton(
       style: TextButton.styleFrom(
-        backgroundColor: selected
-            ? Theme.of(context).colorScheme.primaryContainer
-            : null,
-        foregroundColor: selected
-            ? Theme.of(context).colorScheme.onPrimaryContainer
-            : null,
         minimumSize: const Size(36, 18),
         padding: const EdgeInsets.symmetric(horizontal: 6),
         tapTargetSize: MaterialTapTargetSize.shrinkWrap,
@@ -822,10 +814,12 @@ class _AccessoryIcon extends StatelessWidget {
     required this.tooltip,
     required this.icon,
     required this.onPressed,
+    this.selected = false,
   });
   final String tooltip;
   final IconData icon;
   final VoidCallback? onPressed;
+  final bool selected;
 
   @override
   Widget build(BuildContext context) => SizedBox(
@@ -838,7 +832,15 @@ class _AccessoryIcon extends StatelessWidget {
       iconSize: 18,
       padding: EdgeInsets.zero,
       constraints: const BoxConstraints(minWidth: 36, minHeight: 24),
-      style: const ButtonStyle(tapTargetSize: MaterialTapTargetSize.shrinkWrap),
+      style: IconButton.styleFrom(
+        backgroundColor: selected
+            ? Theme.of(context).colorScheme.primaryContainer
+            : null,
+        foregroundColor: selected
+            ? Theme.of(context).colorScheme.onPrimaryContainer
+            : null,
+        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+      ),
     ),
   );
 }
