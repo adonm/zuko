@@ -1,0 +1,116 @@
+workflows:
+  ios-signing-validation:
+    name: iOS signing validation
+    instance_type: mac_mini_m2
+    max_build_duration: 120
+    integrations:
+      app_store_connect: zuko-app-store
+    environment: &ios_environment
+      xcode: 26.3
+      cocoapods: 1.16.2
+      ios_signing:
+        distribution_type: app_store
+        bundle_identifier: dev.adonm.zuko
+      vars:
+        CM_CLONE_UNSHALLOW: true
+        CM_RECURSIVE_SUBMODULE_INIT: true
+        MISE_LOG_LEVEL: info
+        MISE_TRUSTED_CONFIG_PATHS: $CM_BUILD_DIR
+        MISE_YES: 1
+        TEAM_ID: R8PN382RC4
+    cache: &ios_cache
+      cache_paths:
+        - $HOME/.cache/mise
+        - $HOME/.local/share/mise
+        - $HOME/.pub-cache
+    scripts:
+      - &install_toolchain
+        name: Install pinned repository toolchain
+        script: scripts/install-mise-codemagic.sh
+
+      - name: Resolve validation metadata
+        script: $HOME/.local/bin/mise exec -- just build-context
+
+      - &select_xcode
+        name: Verify Xcode 26.3
+        script: $HOME/.local/bin/mise exec -- just select-xcode
+
+      - &flutter_check
+        name: Analyze and test shared client
+        script: $HOME/.local/bin/mise exec -- just flutter-check
+
+      - &prepare_ghostty
+        name: Prepare App Store-compatible Ghostty library
+        script: $HOME/.local/bin/mise exec -- just prepare-ios-ghostty
+
+      - &configure_signing
+        name: Configure App Store signing
+        script: |
+          export RUNNER_TEMP="$CM_BUILD_DIR/.tmp/codemagic"
+          mkdir -p "$RUNNER_TEMP"
+          export APPLE_EXPORT_OPTIONS="$RUNNER_TEMP/ExportOptions.plist"
+          xcode-project use-profiles \
+            --project "$CM_BUILD_DIR/flutter/ios/Runner.xcodeproj" \
+            --archive-method app-store \
+            --export-options-plist "$APPLE_EXPORT_OPTIONS" \
+            --custom-export-options '{"destination":"export","manageAppVersionAndBuildNumber":false,"stripSwiftSymbols":true,"uploadSymbols":true}'
+          plutil -lint "$APPLE_EXPORT_OPTIONS"
+          {
+            echo "RUNNER_TEMP=$RUNNER_TEMP"
+            echo "APPLE_EXPORT_OPTIONS=$APPLE_EXPORT_OPTIONS"
+          } >> "$CM_ENV"
+
+      - &build_ipa
+        name: Build signed Flutter IPA
+        script: $HOME/.local/bin/mise exec -- just build-ios-store
+
+      - &package_ipa
+        name: Validate and package signed IPA
+        script: $HOME/.local/bin/mise exec -- just package-ios-store
+
+    artifacts: &ios_artifacts
+      - dist/flutter-ios/Zuko-Flutter.ipa
+      - dist/flutter-ios/Zuko-Flutter.ipa.sha256
+      - flutter/build/ios/archive/*.xcarchive
+      - /tmp/xcodebuild_logs/*.log
+      - $HOME/Library/Logs/DiagnosticReports/*
+
+  ios-testflight-release:
+    name: iOS TestFlight release
+    instance_type: mac_mini_m2
+    max_build_duration: 120
+    integrations:
+      app_store_connect: zuko-app-store
+    environment: *ios_environment
+    cache: *ios_cache
+    triggering:
+      events:
+        - tag
+      tag_patterns:
+        - pattern: v*
+          include: true
+      cancel_previous_builds: false
+    scripts:
+      - *install_toolchain
+
+      - name: Verify immutable release identity
+        script: |
+          test -n "${CM_TAG:-}"
+          test "$(git cat-file -t "$CM_TAG")" = tag
+          test "$(git rev-parse HEAD)" = "$CM_COMMIT"
+          $HOME/.local/bin/mise exec -- just release-context "$CM_TAG"
+
+      - *select_xcode
+      - *flutter_check
+      - *prepare_ghostty
+      - *configure_signing
+      - *build_ipa
+      - *package_ipa
+
+    artifacts: *ios_artifacts
+    publishing:
+      app_store_connect:
+        auth: integration
+        # Upload for TestFlight processing. Beta-review submission remains a
+        # deliberate App Store Connect operation.
+        submit_to_testflight: false

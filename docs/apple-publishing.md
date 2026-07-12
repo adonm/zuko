@@ -3,19 +3,52 @@
 Development compilation stays in `build-flutter.yml`. Store distribution is a
 separate, protected boundary:
 
-- `release-flutter-ios.yml` builds, validates, and uploads a signed IPA for
-  internal TestFlight processing on every immutable `vX.Y.Z` tag. A manual run
-  is a non-publishing signing smoke test for the selected branch.
+- Codemagic's `ios-testflight-release` workflow builds, validates, retains, and
+  uploads a signed IPA for internal TestFlight processing on every immutable
+  `vX.Y.Z` tag. Its `ios-signing-validation` workflow is a manual,
+  non-publishing signing smoke test for the selected branch.
+- `release-flutter-ios.yml` is manual-only. It provides an independent GitHub
+  signing smoke test and checksum-pinned artifact recovery, but does not react
+  to release tags.
 - `release-flutter-macos.yml` builds a sandboxed Mac App Store `.pkg`;
   manual runs require an immutable release tag, and `lane=upload` starts a
   second job in the same run before validation and upload.
 
-Both workflows use Xcode 26.3, the checksum-pinned Flutter `3.46.0-0.3.pre`
+All Apple workflows use Xcode 26.3, the checksum-pinned Flutter `3.46.0-0.3.pre`
 beta archive in `mise.toml`, Rust 1.96.1, Zig 0.15.2, and
 bundle ID `dev.adonm.zuko`. The iOS workflow retains
 `scripts/prepare-libghostty-ios-static.py` before its device archive build.
 
-## Codemagic boundary
+## Codemagic hosted iOS boundary
+
+The repository-root `codemagic.yaml` uses an Apple Silicon M2 runner and the
+`zuko-app-store` Developer Portal integration. Although Codemagic detects the
+mobile project under `flutter/`, its monorepo configuration remains at the
+repository root so release scripts and `mise.toml` stay shared across clients.
+
+Complete this one-time setup in Codemagic:
+
+1. Add `adonm/zuko` as a Flutter application, with project path `flutter` and
+   branch `main`, then select YAML configuration.
+2. Under Team integrations > Developer Portal, add the dedicated App Store
+   Connect API key with App Manager access and name it exactly
+   `zuko-app-store`.
+3. Under Team settings > Code signing identities, generate or upload an Apple
+   Distribution certificate and fetch or upload the App Store provisioning
+   profile for `dev.adonm.zuko`. Codemagic must show the certificate/profile
+   pair as matching.
+4. Check `codemagic.yaml` from `main`, then run `ios-signing-validation`. It
+   must produce a validated IPA without publishing it. Only the
+   `ios-testflight-release` tag workflow publishes.
+
+The Codemagic runner uses Xcode 26.3 explicitly. A checksum-verified mise
+2026.7.5 binary installs the exact Flutter, Rust, Zig, and `just` versions from
+`mise.toml`; no floating Codemagic Flutter channel is used. Codemagic injects
+the selected signing identities into its ephemeral keychain and publishes the
+validated IPA through the named integration. IPA, checksum, xcarchive, Xcode
+logs, and crash diagnostics are retained as build artifacts.
+
+## GitHub recovery boundary
 
 Codemagic CLI Tools 0.68.0 owns release keychain initialization, certificate
 import, provisioning-profile application, package inspection, App Store
@@ -30,9 +63,9 @@ uv pip compile --universal --generate-hashes --python-version 3.13 \
   <<< 'codemagic-cli-tools==VERSION'
 ```
 
-The workflows decode signing material only into an ephemeral runner directory.
-Commands pass passwords and API credentials by environment or protected files;
-do not add shell tracing or print those values.
+The GitHub workflows decode signing material only into an ephemeral runner
+directory. Commands pass passwords and API credentials by environment or
+protected files; do not add shell tracing or print those values.
 
 ## Apple portal setup
 
@@ -59,7 +92,7 @@ contains devices, or targets the wrong platform. It also requires the expected
 Apple Distribution, Mac App Distribution, and Mac Installer Distribution
 certificate identities.
 
-## GitHub configuration
+## GitHub recovery configuration
 
 Configure these Actions secrets without placing values in shell history:
 
@@ -78,10 +111,10 @@ Configure these Actions secrets without placing values in shell history:
 | `ASC_ISSUER_ID` | App Store Connect issuer ID |
 | `ASC_KEY_CONTENT` | Complete App Store Connect `.p8` contents |
 
-Certificate and profile values are unwrapped base64. Protect the
-`apple-store` environment with required reviewers and restrict deployment to
-release tag pushes and approved manual smoke/store runs. Put all listed secrets, including
-the three `ASC_*` values used by both iOS and macOS, in that environment.
+Certificate and profile values are unwrapped base64. Protect the `apple-store`
+environment with required reviewers and restrict deployment to approved manual
+smoke, recovery, and macOS Store runs. Put all listed secrets, including the
+three `ASC_*` values used by iOS recovery and macOS, in that environment.
 
 ## Validation and release
 

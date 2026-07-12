@@ -53,9 +53,10 @@ if [ -n "${GITHUB_OUTPUT:-}" ]; then
   } >> "$GITHUB_OUTPUT"
 fi
 
-if [ -n "${GITHUB_ENV:-}" ]; then
-  echo "ZUKO_VERSION=$version" >> "$GITHUB_ENV"
-  echo "ZUKO_BUILD_NUMBER=$version_code" >> "$GITHUB_ENV"
+environment_file="${GITHUB_ENV:-${CM_ENV:-}}"
+if [ -n "$environment_file" ]; then
+  echo "ZUKO_VERSION=$version" >> "$environment_file"
+  echo "ZUKO_BUILD_NUMBER=$version_code" >> "$environment_file"
 fi
 
 echo "release context: $TAG from $sha"

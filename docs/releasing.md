@@ -7,8 +7,8 @@ Tags matching `vX.Y.Z` trigger the coordinated CLI and Flutter release graph:
 - Flutter Linux x86_64 Flatpak;
 - Flutter Windows x86_64 bundle;
 
-Flutter iOS uploads to TestFlight automatically for release tags. Mac App Store
-distribution uses a manual protected workflow.
+Codemagic builds, validates, and uploads Flutter iOS to TestFlight for release
+tags. Mac App Store distribution uses a manual protected GitHub workflow.
 Flutter web is deployed by the Pages workflow after changes reach `main`.
 
 Published assets follow these names (`TAG` includes the leading `v`):
@@ -122,22 +122,27 @@ current policy caveats in [Flatpak packaging](../flatpak/README.md).
 
 The Apple job in `build-flutter.yml` remains the ordinary iOS Simulator and
 macOS compile gate. It uploads seven-day development ZIP artifacts only for
-non-PR runs. Store signing and upload are isolated in protected workflows:
+non-PR runs. Store signing and upload are isolated from ordinary GitHub CI:
 
-- every `vX.Y.Z` tag creates, validates, and uploads `Zuko-Flutter.ipa` for
-  internal TestFlight processing;
-- a manual iOS workflow run creates and validates a signed IPA from the selected
-  branch without uploading it or claiming a release identity;
+- Codemagic's `ios-testflight-release` workflow handles every `vX.Y.Z` tag and
+  creates, validates, retains, and uploads `Zuko-Flutter.ipa` for internal
+  TestFlight processing;
+- Codemagic's manual `ios-signing-validation` workflow creates and validates a
+  signed IPA from the selected branch without uploading it or claiming a
+  release identity;
+- GitHub's manual iOS workflow remains available for independent signing
+  validation and emergency upload of a checksum-pinned GitHub artifact;
 - macOS `lane=build` creates and validates a signed, sandboxed Mac App Store
   installer package;
 - macOS `lane=upload` passes through the protected `apple-store` environment
   before validating and uploading that package.
 
 The Apple client uses bundle ID `dev.adonm.zuko` and the same deterministic
-semantic build number as Android. Pinned Codemagic CLI Tools own keychain, certificate,
-profile, package-validation, and App Store Connect upload operations at this
-boundary. Portal records, secrets, certificate types, sandbox requirements, and
-final submission steps are documented in [Apple store publishing](apple-publishing.md).
+semantic build number as Android. Codemagic's hosted Apple Silicon environment
+owns iOS signing and App Store Connect upload; repository scripts continue to
+own release identity and package validation. Portal records, credentials,
+certificate types, sandbox requirements, and final submission steps are
+documented in [Apple store publishing](apple-publishing.md).
 
 ## Linux `zuko app` support
 

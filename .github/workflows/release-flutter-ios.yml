@@ -1,9 +1,6 @@
 name: release-flutter-ios
 
 on:
-  push:
-    tags:
-      - 'v*'
   workflow_dispatch:
     inputs:
       lane:
@@ -36,8 +33,8 @@ concurrency:
 
 jobs:
   build:
-    if: ${{ github.event_name == 'push' || inputs.lane == 'build' }}
-    name: signed Flutter iOS (${{ github.event_name == 'push' && 'TestFlight' || 'validation only' }})
+    if: ${{ inputs.lane == 'build' }}
+    name: signed Flutter iOS (GitHub validation only)
     runs-on: macos-latest
     timeout-minutes: 120
     environment: apple-store
@@ -55,14 +52,7 @@ jobs:
           cache: true
 
       - name: Resolve release metadata
-        env:
-          TAG: ${{ github.ref_name }}
-        run: |
-          if [ "$GITHUB_EVENT_NAME" = push ]; then
-            mise exec -- just release-context "$TAG"
-          else
-            mise exec -- just build-context
-          fi
+        run: mise exec -- just build-context
 
       # Zig 0.15.2 cannot parse the arm64e-macos exports in Xcode 26.6's
       # macOS 26.5 libSystem.tbd while compiling Ghostty's host build runner.
@@ -108,16 +98,6 @@ jobs:
             dist/flutter-ios/Zuko-Flutter.ipa.sha256
           if-no-files-found: error
           retention-days: 7
-
-      - name: Upload to TestFlight
-        # Manual dispatch is intentionally a non-publishing signing smoke test.
-        if: ${{ github.event_name == 'push' }}
-        env:
-          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
-          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
-          ASC_KEY_CONTENT: ${{ secrets.ASC_KEY_CONTENT }}
-          IPA_PATH: ${{ steps.package.outputs.ipa }}
-        run: mise exec -- just upload-apple-store ios "$IPA_PATH"
 
   upload-artifact:
     if: ${{ github.event_name == 'workflow_dispatch' && inputs.lane == 'upload-artifact' }}
