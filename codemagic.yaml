@@ -382,3 +382,225 @@ workflows:
       - dist/ios-preview/Zuko-Flutter-ios-simulator.zip
       - /tmp/xcodebuild_logs/*.log
       - $HOME/Library/Logs/DiagnosticReports/*
+
+  flutter-linux-ci:
+    name: Flutter Linux, Android, and web compile gate
+    instance_type: linux_x4
+    max_build_duration: 120
+    environment:
+      vars:
+        CM_CLONE_UNSHALLOW: true
+        CM_RECURSIVE_SUBMODULE_INIT: true
+        MISE_LOG_LEVEL: info
+        MISE_TRUSTED_CONFIG_PATHS: $CM_BUILD_DIR
+        MISE_YES: 1
+      java: 17
+    cache: *ios_cache
+    triggering:
+      events:
+        - push
+        - pull_request
+      branch_patterns:
+        - pattern: main
+          include: true
+          source: false
+      cancel_previous_builds: true
+    when:
+      changeset:
+        includes:
+          - flutter/**
+          - flatpak/**
+          - codemagic.yaml
+          - Justfile
+          - mise.toml
+          - scripts/build-web.sh
+          - scripts/check-dart-format.py
+          - scripts/check-flutter-config.py
+          - scripts/finalize-web-build.py
+          - scripts/install-mise-codemagic.sh
+          - scripts/patch-iroh-flutter.py
+    scripts:
+      - name: Install Linux desktop dependencies
+        script: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            clang cmake libgtk-3-dev libsecret-1-dev ninja-build pkg-config
+
+      - *install_toolchain
+
+      - name: Ensure pinned Android SDK components
+        script: |
+          export ANDROID_HOME="${ANDROID_HOME:-$ANDROID_SDK_ROOT}"
+          "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager" \
+            'platform-tools' \
+            'platforms;android-36' \
+            'build-tools;36.0.0' \
+            'ndk;28.2.13676358'
+
+      - name: Analyze, test, and build web
+        script: |
+          $HOME/.local/bin/mise exec -- just flutter-check
+          $HOME/.local/bin/mise exec -- just build-web
+
+      - name: Build Android and Linux clients
+        script: |
+          export ANDROID_HOME="${ANDROID_HOME:-$ANDROID_SDK_ROOT}"
+          $HOME/.local/bin/mise exec -- just build-flutter-android-debug
+          $HOME/.local/bin/mise exec -- just build-flutter-linux
+          tar -czf flutter-linux-x86_64.tar.gz \
+            -C flutter/build/linux/x64/release bundle
+
+    artifacts:
+      - flutter/build/app/outputs/flutter-apk/app-debug.apk
+      - flutter-linux-x86_64.tar.gz
+
+  flutter-linux-android-release:
+    name: Flutter Linux and Android release artifacts
+    instance_type: linux_x4
+    max_build_duration: 120
+    environment:
+      android_signing:
+        - zuko-android
+      vars:
+        CM_CLONE_UNSHALLOW: true
+        CM_RECURSIVE_SUBMODULE_INIT: true
+        MISE_LOG_LEVEL: info
+        MISE_TRUSTED_CONFIG_PATHS: $CM_BUILD_DIR
+        MISE_YES: 1
+      java: 17
+    cache: *ios_cache
+    scripts:
+      - name: Verify immutable release identity
+        script: |
+          test -n "${CM_TAG:-}"
+          test "$(git rev-parse HEAD)" = "$CM_COMMIT"
+          scripts/release-context.sh "$CM_TAG"
+
+      - *install_toolchain
+
+      - name: Ensure pinned Android SDK components
+        script: |
+          export ANDROID_HOME="${ANDROID_HOME:-$ANDROID_SDK_ROOT}"
+          "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager" \
+            'platform-tools' \
+            'platforms;android-36' \
+            'build-tools;36.0.0' \
+            'ndk;28.2.13676358'
+
+      - name: Build signed Android packages
+        script: |
+          export ANDROID_HOME="${ANDROID_HOME:-$ANDROID_SDK_ROOT}"
+          export ANDROID_KEYSTORE_PATH="$CM_KEYSTORE_PATH"
+          export ANDROID_KEYSTORE_PASSWORD="$CM_KEYSTORE_PASSWORD"
+          export ANDROID_KEY_ALIAS="$CM_KEY_ALIAS"
+          export ANDROID_KEY_PASSWORD="$CM_KEY_PASSWORD"
+          $HOME/.local/bin/mise exec -- just build-flutter-android
+          $HOME/.local/bin/mise exec -- just package-android-release "$CM_TAG" signed
+
+      - name: Build and smoke-test x86_64 Flatpak in pinned SDK
+        script: |
+          docker run --rm --privileged \
+            --env CI=true \
+            --env CM_COMMIT="$CM_COMMIT" \
+            --env CM_TAG="$CM_TAG" \
+            --env HOME=/home/builder \
+            --env MISE_TRUSTED_CONFIG_PATHS=/workspace \
+            --volume "$CM_BUILD_DIR:/workspace" \
+            --volume "$HOME/.local:/home/builder/.local" \
+            --volume "$HOME/.pub-cache:/home/builder/.pub-cache" \
+            --workdir /workspace \
+            ghcr.io/flathub-infra/flatpak-github-actions@sha256:bc5938197c339664f893828925061b08486e7f355c3e91eefcaae7293d3cfd6b \
+            bash -lc '
+              set -euo pipefail
+              export PATH=/home/builder/.local/bin:$PATH
+              git config --global --add safe.directory /workspace
+              flutter_root="$(mise where http:flutter)"
+              git config --global --add safe.directory "$flutter_root"
+              mise exec -- just install-flatpak-llvm /opt/llvm
+              export PATH=/opt/llvm/bin:$PATH
+              dbus-uuidgen --ensure=/etc/machine-id
+              mise exec -- just build-flutter-linux-release "$CM_COMMIT"
+              mise exec -- just prepare-flatpak-release "$CM_TAG" "$CM_COMMIT"
+              mise exec -- just package-flatpak-release "$CM_TAG" "$CM_COMMIT"
+            '
+
+      - name: Package Codemagic artifact handoff
+        script: |
+          mkdir -p dist/codemagic
+          zip -j "dist/codemagic/zuko-flutter-linux-android-${CM_TAG}.zip" \
+            dist/android/* \
+            dist/linux/*
+
+    artifacts:
+      - dist/codemagic/zuko-flutter-linux-android-*.zip
+
+  flutter-windows-ci:
+    name: Flutter Windows compile gate
+    instance_type: windows_x2
+    max_build_duration: 90
+    environment:
+      vars:
+        CM_CLONE_UNSHALLOW: true
+        CM_RECURSIVE_SUBMODULE_INIT: true
+    triggering:
+      events:
+        - push
+        - pull_request
+      branch_patterns:
+        - pattern: main
+          include: true
+          source: false
+      cancel_previous_builds: true
+    when:
+      changeset:
+        includes:
+          - flutter/**
+          - codemagic.yaml
+          - Justfile
+          - mise.toml
+          - scripts/install-mise-codemagic.ps1
+          - scripts/package-windows-release.ps1
+          - scripts/patch-iroh-flutter.py
+    scripts:
+      - name: Install pinned repository toolchain
+        script: pwsh -NoProfile -File scripts/install-mise-codemagic.ps1
+
+      - name: Build Windows client
+        script: |
+          $mise = Join-Path $HOME ".local/bin/mise.exe"
+          & $mise exec -- just build-flutter-windows-release v0.0.0
+
+    artifacts:
+      - dist/windows/*
+
+  flutter-windows-release:
+    name: Flutter Windows release artifacts
+    instance_type: windows_x2
+    max_build_duration: 90
+    environment:
+      vars:
+        CM_CLONE_UNSHALLOW: true
+        CM_RECURSIVE_SUBMODULE_INIT: true
+    scripts:
+      - name: Verify immutable release identity
+        script: |
+          if ([string]::IsNullOrWhiteSpace($env:CM_TAG)) {
+            throw "CM_TAG is required"
+          }
+          if ((git rev-parse HEAD) -ne $env:CM_COMMIT) {
+            throw "checkout does not match CM_COMMIT"
+          }
+          bash scripts/release-context.sh $env:CM_TAG
+
+      - name: Install pinned repository toolchain
+        script: pwsh -NoProfile -File scripts/install-mise-codemagic.ps1
+
+      - name: Build and package Windows client
+        script: |
+          $mise = Join-Path $HOME ".local/bin/mise.exe"
+          & $mise exec -- just build-flutter-windows-release $env:CM_TAG
+          New-Item -ItemType Directory -Force dist/codemagic | Out-Null
+          Compress-Archive -Path dist/windows/* -DestinationPath "dist/codemagic/zuko-flutter-windows-$env:CM_TAG-artifacts.zip"
+
+    artifacts:
+      - dist/codemagic/zuko-flutter-windows-*-artifacts.zip

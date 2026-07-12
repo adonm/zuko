@@ -50,6 +50,8 @@ def main() -> None:
         ),
     }
     platforms = flutter["platforms"]
+    if set(platforms) != set(expected_archives):
+        raise SystemExit("Flutter config: Flutter archive platforms must match supported clients")
     for platform, (archive, checksum) in expected_archives.items():
         entry = platforms.get(platform, {})
         if not entry.get("url", "").endswith(archive) or entry.get("checksum") != checksum:
@@ -95,23 +97,24 @@ def main() -> None:
         raise SystemExit("Flutter config: Flatpak must not expose X11")
 
     for path, value in [
-        (".github/workflows/release.yml", "runs-on: ubuntu-24.04-arm"),
-        (".github/workflows/release.yml", "linux-arm64 /opt/aarch64-sysroot"),
-        (
-            "scripts/patch-flutter-linux-cross.py",
-            "Cross-build from Linux x64 host to Linux arm64 target is not currently supported.",
-        ),
-        ("scripts/package-flatpak.sh", "zuko-linux-$tag-$arch.flatpak"),
-        (
-            "scripts/package-flatpak.sh",
-            "dca273214da6c8760a2ddde6fd107e293a4a1fa5dbe4968444034930b1f1bb3e",
-        ),
-        (
-            "scripts/install-flatpak-sysroot.sh",
-            "587b2f51b68cad07369c429e01584fd3b2b90523015e78acf5db11a8faac0604",
-        ),
+        ("codemagic.yaml", "flutter-linux-ci:"),
+        ("codemagic.yaml", "flutter-linux-android-release:"),
+        ("codemagic.yaml", "flutter-windows-ci:"),
+        ("codemagic.yaml", "flutter-windows-release:"),
+        (".github/workflows/release.yml", "collect-codemagic-release.py"),
+        ("scripts/package-flatpak.sh", "zuko-linux-$tag-x86_64.flatpak"),
     ]:
         require_text(path, value)
+    forbid_text("scripts/package-flatpak.sh", "aarch64")
+    forbid_text("codemagic.yaml", "flutter-linux-aarch64")
+    forbid_text(".github/workflows/release.yml", "linux-arm-build")
+    for removed in [
+        "scripts/build-flutter-linux-release.sh",
+        "scripts/install-flatpak-sysroot.sh",
+        "scripts/patch-flutter-linux-cross.py",
+    ]:
+        if (ROOT / removed).exists():
+            raise SystemExit(f"Flutter config: obsolete ARM helper still exists: {removed}")
 
     print(f"Flutter config: Impeller policy uses beta revision {revision}")
 

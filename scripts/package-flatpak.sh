@@ -2,6 +2,10 @@
 set -euo pipefail
 
 readonly APP_ID=dev.adonm.zuko
+readonly PLATFORM_REF=org.freedesktop.Platform/x86_64/25.08
+readonly SDK_REF=org.freedesktop.Sdk/x86_64/25.08
+readonly PLATFORM_COMMIT=fdad08cc10905f9175f0224652a7b1c1b4d37fc1a5fa8c97843ccef846c642a0
+readonly SDK_COMMIT=30e83c31042c341df56dbca804ec2f1eef204145c513659b83d6c446b2e7b4f5
 readonly RUNTIME_REPO=https://flathub.org/repo/flathub.flatpakrepo
 
 root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
@@ -9,30 +13,10 @@ cd "$root"
 
 version=$(scripts/version.sh)
 tag=${1:-v$version}
-arch=$(uname -m)
-case "$arch" in
-  x86_64)
-    flutter_arch=x64
-    platform_commit=fdad08cc10905f9175f0224652a7b1c1b4d37fc1a5fa8c97843ccef846c642a0
-    sdk_commit=30e83c31042c341df56dbca804ec2f1eef204145c513659b83d6c446b2e7b4f5
-    ;;
-  aarch64)
-    flutter_arch=arm64
-    platform_commit=dca273214da6c8760a2ddde6fd107e293a4a1fa5dbe4968444034930b1f1bb3e
-    sdk_commit=587b2f51b68cad07369c429e01584fd3b2b90523015e78acf5db11a8faac0604
-    ;;
-  *)
-    echo "flatpak package: unsupported architecture: $arch" >&2
-    exit 1
-    ;;
-esac
-readonly arch flutter_arch platform_commit sdk_commit
-readonly PLATFORM_REF="org.freedesktop.Platform/$arch/25.08"
-readonly SDK_REF="org.freedesktop.Sdk/$arch/25.08"
-bundle=flutter/build/linux/$flutter_arch/release/bundle
+bundle=flutter/build/linux/x64/release/bundle
 work=build/flatpak
 output_dir=dist/linux
-output=$output_dir/zuko-linux-$tag-$arch.flatpak
+output=$output_dir/zuko-linux-$tag-x86_64.flatpak
 
 for command in flatpak flatpak-builder sha256sum ldd git; do
   command -v "$command" >/dev/null 2>&1 || {
@@ -44,8 +28,8 @@ if [[ ! "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || [[ "$tag" != "v$version" ]]; t
   echo "flatpak package: tag must be v$version, got $tag" >&2
   exit 1
 fi
-if [[ $(flatpak --default-arch) != "$arch" ]]; then
-  echo "flatpak package: host and Flatpak architectures do not match" >&2
+if [[ $(uname -m) != x86_64 ]] || [[ $(flatpak --default-arch) != x86_64 ]]; then
+  echo "flatpak package: only x86_64 builds are supported" >&2
   exit 1
 fi
 for required in "$bundle/zuko" "$bundle/data" "$bundle/lib"; do
@@ -68,8 +52,8 @@ verify_runtime() {
     exit 1
   fi
 }
-verify_runtime "$PLATFORM_REF" "$platform_commit"
-verify_runtime "$SDK_REF" "$sdk_commit"
+verify_runtime "$PLATFORM_REF" "$PLATFORM_COMMIT"
+verify_runtime "$SDK_REF" "$SDK_COMMIT"
 
 if [[ -z ${SOURCE_DATE_EPOCH:-} ]]; then
   SOURCE_DATE_EPOCH=$(git show -s --format=%ct HEAD)
@@ -100,7 +84,7 @@ done < <(find "$work/staging/bundle" -type f \( -name zuko -o -name '*.so' -o -n
 )
 
 flatpak-builder \
-  --arch="$arch" \
+  --arch=x86_64 \
   --default-branch=stable \
   --disable-download \
   --disable-rofiles-fuse \
@@ -112,7 +96,7 @@ flatpak-builder \
   flatpak/dev.adonm.zuko.json
 
 flatpak build-bundle \
-  --arch="$arch" \
+  --arch=x86_64 \
   --runtime-repo="$RUNTIME_REPO" \
   "$work/repo" \
   "$output" \
@@ -135,10 +119,9 @@ mkdir -p "$smoke_home"
 HOME="$smoke_home" flatpak --user install --noninteractive "$output"
 # The variables below intentionally expand inside the sandbox shell.
 # shellcheck disable=SC2016
-HOME="$smoke_home" flatpak run --user --env=NO_AT_BRIDGE=1 \
-  --env="EXPECTED_ARCH=$arch" --command=sh "$APP_ID" -c '
+HOME="$smoke_home" flatpak run --user --env=NO_AT_BRIDGE=1 --command=sh "$APP_ID" -c '
   set -eu
-  test "$(uname -m)" = "$EXPECTED_ARCH"
+  test "$(uname -m)" = x86_64
   test -x /app/bin/zuko
   test -d /app/bin/data
   export LD_LIBRARY_PATH=/app/bin/lib

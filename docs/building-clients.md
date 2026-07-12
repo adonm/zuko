@@ -151,19 +151,20 @@ signing credentials remain in Codemagic.
 
 The source of truth for build environments is:
 
-- `codemagic.yaml` for Apple development artifacts and normal TestFlight;
-- `.github/workflows/build-flutter.yml` for non-Apple Flutter CI;
-- `.github/workflows/release.yml` for signed/versioned Flutter packages;
+- `codemagic.yaml` for Flutter tests and platform builds on Linux, Windows,
+  Android, and Apple runners;
+- `.github/workflows/release.yml` for exact-tag Codemagic orchestration,
+  artifact verification, and the coordinated GitHub Release;
 - `Justfile` for supported local recipes.
 
 Current automation coverage is:
 
 | Target | Pull request / `main` build | Release-tag delivery |
 |--------|-----------------------------|----------------------|
-| Shared Dart + web | analyze, unit/widget tests, relay-only web build | Pages deploys after `main`; no release asset |
-| Android | ARM64 debug APK | signed APK/AAB release assets; manual Appetize update |
-| Linux | x86_64 and cross-built aarch64 release bundles | architecture-matched Wayland Flatpak release assets |
-| Windows | x86_64 release bundle | x86_64 ZIP release asset |
+| Shared Dart + web | Codemagic analyze, unit/widget tests, relay-only web build | Pages deploys after `main`; no release asset |
+| Android | Codemagic ARM64 debug APK | Codemagic signed APK/AAB verified and published by GitHub; manual Appetize update |
+| Linux | Codemagic x86_64 release bundle | Codemagic x86_64 Wayland Flatpak verified and published by GitHub |
+| Windows | Codemagic x86_64 release bundle | Codemagic x86_64 ZIP verified and published by GitHub |
 | iOS/iPadOS | debug ARM64 Simulator app | signed IPA to internal TestFlight; manual Appetize Simulator update |
 | macOS | release application bundle | no automatic release asset; protected store package workflow is manual |
 

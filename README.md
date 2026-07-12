@@ -5,7 +5,7 @@
 <h1 align="center">zuko</h1>
 
 [![build](https://github.com/adonm/zuko/actions/workflows/build.yml/badge.svg)](https://github.com/adonm/zuko/actions/workflows/build.yml)
-[![flutter](https://github.com/adonm/zuko/actions/workflows/build-flutter.yml/badge.svg)](https://github.com/adonm/zuko/actions/workflows/build-flutter.yml)
+[![flutter](https://api.codemagic.io/apps/6a52dc14add8531e99f88b8a/flutter-linux-ci/status_badge.svg)](https://codemagic.io/app/6a52dc14add8531e99f88b8a)
 [![docs](https://github.com/adonm/zuko/actions/workflows/docs.yml/badge.svg)](https://zuko.adonm.dev/)
 [![release](https://github.com/adonm/zuko/actions/workflows/release.yml/badge.svg)](https://github.com/adonm/zuko/releases/latest)
 [![license](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)

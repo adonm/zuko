@@ -93,8 +93,8 @@ build-flutter-linux: patch-iroh-flutter
     cd flutter && flutter build linux --release --no-pub
 
 [group('flutter')]
-build-flutter-linux-release sha target='linux-x64' sysroot='/': flutter-get
-    scripts/build-flutter-linux-release.sh '{{ sha }}' '{{ target }}' '{{ sysroot }}'
+build-flutter-linux-release sha: flutter-get
+    export SOURCE_DATE_EPOCH="$(git show -s --format=%ct '{{ sha }}')" TZ=UTC LC_ALL=C.UTF-8; python3 scripts/patch-iroh-flutter.py flutter; cd flutter && flutter build linux --release --no-pub
 
 [group('flutter')]
 build-flutter-windows: patch-iroh-flutter

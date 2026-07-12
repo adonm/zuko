@@ -4,12 +4,16 @@ Tags matching `vX.Y.Z` trigger the coordinated CLI and Flutter release graph:
 
 - Rust CLI/host tarballs for Linux and macOS, x86_64 and aarch64;
 - signed Flutter Android APK and AAB;
-- Flutter Linux x86_64 and aarch64 Flatpaks;
+- Flutter Linux x86_64 Flatpak;
 - Flutter Windows x86_64 bundle;
 
-Codemagic revalidates and uploads the exact signed Flutter iOS artifact built
-from each release commit. Mac App Store packaging is not currently automated.
-Flutter web is deployed by the Pages workflow after changes reach `main`.
+Codemagic builds the Android, Linux, Windows, and Apple clients from each
+release commit. GitHub triggers the non-Apple release workflows through the
+Codemagic API, verifies the retained artifacts against the exact tag and
+commit, and attaches them beside the CLI assets. Codemagic revalidates and
+uploads the exact signed Flutter iOS artifact. Mac App Store packaging is not
+currently automated. Flutter web is deployed by the Pages workflow after
+changes reach `main`.
 
 Published assets follow these names (`TAG` includes the leading `v`):
 
@@ -17,7 +21,7 @@ Published assets follow these names (`TAG` includes the leading `v`):
 |---------|-------|
 | CLI/host | `zuko-<rust-target>.tar.gz` |
 | Android | `zuko-android-TAG-signed.apk` and `.aab` |
-| Linux client | `zuko-linux-TAG-<x86_64|aarch64>.flatpak` |
+| Linux client | `zuko-linux-TAG-x86_64.flatpak` |
 | Windows client | `zuko-windows-TAG-x86_64.zip` |
 
 Each payload has a matching `.sha256` sidecar. End-user notes are in
@@ -91,30 +95,25 @@ repository.
 
 ## Mobile Appetize previews
 
-GitHub Release Android builds require all four repository secrets and fail
-closed if any is missing:
+Retain Codemagic's `zuko-android` signing identity and application ID
+`dev.adonm.zuko` so package upgrades remain valid. The
+`flutter-linux-android-release` workflow verifies APK and AAB signatures and
+writes SHA-256 sidecars before GitHub retrieves the exact artifacts.
+Codemagic's manual `mobile-appetize-release` workflow independently builds a
+signed Android APK and unsigned ARM iOS Simulator package from an immutable
+tag, validates them, and updates both Appetize apps after its credentials are
+configured. Appetize setup is documented in [mobile previews](appetize.md).
 
-- `ANDROID_KEYSTORE_BASE64`
-- `ANDROID_KEYSTORE_PASSWORD`
-- `ANDROID_KEY_ALIAS`
-- `ANDROID_KEY_PASSWORD`
-
-Retain the existing signing key and application ID `dev.adonm.zuko` so package
-upgrades remain valid. The GitHub workflow verifies APK and AAB signatures and
-writes SHA-256 sidecars for release assets. Codemagic's manual
-`mobile-appetize-release` workflow independently rebuilds a signed Android APK
-and unsigned ARM iOS Simulator package from an immutable tag, validates them,
-and updates both Appetize apps after its credentials are configured. Appetize
-setup is documented in [mobile previews](appetize.md).
-
-Pull-request CI builds a debug APK. Debug or unsigned outputs are never attached
-to a GitHub Release. Google Play draft/release publication is documented in
-[Android store publishing](android-publishing.md).
+Pull-request CI builds a debug APK in Codemagic. Debug or unsigned outputs are
+never attached to a GitHub Release. Google Play draft/release publication is
+documented in [Android store publishing](android-publishing.md).
 
 ## Linux and Windows
 
-Flutter Linux ships as a Flatpak bundle. Windows currently ships as a versioned
-ZIP while Microsoft Store packaging is validated. Both have SHA-256 sidecars.
+Flutter Linux ships as an x86_64 Flatpak built and smoke-tested in the pinned
+Freedesktop container on Codemagic. Windows is built on Codemagic's Windows
+runner and ships as a versioned x86_64 ZIP while Microsoft Store packaging is
+validated. Both have SHA-256 sidecars.
 The protected Store workflow is documented in
 [Microsoft Store publishing](windows-publishing.md).
 The release-attached Flatpak is separate from Flathub submission. Use Flathub's
@@ -147,19 +146,22 @@ documented in [Apple store publishing](apple-publishing.md).
 
 ## CI/CD provider responsibilities
 
-Codemagic owns the mobile operations that benefit from managed Apple Silicon,
-mobile signing identities, and App Store Connect integration:
+Codemagic owns Flutter tests and platform builds on its target runners:
 
+- shared Dart analysis/tests and the web compile gate;
+- Android debug and signed release builds;
+- x86_64 Linux bundle and Flatpak release builds;
+- x86_64 Windows bundle and ZIP release builds;
 - iOS Simulator and macOS compile gates for Flutter changes;
 - signed iOS validation and immutable-tag TestFlight uploads;
 - manually started signed Android and ARM iOS Simulator Appetize previews.
 
-GitHub remains the source-of-truth orchestrator for Rust checks and binaries,
-documentation and web deployment, Android/Linux/Windows release assets,
-Flatpak container builds, and the coordinated GitHub Release. Approval-gated
-crates.io, Google Play, and Microsoft Store operations remain in GitHub
-environments. Apple signing and TestFlight credentials exist only in
-Codemagic.
+GitHub remains the source-of-truth verifier and publisher: it owns Rust checks
+and binaries, documentation and web deployment, triggers exact Codemagic tag
+workflows, verifies their commit/tag/artifact/checksum handoff, and is the only
+GitHub Release writer. Approval-gated crates.io, Google Play, and Microsoft
+Store operations remain in GitHub environments. Platform signing credentials
+remain scoped to the provider workflows that need them.
 
 ## Linux `zuko app` support
 

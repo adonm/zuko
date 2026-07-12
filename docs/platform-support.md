@@ -12,7 +12,7 @@ Current build floors and validation:
 | iOS/iPadOS | 18.0 deployment target | ARM64 Simulator build, Appetize preview, and signed device IPA validation |
 | macOS | 15.0 deployment target | release app build and protected Mac App Store package validation |
 | Windows | Windows 10 package target, x86_64 build | release bundle build; protected MSIX/MSIXBundle validation is manual |
-| Linux | x86_64/aarch64 Wayland Flatpak, Freedesktop 25.08 | architecture-matched release bundles, offline Flatpak packages, metadata, linkage, and smoke checks |
+| Linux | x86_64 Wayland Flatpak, Freedesktop 25.08 | release bundle, offline Flatpak package, metadata, linkage, and smoke checks |
 | Web | `/web/` deployment on current browsers | shared tests and a release WASM build; no automated browser matrix yet |
 
 Android 15+, iOS/iPadOS 18+, macOS 15+, Windows 10/11, the packaged Linux
