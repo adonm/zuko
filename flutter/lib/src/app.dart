@@ -20,12 +20,16 @@ const _installCommand =
     'https://zuko.adonm.dev/install.sh | sh';
 const _shareCommand = 'zuko install\nzuko share';
 const _wideLayoutBreakpoint = 760.0;
+const terminalAccessoryHeight = 24.0;
 
 double effectiveTerminalFontSize({
   required double width,
   required double configuredSize,
   required bool customized,
-}) => !customized && width < _wideLayoutBreakpoint ? 5 : configuredSize;
+}) {
+  if (customized) return configuredSize;
+  return width < _wideLayoutBreakpoint ? 7 : 10;
+}
 
 bool usesIntegratedDesktopHeader({
   required double width,
@@ -656,7 +660,7 @@ class _TerminalAccessory extends StatelessWidget {
           child: SafeArea(
             top: false,
             child: SizedBox(
-              height: 48,
+              height: terminalAccessoryHeight,
               child: ListView(
                 scrollDirection: Axis.horizontal,
                 padding: const EdgeInsets.symmetric(horizontal: 4),
@@ -755,7 +759,7 @@ class _AccessoryKey extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => Padding(
-    padding: const EdgeInsets.symmetric(horizontal: 2, vertical: 6),
+    padding: const EdgeInsets.symmetric(horizontal: 1, vertical: 3),
     child: TextButton(
       style: TextButton.styleFrom(
         backgroundColor: selected
@@ -764,11 +768,12 @@ class _AccessoryKey extends StatelessWidget {
         foregroundColor: selected
             ? Theme.of(context).colorScheme.onPrimaryContainer
             : null,
-        minimumSize: const Size(44, 36),
-        padding: const EdgeInsets.symmetric(horizontal: 10),
+        minimumSize: const Size(36, 18),
+        padding: const EdgeInsets.symmetric(horizontal: 6),
+        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
       ),
       onPressed: onPressed,
-      child: Text(label),
+      child: Text(label, style: const TextStyle(fontSize: 11, height: 1)),
     ),
   );
 }
@@ -784,8 +789,19 @@ class _AccessoryIcon extends StatelessWidget {
   final VoidCallback? onPressed;
 
   @override
-  Widget build(BuildContext context) =>
-      IconButton(tooltip: tooltip, onPressed: onPressed, icon: Icon(icon));
+  Widget build(BuildContext context) => SizedBox(
+    width: 36,
+    height: 24,
+    child: IconButton(
+      tooltip: tooltip,
+      onPressed: onPressed,
+      icon: Icon(icon),
+      iconSize: 18,
+      padding: EdgeInsets.zero,
+      constraints: const BoxConstraints(minWidth: 36, minHeight: 24),
+      style: const ButtonStyle(tapTargetSize: MaterialTapTargetSize.shrinkWrap),
+    ),
+  );
 }
 
 class _Sidebar extends StatelessWidget {
@@ -1050,7 +1066,7 @@ class _Sidebar extends StatelessWidget {
                     ),
                     IconButton(
                       tooltip: 'Increase font size',
-                      onPressed: terminalFontSize >= 24
+                      onPressed: terminalFontSize >= 20
                           ? null
                           : () => unawaited(
                               controller.setTerminalFontSize(

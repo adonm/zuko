@@ -4,7 +4,7 @@ Tags matching `vX.Y.Z` trigger the coordinated CLI and Flutter release graph:
 
 - Rust CLI/host tarballs for Linux and macOS, x86_64 and aarch64;
 - signed Flutter Android APK and AAB;
-- Flutter Linux x86_64 Flatpak;
+- Flutter Linux x86_64 and aarch64 Flatpaks;
 - Flutter Windows x86_64 bundle;
 
 Codemagic revalidates and uploads the exact signed Flutter iOS artifact built
@@ -17,7 +17,7 @@ Published assets follow these names (`TAG` includes the leading `v`):
 |---------|-------|
 | CLI/host | `zuko-<rust-target>.tar.gz` |
 | Android | `zuko-android-TAG-signed.apk` and `.aab` |
-| Linux client | `zuko-linux-TAG-x86_64.flatpak` |
+| Linux client | `zuko-linux-TAG-<x86_64|aarch64>.flatpak` |
 | Windows client | `zuko-windows-TAG-x86_64.zip` |
 
 Each payload has a matching `.sha256` sidecar. End-user notes are in
@@ -79,9 +79,10 @@ rxvt, SGR, and cursor-position underflow fixes.
 
 The `publish-crate.yml` workflow validates `vX.Y.Z` against the selected source
 before running the same fail-closed package check. Its `crates-io` GitHub
-environment must be protected with required reviewers and allow tag pushes plus
-tag-triggered deployments. The protected publish job is not reached when
-verification fails, and crates.io refuses replacement of an existing version.
+environment allows only `v*` tags and has no required reviewer, so successful
+verification proceeds directly to trusted publishing. The publish job is not
+reached when verification fails, and crates.io refuses replacement of an
+existing version.
 
 The Zuko crate uses a crates.io trusted publisher for repository `adonm/zuko`,
 workflow `publish-crate.yml`, and environment `crates-io`. Publications use

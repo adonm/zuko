@@ -162,7 +162,7 @@ Current automation coverage is:
 |--------|-----------------------------|----------------------|
 | Shared Dart + web | analyze, unit/widget tests, relay-only web build | Pages deploys after `main`; no release asset |
 | Android | ARM64 debug APK | signed APK/AAB release assets; manual Appetize update |
-| Linux | x86_64 release bundle | x86_64 Wayland Flatpak release asset |
+| Linux | x86_64 and cross-built aarch64 release bundles | architecture-matched Wayland Flatpak release assets |
 | Windows | x86_64 release bundle | x86_64 ZIP release asset |
 | iOS/iPadOS | debug ARM64 Simulator app | signed IPA to internal TestFlight; manual Appetize Simulator update |
 | macOS | release application bundle | no automatic release asset; protected store package workflow is manual |

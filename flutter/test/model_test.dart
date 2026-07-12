@@ -24,7 +24,7 @@ void main() {
     );
 
     expect(state.theme, AppThemePreference.system);
-    expect(state.terminalFontSize, 14);
+    expect(state.terminalFontSize, 10);
     expect(state.terminalFontSizeCustomized, isFalse);
     expect(state.showAdditionalKeys, isTrue);
     expect(state.hosts.single.authorizedClientLabel, isNull);
@@ -91,8 +91,8 @@ void main() {
   });
 
   test('terminal font size rejects invalid values and stays practical', () {
-    expect(normalizeTerminalFontSize(double.nan), 14);
+    expect(normalizeTerminalFontSize(double.nan), 10);
     expect(normalizeTerminalFontSize(2), 5);
-    expect(normalizeTerminalFontSize(40), 24);
+    expect(normalizeTerminalFontSize(40), 20);
   });
 }

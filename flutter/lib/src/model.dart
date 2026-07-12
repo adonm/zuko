@@ -57,7 +57,7 @@ final class ClientState {
     required Uint8List clientKey,
     required List<SavedHost> hosts,
     this.theme = AppThemePreference.system,
-    double terminalFontSize = 14,
+    double terminalFontSize = 10,
     this.terminalFontSizeCustomized = false,
     this.showAdditionalKeys = true,
   }) : clientKey = Uint8List.fromList(clientKey),
@@ -122,7 +122,7 @@ final class ClientState {
         clientKey: key,
         hosts: hosts,
         theme: theme ?? AppThemePreference.system,
-        terminalFontSize: (fontSize as num?)?.toDouble() ?? 14,
+        terminalFontSize: (fontSize as num?)?.toDouble() ?? 10,
         terminalFontSizeCustomized: fontSizeCustomized,
         showAdditionalKeys: showAdditionalKeys,
       );
@@ -173,6 +173,6 @@ String _requiredString(
 }
 
 double normalizeTerminalFontSize(double value) {
-  if (!value.isFinite) return 14;
-  return value.clamp(5, 24).toDouble();
+  if (!value.isFinite) return 10;
+  return value.clamp(5, 20).toDouble();
 }

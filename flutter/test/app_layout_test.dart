@@ -3,14 +3,18 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:zuko/src/app.dart';
 
 void main() {
-  test('narrow screens start at 5pt until the user chooses a size', () {
+  test('terminal accessory row is half the previous height', () {
+    expect(terminalAccessoryHeight, 24);
+  });
+
+  test('screens use responsive defaults until the user chooses a size', () {
     expect(
       effectiveTerminalFontSize(
         width: 390,
         configuredSize: 14,
         customized: false,
       ),
-      5,
+      7,
     );
     expect(
       effectiveTerminalFontSize(
@@ -18,7 +22,7 @@ void main() {
         configuredSize: 14,
         customized: false,
       ),
-      14,
+      10,
     );
     expect(
       effectiveTerminalFontSize(

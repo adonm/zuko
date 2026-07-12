@@ -1,8 +1,8 @@
 # Flutter Linux Flatpak
 
-The release pipeline creates one x86_64 bundle named
-`zuko-linux-vX.Y.Z-x86_64.flatpak` and its SHA-256 sidecar. The application ID
-is `dev.adonm.zuko`; both the Freedesktop runtime and SDK use branch `25.08`.
+The release pipeline creates native x86_64 and aarch64 bundles named
+`zuko-linux-vX.Y.Z-ARCH.flatpak` with SHA-256 sidecars. The application ID is
+`dev.adonm.zuko`; the Freedesktop runtime and SDK use branch `25.08`.
 
 This is a release-bundle manifest, not a Flathub submission manifest. It imports
 the already-built Flutter Linux bundle from a local `dir` source. Flathub
@@ -18,22 +18,27 @@ resolvers. Instead:
 
 1. The official checksum-pinned Flutter `3.46.0-0.3.pre` beta archive in
    `mise.toml`, Rust `1.96.1`, LLVM 20.1.8, `pubspec.lock`, and `Cargo.lock`
-   produce the Impeller Linux release bundle in the digest-pinned Freedesktop
-   25.08 SDK CI image.
+   produce the Impeller Linux release bundle. ARM64 is cross-built with
+   Flutter's supported `linux-arm64` target and Ubuntu's multi-target clang/lld
+   against the pinned aarch64 Freedesktop SDK sysroot.
 2. `scripts/package-flatpak.sh` hashes and normalizes that bundle, checks its
    native linkage, and imports only local files with `flatpak-builder
    --disable-download`. It then installs the result into a temporary user
-   installation and checks every packaged ELF dependency.
+   installation and checks every packaged ELF dependency. ARM64 assembly and
+   smoke testing run on a native GitHub ARM runner after the cross-built bundle
+   is transferred as a tar archive that preserves file metadata.
 
 The CI container digest also pins these runtime inputs:
 
 ```text
 org.freedesktop.Platform/x86_64/25.08 fdad08cc10905f9175f0224652a7b1c1b4d37fc1a5fa8c97843ccef846c642a0
 org.freedesktop.Sdk/x86_64/25.08      30e83c31042c341df56dbca804ec2f1eef204145c513659b83d6c446b2e7b4f5
+org.freedesktop.Platform/aarch64/25.08 dca273214da6c8760a2ddde6fd107e293a4a1fa5dbe4968444034930b1f1bb3e
+org.freedesktop.Sdk/aarch64/25.08      587b2f51b68cad07369c429e01584fd3b2b90523015e78acf5db11a8faac0604
 ```
 
-The package script rejects other commits. Update the container digest and both
-commit pins together after validating a Freedesktop SDK update.
+The package script rejects other commits. Update the container digest and all
+architecture commit pins together after validating a Freedesktop SDK update.
 
 ## Local validation
 
@@ -74,8 +79,9 @@ OSTree repository at `build/flatpak/repo`. The authoritative process is the
 including its requirements, local `flathub-build`, manifest/repository lint,
 and a pull request against the `new-pr` branch rather than `master`.
 
-For a native host build instead of Podman, install the exact inputs from
-Flathub before packaging:
+For a native x86_64 host build instead of Podman, install the exact inputs from
+Flathub before packaging. The script carries equivalent pinned aarch64 commits
+for native ARM hosts:
 
 ```sh
 flatpak install --system flathub \
@@ -98,12 +104,13 @@ The recipe performs a temporary install smoke test. To exercise the GUI and
 Secret Service integration against the user's desktop:
 
 ```sh
+ARCH=$(uname -m)
 flatpak --user install --reinstall \
-  dist/linux/zuko-linux-v0.9.15-x86_64.flatpak
+  "dist/linux/zuko-linux-v0.9.16-$ARCH.flatpak"
 flatpak run dev.adonm.zuko
 flatpak info --show-permissions dev.adonm.zuko
 (cd dist/linux && \
-  sha256sum --check zuko-linux-v0.9.15-x86_64.flatpak.sha256)
+  sha256sum --check "zuko-linux-v0.9.16-$ARCH.flatpak.sha256")
 ```
 
 The sandbox grants network access, native Wayland, DRI, and only the

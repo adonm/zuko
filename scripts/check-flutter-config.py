@@ -94,6 +94,21 @@ def main() -> None:
     if any("x11" in permission.lower() for permission in permissions):
         raise SystemExit("Flutter config: Flatpak must not expose X11")
 
+    for path, value in [
+        (".github/workflows/release.yml", "runs-on: ubuntu-24.04-arm"),
+        (".github/workflows/release.yml", "linux-arm64 /opt/aarch64-sysroot"),
+        ("scripts/package-flatpak.sh", "zuko-linux-$tag-$arch.flatpak"),
+        (
+            "scripts/package-flatpak.sh",
+            "dca273214da6c8760a2ddde6fd107e293a4a1fa5dbe4968444034930b1f1bb3e",
+        ),
+        (
+            "scripts/install-flatpak-sysroot.sh",
+            "587b2f51b68cad07369c429e01584fd3b2b90523015e78acf5db11a8faac0604",
+        ),
+    ]:
+        require_text(path, value)
+
     print(f"Flutter config: Impeller policy uses beta revision {revision}")
 
 
