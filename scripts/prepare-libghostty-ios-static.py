@@ -87,14 +87,13 @@ def patch_flutter_native_assets() -> None:
         flutter_root
         / "packages/flutter_tools/lib/src/isolated/native_assets/ios/native_assets.dart"
     )
-    flutter_changed = replace_once(
+    replace_once(
         native_assets,
         "const targetIOSVersion = 13;",
         "const targetIOSVersion = 18;",
     )
-    if flutter_changed:
-        (flutter_root / "bin/cache/flutter_tools.snapshot").unlink(missing_ok=True)
-        (flutter_root / "bin/cache/flutter_tools.stamp").unlink(missing_ok=True)
+    (flutter_root / "bin/cache/flutter_tools.snapshot").unlink(missing_ok=True)
+    (flutter_root / "bin/cache/flutter_tools.stamp").unlink(missing_ok=True)
 
 
 def main() -> None:
