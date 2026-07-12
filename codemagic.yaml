@@ -121,19 +121,20 @@ workflows:
 
       - name: Download validated IPA for tagged commit
         script: |
+          [[ "${IOS_VALIDATION_BUILD_ID:-}" =~ ^[0-9a-f]{24}$ ]]
           mkdir -p dist/flutter-ios
-          builds_json="$RUNNER_TEMP/builds.json"
+          build_json="$RUNNER_TEMP/build.json"
           curl --fail --silent --show-error \
             --header "x-auth-token: $CODEMAGIC_API_TOKEN" \
-            "https://api.codemagic.io/builds?appId=$CM_PROJECT_ID" \
-            > "$builds_json"
+            "https://api.codemagic.io/builds/$IOS_VALIDATION_BUILD_ID" \
+            > "$build_json"
           selection="$(
             python3 scripts/select-codemagic-ios-artifact.py \
-              "$builds_json" "$CM_COMMIT"
+              "$build_json" "$CM_COMMIT"
           )"
           source_build_id="$(sed -n 's/^source_build_id=//p' <<< "$selection")"
           artifact_url="$(sed -n 's/^artifact_url=//p' <<< "$selection")"
-          test -n "$source_build_id"
+          test "$source_build_id" = "$IOS_VALIDATION_BUILD_ID"
           test -n "$artifact_url"
           echo "Recovering signed IPA from validation build $source_build_id"
           curl --fail --silent --show-error --location \

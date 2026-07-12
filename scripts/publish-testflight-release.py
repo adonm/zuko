@@ -17,7 +17,7 @@ APP_ID = "6a52dc14add8531e99f88b8a"
 API = "https://api.codemagic.io"
 VALIDATION_WORKFLOW = "ios-signing-validation"
 RELEASE_WORKFLOW = "ios-testflight-release"
-FAILURES = {"canceled", "cancelled", "failed", "skipped"}
+FAILURES = {"canceled", "cancelled", "failed", "skipped", "timed_out", "timeout"}
 
 
 def request(
@@ -46,12 +46,24 @@ def request(
     return result
 
 
-def trigger(token: str, workflow: str, tag: str) -> str:
+def trigger(
+    token: str,
+    workflow: str,
+    tag: str,
+    variables: dict[str, str] | None = None,
+) -> str:
+    payload: dict[str, object] = {
+        "appId": APP_ID,
+        "workflowId": workflow,
+        "tag": tag,
+    }
+    if variables:
+        payload["environment"] = {"variables": variables}
     result = request(
         token,
         "POST",
         "/builds",
-        {"appId": APP_ID, "workflowId": workflow, "tag": tag},
+        payload,
     )
     build_id = result.get("buildId")
     if not isinstance(build_id, str) or not re.fullmatch(r"[0-9a-f]{24}", build_id):
@@ -75,10 +87,29 @@ def actions_succeeded(build: dict[str, Any]) -> bool:
 def matching_builds(
     token: str, workflow: str, tag: str, sha: str
 ) -> list[dict[str, Any]]:
-    result = request(token, "GET", f"/builds?appId={APP_ID}")
-    builds = result.get("builds")
-    if not isinstance(builds, list):
-        raise SystemExit("Codemagic build list returned invalid metadata")
+    path: str | None = f"/builds?appId={APP_ID}"
+    builds: list[object] = []
+    seen: set[str] = set()
+    while path is not None:
+        if path in seen:
+            raise SystemExit("Codemagic build list pagination repeated a page")
+        seen.add(path)
+        result = request(token, "GET", path)
+        page = result.get("builds")
+        if not isinstance(page, list):
+            raise SystemExit("Codemagic build list returned invalid metadata")
+        builds.extend(page)
+        next_page = result.get("nextPageUrl")
+        if next_page is None:
+            path = None
+        elif (
+            isinstance(next_page, str)
+            and next_page.startswith(f"/builds?appId={APP_ID}&skip=")
+            and next_page.removeprefix(f"/builds?appId={APP_ID}&skip=").isdigit()
+        ):
+            path = next_page
+        else:
+            raise SystemExit("Codemagic build list returned an invalid next page")
     matches = [
         build
         for build in builds
@@ -225,7 +256,12 @@ def main() -> None:
 
     release = reusable_build(token, RELEASE_WORKFLOW, tag, sha)
     if release is None:
-        release_id = trigger(token, RELEASE_WORKFLOW, tag)
+        release_id = trigger(
+            token,
+            RELEASE_WORKFLOW,
+            tag,
+            {"IOS_VALIDATION_BUILD_ID": validation_id},
+        )
     else:
         release_id, completed = release
         state = "reusing" if completed else "resuming"
