@@ -45,6 +45,14 @@ bool usesIntegratedDesktopHeader({
       _ => false,
     };
 
+Uri? supportedTerminalLink(Uri? uri) {
+  if (uri == null || !uri.hasScheme || uri.host.isEmpty) return null;
+  return switch (uri.scheme.toLowerCase()) {
+    'http' || 'https' => uri,
+    _ => null,
+  };
+}
+
 class ZukoApp extends StatelessWidget {
   const ZukoApp({super.key, required this.controller});
   final AppController controller;
@@ -249,6 +257,32 @@ class _HomeState extends State<_Home> with WidgetsBindingObserver {
       ..showSnackBar(SnackBar(content: Text(message)));
   }
 
+  Future<void> _openTerminalLink(ActivatedLink link) async {
+    final uri = supportedTerminalLink(link.uri);
+    if (uri == null) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context)
+        ..hideCurrentSnackBar()
+        ..showSnackBar(
+          const SnackBar(content: Text('Blocked unsupported terminal link')),
+        );
+      return;
+    }
+
+    var opened = false;
+    try {
+      opened = await launchUrl(uri, mode: LaunchMode.externalApplication);
+    } catch (_) {
+      opened = false;
+    }
+    if (!mounted || opened) return;
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(
+        const SnackBar(content: Text('Could not open terminal link')),
+      );
+  }
+
   Future<void> _disconnect() async {
     ++_sessionGeneration;
     final active = session;
@@ -397,6 +431,11 @@ class _HomeState extends State<_Home> with WidgetsBindingObserver {
                             controller: terminal,
                             autofocus: true,
                             theme: terminalTheme,
+                            linkSettings: LinkSettings(
+                              types: const {LinkType.osc8, LinkType.text},
+                              onActivate: (link) =>
+                                  unawaited(_openTerminalLink(link)),
+                            ),
                           ),
                         ),
                         if (!sessionState.isAttached)

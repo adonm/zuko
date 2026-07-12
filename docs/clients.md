@@ -15,6 +15,12 @@ GitHub Release downloads are at
 Every package attached there has a `.sha256` sidecar. The web deployment,
 TestFlight build, and transient CI artifacts are separate delivery channels.
 
+Fully signed public-store releases for every graphical target are still being
+worked on. The checksummed GitHub Release packages are the best source for
+testing current builds; they are not a claim that each platform's store
+listing, review, installer, upgrade, and signing path is complete. iOS/iPadOS
+testing continues through the separate internal TestFlight channel.
+
 - Android: install the signed APK; the AAB is for store upload.
 - Linux: install the Flatpak bundle; credentials use the host Secret Service.
 - Windows: extract the complete ZIP and run `zuko.exe`; do not move the EXE

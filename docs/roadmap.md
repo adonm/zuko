@@ -79,6 +79,12 @@ include:
 - upstream generally useful fixes in `flterm` first and pin Zuko to reviewed,
   tested commits instead of carrying hidden application-only forks.
 
+The first focused terminal-experience increment is clickable links. `flterm`
+detects OSC 8 hyperlinks and plain-text URLs, and Zuko wires supported web
+links to the existing platform URL launcher while rejecting unsupported
+schemes. This small cross-platform improvement exercises an existing reviewed
+`flterm` capability before the larger screen-reader semantics project.
+
 Shared Flutter quality work should continuously exercise real small phones,
 tablets, desktop windows, narrow browsers, lifecycle transitions, credential
 storage, reconnect, upgrade, and uninstall behavior. A successful compile is

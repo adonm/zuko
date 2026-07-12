@@ -60,6 +60,12 @@ See [Clients](docs/clients.md) for the exact capabilities and delivery channel
 of each target, and the [client build guide](docs/building-clients.md) for fresh
 Android, Apple, web, Linux, and Windows builds.
 
+Fully signed public-store delivery across the graphical targets is still being
+worked on. For testing, the checksummed packages on the
+[latest GitHub Release](https://github.com/adonm/zuko/releases/latest) are the
+preferred source; the Clients page documents platform-specific gaps and the
+separate internal TestFlight channel.
+
 zuko is not a durable session manager, full remote desktop, or centralized
 fleet-access system. Use `tmux`, `zellij`, or `screen` for work that must survive
 disconnects and host restarts.
