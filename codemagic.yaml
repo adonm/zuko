@@ -582,6 +582,9 @@ workflows:
         CM_CLONE_UNSHALLOW: true
         CM_RECURSIVE_SUBMODULE_INIT: true
     scripts:
+      - name: Install pinned repository toolchain
+        script: pwsh -NoProfile -File scripts/install-mise-codemagic.ps1
+
       - name: Verify immutable release identity
         script: |
           if ([string]::IsNullOrWhiteSpace($env:CM_TAG)) {
@@ -591,9 +594,6 @@ workflows:
             throw "checkout does not match CM_COMMIT"
           }
           bash scripts/release-context.sh $env:CM_TAG
-
-      - name: Install pinned repository toolchain
-        script: pwsh -NoProfile -File scripts/install-mise-codemagic.ps1
 
       - name: Build and package Windows client
         script: |
