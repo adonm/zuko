@@ -124,6 +124,81 @@ workflows:
         # deliberate App Store Connect operation.
         submit_to_testflight: false
 
+  ios-testflight-artifact-recovery:
+    name: iOS TestFlight artifact recovery
+    instance_type: mac_mini_m2
+    max_build_duration: 30
+    integrations:
+      app_store_connect: zuko-app-store
+    environment:
+      groups:
+        - codemagic_api
+      xcode: 26.3
+      vars:
+        CM_CLONE_UNSHALLOW: true
+        TEAM_ID: R8PN382RC4
+    scripts:
+      - name: Verify recovery identity
+        script: |
+          [[ "${RECOVERY_TAG:-}" =~ ^v([0-9]+)\.([0-9]+)\.([0-9]+)$ ]]
+          [[ "${RECOVERY_BUILD_ID:-}" =~ ^[0-9a-f]{24}$ ]]
+          [[ "${RECOVERY_IPA_SHA256:-}" =~ ^[0-9a-f]{64}$ ]]
+          git fetch --force origin "refs/tags/$RECOVERY_TAG:refs/tags/$RECOVERY_TAG"
+          test "$(git cat-file -t "$RECOVERY_TAG")" = tag
+          release_commit="$(git rev-parse "$RECOVERY_TAG^{commit}")"
+          version="${RECOVERY_TAG#v}"
+          IFS=. read -r major minor patch <<< "$version"
+          build_number=$((1800000000 + major * 1000000 + minor * 1000 + patch))
+          {
+            echo "RECOVERY_COMMIT=$release_commit"
+            echo "ZUKO_VERSION=$version"
+            echo "ZUKO_BUILD_NUMBER=$build_number"
+          } >> "$CM_ENV"
+
+      - *install_codemagic_cli
+
+      - name: Verify Xcode 26.3
+        script: scripts/select-xcode.sh
+
+      - name: Download verified Codemagic IPA
+        script: |
+          mkdir -p dist/flutter-ios
+          build_json="$RUNNER_TEMP/source-build.json"
+          curl --fail --silent --show-error \
+            --header "x-auth-token: $CODEMAGIC_API_TOKEN" \
+            "https://api.codemagic.io/builds/$RECOVERY_BUILD_ID" \
+            > "$build_json"
+          artifact_url="$(
+            python3 scripts/select-codemagic-ios-artifact.py \
+              "$build_json" "$RECOVERY_COMMIT"
+          )"
+          curl --fail --silent --show-error --location \
+            --header "x-auth-token: $CODEMAGIC_API_TOKEN" \
+            "$artifact_url" \
+            -o dist/flutter-ios/Zuko-Flutter.ipa
+          actual_sha="$(shasum -a 256 dist/flutter-ios/Zuko-Flutter.ipa | awk '{print $1}')"
+          test "$actual_sha" = "$RECOVERY_IPA_SHA256"
+          printf '%s  %s\n' "$actual_sha" Zuko-Flutter.ipa \
+            > dist/flutter-ios/Zuko-Flutter.ipa.sha256
+
+      - name: Revalidate recovered IPA
+        script: |
+          mkdir -p "$RUNNER_TEMP/recovered.xcarchive"
+          scripts/apple-validate-package.sh \
+            "$RUNNER_TEMP/recovered.xcarchive" \
+            "$CM_BUILD_DIR/dist/flutter-ios/Zuko-Flutter.ipa" \
+            "$ZUKO_VERSION" "$ZUKO_BUILD_NUMBER"
+
+    artifacts:
+      - dist/flutter-ios/Zuko-Flutter.ipa
+      - dist/flutter-ios/Zuko-Flutter.ipa.sha256
+      - /tmp/xcodebuild_logs/*.log
+      - $HOME/Library/Logs/DiagnosticReports/*
+    publishing:
+      app_store_connect:
+        auth: integration
+        submit_to_testflight: false
+
   flutter-apple-ci:
     name: Flutter Apple compile gate
     instance_type: mac_mini_m2
