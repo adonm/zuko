@@ -72,8 +72,8 @@ flutter-check: flutter-get flutter-vendor-check
     cd flutter && flutter test --no-pub
 
 [group('flutter')]
-patch-iroh-flutter: flutter-get
-    {{ env_var_or_default('PYTHON', 'python3') }} scripts/patch-iroh-flutter.py flutter
+patch-flutter-plugins: flutter-get
+    {{ env_var_or_default('PYTHON', 'python3') }} scripts/patch-flutter-plugins.py flutter
 
 [group('flutter')]
 build-flutter-android: flutter-get
@@ -89,15 +89,15 @@ build-flutter-android-store tag version build_number:
     scripts/build-android-store-bundle.sh "{{ tag }}" "{{ version }}" "{{ build_number }}"
 
 [group('flutter')]
-build-flutter-linux: patch-iroh-flutter
+build-flutter-linux: patch-flutter-plugins
     cd flutter && flutter build linux --release --no-pub
 
 [group('flutter')]
 build-flutter-linux-release sha: flutter-get
-    export SOURCE_DATE_EPOCH="$(git show -s --format=%ct '{{ sha }}')" TZ=UTC LC_ALL=C.UTF-8; python3 scripts/patch-iroh-flutter.py flutter; cd flutter && flutter build linux --release --no-pub
+    export SOURCE_DATE_EPOCH="$(git show -s --format=%ct '{{ sha }}')" TZ=UTC LC_ALL=C.UTF-8; python3 scripts/patch-flutter-plugins.py flutter; cd flutter && flutter build linux --release --no-pub
 
 [group('flutter')]
-build-flutter-windows: patch-iroh-flutter
+build-flutter-windows: patch-flutter-plugins
     cd flutter && flutter build windows --release --no-pub
 
 [group('flutter')]
@@ -105,7 +105,7 @@ build-flutter-windows-release tag: build-flutter-windows
     pwsh -NoProfile -File scripts/package-windows-release.ps1 "{{ tag }}"
 
 [group('flutter')]
-build-flutter-windows-store version: patch-iroh-flutter
+build-flutter-windows-store version: patch-flutter-plugins
     cd flutter && flutter build windows --release --no-pub --build-name "{{ version }}" --build-number 0
 
 [group('flutter')]

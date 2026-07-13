@@ -19,9 +19,10 @@ Architecture:
 - `rust/web_transport/`: relay-only browser Iroh bridge
 - `android/`, `ios/`, `macos/`, `linux/`, `windows/`, `web/`: thin Flutter runners
 
-Linux and Windows builds run `scripts/patch-iroh-flutter.py` after dependency
-resolution to work around the published `iroh_flutter` 1.0.1 CMake FFI bundle
-path. The script fails closed when that package version changes.
+Linux and Windows builds run `scripts/patch-flutter-plugins.py` after dependency
+resolution. It works around the published `iroh_flutter` 1.0.1 CMake FFI
+bundle path and Linux keyring handling in `flutter_secure_storage_linux` 3.0.1.
+The script fails closed when either package version changes.
 
 The pinned Flutter beta uses explicit Impeller enablement on Android, Linux,
 macOS, and web. Its Windows embedder predates the public

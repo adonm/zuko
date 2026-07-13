@@ -53,7 +53,9 @@ The package grants only the capabilities required by the client:
 It grants no X11 socket and no host or home-directory filesystem access. A
 Secret Service provider such as GNOME Keyring or KWallet must be running. If the
 login keyring is locked, Zuko leaves encrypted state unchanged and displays an
-unlock-and-retry screen.
+unlock-and-retry screen without requesting an unlock itself. If no provider is
+available, it reports secure storage as unavailable instead of creating an
+unprotected fallback.
 
 ## Release and update maintenance
 

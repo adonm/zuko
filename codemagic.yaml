@@ -283,7 +283,7 @@ workflows:
           - mise.toml
           - scripts/install-mise-codemagic.sh
           - scripts/package-apple-development.sh
-          - scripts/patch-iroh-flutter.py
+          - scripts/patch-flutter-plugins.py
           - scripts/select-xcode.sh
     scripts:
       - *install_toolchain
@@ -422,7 +422,7 @@ workflows:
           - scripts/check-flutter-config.py
           - scripts/finalize-web-build.py
           - scripts/install-mise-codemagic.sh
-          - scripts/patch-iroh-flutter.py
+          - scripts/patch-flutter-plugins.py
     scripts:
       - name: Install Linux desktop dependencies
         script: |
@@ -557,7 +557,7 @@ workflows:
           - mise.toml
           - scripts/install-mise-codemagic.ps1
           - scripts/package-windows-release.ps1
-          - scripts/patch-iroh-flutter.py
+          - scripts/patch-flutter-plugins.py
     scripts:
       - name: Install pinned repository toolchain
         script: pwsh -NoProfile -File scripts/install-mise-codemagic.ps1
