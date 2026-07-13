@@ -1,8 +1,7 @@
 import 'dart:async';
 
 import 'package:flterm/flterm.dart';
-import 'package:flutter/foundation.dart'
-    show TargetPlatform, defaultTargetPlatform, kIsWeb;
+import 'package:flutter/foundation.dart' show defaultTargetPlatform, kIsWeb;
 import 'package:flutter/material.dart' hide Key;
 import 'package:flutter/services.dart';
 import 'package:libghostty/libghostty.dart' show pasteIsSafe;
@@ -13,13 +12,13 @@ import 'model.dart';
 import 'session_state.dart';
 import 'theme.dart';
 import 'transport.dart';
+import 'window_frame.dart';
 import 'wire.dart';
 
 const _installCommand =
     "curl --proto '=https' --tlsv1.2 -LsSf "
     'https://zuko.adonm.dev/install.sh | sh';
 const _shareCommand = 'zuko install\nzuko share';
-const _wideLayoutBreakpoint = 760.0;
 const terminalAccessoryHeight = 24.0;
 
 double effectiveTerminalFontSize({
@@ -28,22 +27,8 @@ double effectiveTerminalFontSize({
   required bool customized,
 }) {
   if (customized) return configuredSize;
-  return width < _wideLayoutBreakpoint ? 7 : 10;
+  return width < wideLayoutBreakpoint ? 7 : 10;
 }
-
-bool usesIntegratedDesktopHeader({
-  required double width,
-  required TargetPlatform platform,
-  required bool isWeb,
-}) =>
-    width >= _wideLayoutBreakpoint &&
-    !isWeb &&
-    switch (platform) {
-      TargetPlatform.linux ||
-      TargetPlatform.macOS ||
-      TargetPlatform.windows => true,
-      _ => false,
-    };
 
 Uri? supportedTerminalLink(Uri? uri) {
   if (uri == null || !uri.hasScheme || uri.host.isEmpty) return null;
@@ -71,6 +56,7 @@ class ZukoApp extends StatelessWidget {
       theme: buildZukoTheme(Brightness.light),
       darkTheme: buildZukoTheme(Brightness.dark),
       home: _Home(controller: controller),
+      builder: (context, child) => ZukoWindowFrame(child: child),
     ),
   );
 }
@@ -368,7 +354,7 @@ class _HomeState extends State<_Home> with WidgetsBindingObserver {
     animation: widget.controller,
     builder: (context, _) {
       final width = MediaQuery.sizeOf(context).width;
-      final wide = width >= _wideLayoutBreakpoint;
+      final wide = width >= wideLayoutBreakpoint;
       final terminalFontSize = effectiveTerminalFontSize(
         width: width,
         configuredSize: widget.controller.terminalFontSize,
@@ -397,16 +383,7 @@ class _HomeState extends State<_Home> with WidgetsBindingObserver {
       return Scaffold(
         appBar: integratedDesktopHeader
             ? null
-            : AppBar(
-                title: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Image.asset('assets/zuko-logo.png', width: 28, height: 28),
-                    const SizedBox(width: 10),
-                    const Text('Zuko'),
-                  ],
-                ),
-              ),
+            : AppBar(title: const ZukoAppTitle()),
         drawer: wide ? null : Drawer(child: SafeArea(child: sidebar)),
         body: Row(
           children: [

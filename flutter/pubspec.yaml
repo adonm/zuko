@@ -17,6 +17,7 @@ dependencies:
   libghostty: 0.0.11
   pointycastle: 4.0.0
   url_launcher: 6.3.2
+  yaru: 10.2.0
 
 dev_dependencies:
   flutter_test:

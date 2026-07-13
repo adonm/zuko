@@ -72,6 +72,10 @@ targets unless a platform note below says otherwise:
   focus action;
 - persist system/light/dark theme and terminal font-size preferences.
 
+The Linux shell uses Yaru's Adwaita-red theme and an integrated draggable title
+bar with native window controls. Other desktop targets retain their platform
+window chrome.
+
 This is a remote shell client, not a durable session manager: it has no output
 replay, and forgetting a host locally does not revoke that client on the host.
 QR capture, operating-system deep-link registration, complete accessibility

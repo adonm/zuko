@@ -4,6 +4,7 @@ import 'app.dart';
 import 'app_controller.dart';
 import 'storage.dart';
 import 'theme.dart';
+import 'window_frame.dart';
 
 typedef AppControllerLoader = Future<AppController> Function();
 
@@ -52,6 +53,7 @@ class _ZukoBootstrapState extends State<ZukoBootstrap> {
         debugShowCheckedModeBanner: false,
         theme: buildZukoTheme(Brightness.light),
         darkTheme: buildZukoTheme(Brightness.dark),
+        builder: (context, child) => ZukoWindowFrame(child: child),
         home: Scaffold(
           body: Center(
             child: snapshot.hasError

@@ -1,34 +1,23 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:yaru/yaru.dart';
 import 'package:zuko/src/theme.dart';
 
 void main() {
-  test('light theme uses the icon palette and Adwaita-like surfaces', () {
+  test('light theme uses the Yaru Adwaita red variant', () {
     final theme = buildZukoTheme(Brightness.light);
 
-    expect(theme.colorScheme.primary, zukoRed);
-    expect(theme.colorScheme.onSurface, zukoCharcoal);
-    expect(theme.scaffoldBackgroundColor, theme.colorScheme.surface);
-    expect(theme.appBarTheme.toolbarHeight, 52);
-    expect(theme.appBarTheme.centerTitle, isTrue);
-    expect(theme.cardTheme.elevation, 0);
-
-    final shape = theme.cardTheme.shape! as RoundedRectangleBorder;
-    expect(shape.borderRadius.resolve(TextDirection.ltr).topLeft.x, 12);
-    expect(shape.side.color, theme.colorScheme.outlineVariant);
+    expect(theme, same(YaruVariant.adwaitaRed.theme));
+    expect(theme.colorScheme.primary, YaruVariant.adwaitaRed.color);
+    expect(theme.brightness, Brightness.light);
   });
 
-  test('dark theme keeps the charcoal and ivory icon colors', () {
+  test('dark theme uses the Yaru Adwaita red variant', () {
     final theme = buildZukoTheme(Brightness.dark);
 
-    expect(theme.colorScheme.surfaceContainer, zukoCharcoal);
-    expect(theme.colorScheme.onSurface, zukoIvory);
-    expect(theme.colorScheme.primary, const Color(0xffe06b73));
-    expect(
-      theme.drawerTheme.backgroundColor,
-      theme.colorScheme.surfaceContainerLow,
-    );
-    expect(theme.snackBarTheme.behavior, SnackBarBehavior.floating);
+    expect(theme, same(YaruVariant.adwaitaRed.darkTheme));
+    expect(theme.colorScheme.primary, YaruVariant.adwaitaRed.color);
+    expect(theme.brightness, Brightness.dark);
   });
 
   test('terminal palette harmonizes with the app shell', () {
