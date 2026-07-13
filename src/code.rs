@@ -127,19 +127,46 @@ pub fn looks_like_code(s: &str) -> bool {
 /// Default handoff label: the system hostname if we can find it cheaply,
 /// otherwise the boring-but-honest `"host"`.
 pub fn default_label() -> String {
-    if let Ok(h) = std::env::var("HOSTNAME") {
-        let h = h.trim().to_string();
-        if !h.is_empty() {
-            return h;
-        }
+    select_default_label(
+        std::env::var("HOSTNAME").ok(),
+        std::fs::read_to_string("/etc/hostname").ok(),
+        system_hostname(),
+    )
+}
+
+fn select_default_label(
+    environment: Option<String>,
+    hostname_file: Option<String>,
+    system: Option<String>,
+) -> String {
+    [environment, hostname_file, system]
+        .into_iter()
+        .flatten()
+        .map(|hostname| hostname.trim().to_string())
+        .find(|hostname| !hostname.is_empty())
+        .unwrap_or_else(|| "host".to_string())
+}
+
+#[cfg(unix)]
+fn system_hostname() -> Option<String> {
+    let mut buffer = [0u8; 256];
+    // SAFETY: `buffer` is writable for the supplied length. The untouched
+    // final byte keeps the result terminated if the hostname reaches the limit.
+    let result =
+        unsafe { libc::gethostname(buffer.as_mut_ptr().cast::<libc::c_char>(), buffer.len() - 1) };
+    if result != 0 {
+        return None;
     }
-    if let Ok(h) = std::fs::read_to_string("/etc/hostname") {
-        let h = h.trim().to_string();
-        if !h.is_empty() {
-            return h;
-        }
-    }
-    "host".to_string()
+    let end = buffer
+        .iter()
+        .position(|byte| *byte == 0)
+        .unwrap_or(buffer.len());
+    String::from_utf8(buffer[..end].to_vec()).ok()
+}
+
+#[cfg(not(unix))]
+fn system_hostname() -> Option<String> {
+    None
 }
 
 /// Collapse a user-supplied label to a single safe line: trim, turn whitespace
@@ -200,6 +227,23 @@ mod tests {
         assert_eq!(sanitize_label("   "), "host");
         assert_eq!(sanitize_label("#comment"), "host");
         assert_eq!(sanitize_label("plain"), "plain");
+    }
+
+    #[test]
+    fn default_label_falls_back_to_platform_hostname() {
+        assert_eq!(
+            select_default_label(None, None, Some("MacBook-Pro.local".to_string())),
+            "MacBook-Pro.local"
+        );
+        assert_eq!(
+            select_default_label(
+                Some("  ".to_string()),
+                Some("\n".to_string()),
+                Some("MacBook-Pro.local\n".to_string()),
+            ),
+            "MacBook-Pro.local"
+        );
+        assert_eq!(select_default_label(None, None, None), "host");
     }
 
     // --- generate_code / looks_like_code tests ---
