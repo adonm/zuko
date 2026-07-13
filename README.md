@@ -8,6 +8,7 @@
 [![flutter](https://api.codemagic.io/apps/6a52dc14add8531e99f88b8a/flutter-linux-ci/status_badge.svg)](https://codemagic.io/app/6a52dc14add8531e99f88b8a)
 [![docs](https://github.com/adonm/zuko/actions/workflows/docs.yml/badge.svg)](https://zuko.adonm.dev/)
 [![release](https://github.com/adonm/zuko/actions/workflows/release.yml/badge.svg)](https://github.com/adonm/zuko/releases/latest)
+[![Get it on FlatPark](https://img.shields.io/badge/Get_it_on-FlatPark-3584e4?logo=flatpak&logoColor=white)](https://flatpark.org/apps/dev.adonm.zuko/)
 [![license](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 
 **Private remote shells for machines you own—without opening inbound ports or
@@ -47,6 +48,21 @@ mise-managed global tool. Relaunch your shell first if it asks. See
 [Getting started](docs/getting-started.md) for mise, version selection, service
 logs, and first connection. Windows hosts can use the documented
 [WSL2 setup](docs/windows-wsl2.md), with lifecycle limitations.
+
+The graphical Linux client is available from FlatPark's signed Flatpak remote:
+
+```sh
+flatpak --user remote-add --if-not-exists flatpark \
+  https://dl.flatpark.org/flatpark.flatpakrepo
+flatpak --user remote-add --if-not-exists flathub \
+  https://dl.flathub.org/repo/flathub.flatpakrepo
+flatpak --user install flatpark dev.adonm.zuko
+```
+
+See the [FlatPark package page](https://flatpark.org/apps/dev.adonm.zuko/) and
+[Linux delivery notes](docs/flatpark.md) for sandbox permissions and keyring
+requirements. FlatPark is an independent community repository and is not
+affiliated with Flathub.
 
 ## Product scope
 

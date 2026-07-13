@@ -7,7 +7,7 @@
 | iOS/iPadOS | Beta | Internal TestFlight build produced from each release tag |
 | macOS | Beta | CI application artifact; protected Mac App Store package workflow |
 | Web | Labs | [zuko.adonm.dev/web/](https://zuko.adonm.dev/web/) |
-| Linux desktop | Beta | FlatPark submission planned from the official GitHub Release archive |
+| Linux desktop | Beta | [FlatPark](https://flatpark.org/apps/dev.adonm.zuko/) |
 | Windows desktop | Labs | Versioned x86_64 ZIP on GitHub Releases |
 
 GitHub Release downloads are at
@@ -22,14 +22,13 @@ listing, review, installer, upgrade, and signing path is complete. iOS/iPadOS
 testing continues through the separate internal TestFlight channel.
 
 - Android: install the signed APK; the AAB is for store upload.
-- Linux: the FlatPark package is pending publication; credentials use the host
-  Secret Service.
+- Linux: install the signed FlatPark package; credentials use the host Secret
+  Service.
 - Windows: extract the complete ZIP and run `zuko.exe`; do not move the EXE
   away from its DLL and data files.
 
-FlatPark is an independent community Flatpak hub. After `dev.adonm.zuko` is
-published in its catalog, add its signed remote and Flathub's Freedesktop
-runtime source once, then install Zuko:
+FlatPark is an independent community Flatpak hub. Add its signed remote and
+Flathub's Freedesktop runtime source once, then install Zuko:
 
 ```sh
 flatpak --user remote-add --if-not-exists flatpark \
@@ -40,9 +39,9 @@ flatpak --user install flatpark dev.adonm.zuko
 flatpak run dev.adonm.zuko
 ```
 
-The submitted package will download Zuko's versioned Linux archive from the
-official GitHub Release and pin its SHA-256 and size; FlatPark will sign the
-resulting package repository. It is not affiliated with Flathub. The release
+The package downloads Zuko's versioned Linux archive from the official GitHub
+Release and pins its SHA-256 and size; FlatPark signs the resulting package
+repository. It is not affiliated with Flathub. The release
 archive and checksum remain the upstream payload and provenance record;
 FlatPark owns the Flatpak wrapper and update channel. See [Linux delivery
 through FlatPark](flatpark.md).

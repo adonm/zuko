@@ -114,9 +114,9 @@ documented in [Android store publishing](android-publishing.md).
 ## Linux and Windows
 
 Flutter Linux ships as a deterministic x86_64 `bundle/` archive built and
-linkage-checked against the pinned Freedesktop SDK on Codemagic. The FlatPark
-package will download that official archive by immutable release URL and pin
-its checksum and size; FlatPark owns Flatpak wrapping, signing, repository
+linkage-checked against the pinned Freedesktop SDK on Codemagic. The published
+FlatPark package downloads that official archive by immutable release URL and
+pins its checksum and size; FlatPark owns Flatpak wrapping, signing, repository
 hosting, and updates. Windows is built on Codemagic's Windows runner and ships
 as a versioned x86_64 ZIP while Microsoft Store packaging is validated. Both
 have SHA-256 sidecars.

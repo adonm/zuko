@@ -1,9 +1,9 @@
 # Linux delivery through FlatPark
 
-Zuko is preparing [FlatPark](https://flatpark.org/) as its Linux Flatpak
-distribution channel. FlatPark is an independent community repository and is
-not affiliated with Flathub. The package will become installable after its
-registry submission is reviewed and published.
+Zuko's graphical Linux client is available through
+[FlatPark](https://flatpark.org/apps/dev.adonm.zuko/), an independent community
+repository that is not affiliated with Flathub. FlatPark distributes the
+official Zuko Linux release payload as a signed, sandboxed Flatpak.
 
 ![Zuko Linux client](zuko-linux.png)
 
@@ -21,8 +21,8 @@ Freedesktop 25.08 SDK. `scripts/package-linux-release.sh` normalizes the archive
 rejects links, privileged files, and non-relocatable runtime paths, checks
 native linkage before and after extraction, and emits its checksum.
 
-The separate FlatPark registry manifest will download that official release
-asset as Flatpak `extra-data`, pin its SHA-256 and byte size, and unpack it
+The separate FlatPark registry manifest downloads that official release asset
+as Flatpak `extra-data`, pins its SHA-256 and byte size, and unpacks it
 without modifying the application payload. FlatPark owns the wrapper,
 AppStream data, repository signing, hosting, and package-update automation.
 Users therefore trust both the official Zuko release bytes and FlatPark's
@@ -30,10 +30,9 @@ packaging and signing infrastructure; published registry packages are
 reviewable in the
 [FlatPark registry](https://github.com/flatpark/flatpark/tree/main/registry).
 
-## Install after publication
+## Install
 
-Once `dev.adonm.zuko` appears in the FlatPark catalog, add FlatPark and Flathub
-at the same user scope, then install Zuko:
+Add FlatPark and Flathub at the same user scope, then install Zuko:
 
 ```sh
 flatpak --user remote-add --if-not-exists flatpark \
@@ -65,15 +64,15 @@ key. `scripts/collect-codemagic-release.py` and
 `scripts/publish-github-release.sh` fail closed unless the expected archive and
 checksum are present exactly once.
 
-The submitted package's `resolve-update.sh` will select the exact versioned
-Linux archive from the latest GitHub Release. FlatPark's update automation will
-compute a new size and checksum and open a reviewed registry update. Changes to
+The package's `resolve-update.sh` selects the exact versioned Linux archive from
+the latest GitHub Release. FlatPark's update automation computes a new size and
+checksum and opens a reviewed registry update. Changes to
 the FlatPark wrapper, permissions, or metadata belong in that registry rather
 than this repository.
 
-For pre-publication testing, `just build-flatpark-test-bundle` builds the versioned
-Linux payload in the pinned Freedesktop container, applies an immutable revision
-of the registry's Zuko wrapper and permissions, and emits an unsigned local test
-branch under `dist/flatpak/`. It embeds the payload only to make local install
-testing self-contained; official FlatPark builds continue to use reviewed
-`extra-data` pins and FlatPark's signing infrastructure.
+For pre-publication testing, `just build-flatpark-test-bundle` builds the
+versioned Linux payload in the pinned Freedesktop container, applies an
+immutable revision of the registry's Zuko wrapper and permissions, and emits an
+unsigned local test branch under `dist/flatpak/`. It embeds the payload only to
+make local install testing self-contained; official FlatPark builds continue to
+use reviewed `extra-data` pins and FlatPark's signing infrastructure.
