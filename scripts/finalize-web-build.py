@@ -29,6 +29,9 @@ LOADER_DEBUG = 'console.debug("Injecting <script> tag. Using callback.")'
 FLUTTER_SOURCE_MAP = "//# sourceMappingURL=flutter.js.map"
 DEPRECATED_WEBGL_EXTENSION = "WEBGL_debug_renderer_info"
 GECKO_WASM_OPT_IN = "gecko: true"
+SKWASM_RENDERER = "renderer: 'skwasm'"
+FLUTTER_LOADER_CALL = "_flutter.loader.load({"
+EXPERIMENTAL_WIMP = "enableWimp"
 TERMINAL_FONT_FAMILY = "JetBrains Mono"
 TERMINAL_FONTS = {
     "JetBrainsMono-Regular.ttf": (
@@ -122,8 +125,16 @@ def validate() -> None:
     dart_wasm = OUTPUT / "main.dart.wasm"
     if dart_wasm.read_bytes()[:4] != b"\0asm":
         fail(f"{dart_wasm} is not a WebAssembly module")
-    if GECKO_WASM_OPT_IN not in (OUTPUT / "flutter_bootstrap.js").read_text():
+    bootstrap = (OUTPUT / "flutter_bootstrap.js").read_text()
+    if FLUTTER_LOADER_CALL not in bootstrap:
+        fail("Flutter bootstrap does not contain a loader call")
+    loader_config = bootstrap.rsplit(FLUTTER_LOADER_CALL, 1)[1]
+    if GECKO_WASM_OPT_IN not in loader_config:
         fail("Flutter bootstrap does not opt supported Firefox into SkWasm")
+    if SKWASM_RENDERER not in loader_config:
+        fail("Flutter bootstrap does not select SkWasm")
+    if EXPERIMENTAL_WIMP in loader_config:
+        fail("Flutter bootstrap enables experimental Web Impeller")
 
     for name, expected in TERMINAL_FONTS.items():
         font = OUTPUT / "assets/assets/fonts" / name

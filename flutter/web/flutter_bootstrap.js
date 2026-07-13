@@ -4,7 +4,6 @@
 _flutter.loader.load({
   config: {
     renderer: 'skwasm',
-    enableWimp: true,
     wasmAllowList: {
       gecko: true,
     },

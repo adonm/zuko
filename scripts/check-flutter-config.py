@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Validate the pinned Flutter beta and cross-platform Impeller policy."""
+"""Validate the pinned Flutter beta and cross-platform rendering policy."""
 
 from __future__ import annotations
 
@@ -85,8 +85,8 @@ def main() -> None:
     # the runner compatible with its headers; later SDKs can use the explicit
     # switch after the SDK pin and this check are updated together.
     forbid_text("flutter/windows/runner/main.cpp", "set_impeller_switch")
-    require_text("flutter/web/flutter_bootstrap.js", "enableWimp: true")
     require_text("flutter/web/flutter_bootstrap.js", "renderer: 'skwasm'")
+    forbid_text("flutter/web/flutter_bootstrap.js", "enableWimp")
 
     for path, value in [
         ("codemagic.yaml", "flutter-linux-ci:"),
@@ -118,7 +118,7 @@ def main() -> None:
         if (ROOT / removed).exists():
             raise SystemExit(f"Flutter config: obsolete Linux packaging helper still exists: {removed}")
 
-    print(f"Flutter config: Impeller policy uses beta revision {revision}")
+    print(f"Flutter config: rendering policy uses beta revision {revision}")
 
 
 if __name__ == "__main__":
