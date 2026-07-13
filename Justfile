@@ -141,6 +141,10 @@ install-freedesktop-llvm destination='/opt/llvm':
 container-linux mode='check':
     bash scripts/container-linux.sh "{{ mode }}"
 
+[group('flutter')]
+build-flatpark-test-bundle:
+    bash scripts/build-flatpark-test-bundle.sh
+
 [group('docs')]
 build-docs:
     mdbook build

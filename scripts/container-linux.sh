@@ -20,11 +20,16 @@ case "$mode" in
   linux)
     command='rm -rf flutter/build/linux && just build-flutter-linux'
     ;;
+  bundle)
+    # shellcheck disable=SC2016 # Expanded by the container's bash.
+    command='rm -rf flutter/build/linux && just build-flutter-linux && just package-linux-release "v$(scripts/version.sh)" HEAD'
+    ;;
   all)
+    # shellcheck disable=SC2016 # Expanded by the container's bash.
     command='just flutter-check && rm -rf flutter/build/linux && just build-flutter-linux && just package-linux-release "v$(scripts/version.sh)" HEAD'
     ;;
   *)
-    echo "usage: container-linux.sh <check|linux|all>" >&2
+    echo "usage: container-linux.sh <check|linux|bundle|all>" >&2
     exit 2
     ;;
 esac

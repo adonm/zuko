@@ -97,6 +97,20 @@ and an active Secret Service provider such as GNOME Keyring. Tagged releases
 package this directory for [FlatPark](flatpark.md). See the [Linux runtime
 notes](../flutter/linux/README.md).
 
+To build an unsigned, self-contained Flatpak for local testing, including the
+current Linux payload under FlatPark's production app ID and permissions:
+
+```sh
+mise exec -- just build-flatpark-test-bundle
+flatpak --user install dist/flatpak/zuko-linux-vX.Y.Z-x86_64-test.flatpak
+flatpak run dev.adonm.zuko//test-vX.Y.Z
+```
+
+The test branch can coexist with FlatPark's `stable` branch. The recipe consumes
+an immutable, inspected revision of FlatPark's registry packaging and embeds the
+local release archive so installation does not depend on an already-published
+GitHub Release. It is for local validation only and is not signed by FlatPark.
+
 ## Windows desktop
 
 Build on Windows with Python 3 and Visual Studio 2022's **Desktop development

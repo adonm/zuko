@@ -70,3 +70,10 @@ Linux archive from the latest GitHub Release. FlatPark's update automation will
 compute a new size and checksum and open a reviewed registry update. Changes to
 the FlatPark wrapper, permissions, or metadata belong in that registry rather
 than this repository.
+
+For pre-publication testing, `just build-flatpark-test-bundle` builds the versioned
+Linux payload in the pinned Freedesktop container, applies an immutable revision
+of the registry's Zuko wrapper and permissions, and emits an unsigned local test
+branch under `dist/flatpak/`. It embeds the payload only to make local install
+testing self-contained; official FlatPark builds continue to use reviewed
+`extra-data` pins and FlatPark's signing infrastructure.
