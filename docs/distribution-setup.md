@@ -7,8 +7,8 @@ inputs.
 
 ## Common release controls
 
-- [ ] Keep Cargo and Flutter versions aligned (`0.9.25` and
-  `0.9.25+1800009025` at the time of writing); run
+- [ ] Keep Cargo and Flutter versions aligned (`0.9.26` and
+  `0.9.26+1800009026` at the time of writing); run
   `just check-release-metadata`.
 - [ ] Use application/package/bundle ID `dev.adonm.zuko` everywhere except the
   Partner Center-assigned Microsoft package identity.
@@ -115,7 +115,7 @@ Details: [Microsoft Store publishing](windows-publishing.md) and the
 - [ ] Keep the FlatPark manifest on Freedesktop 25.08 while it is the catalog's
   current runtime, with only network, IPC, Wayland, DRI, and Secret Service
   access.
-- [ ] Test the FlatPark package build, installation, launch, locked/unlocked
+- [x] Test the FlatPark package build, installation, launch, locked/unlocked
   keyring behavior, and a real Iroh connection before submitting it.
 - [ ] Keep FlatPark's update resolver restricted to the exact versioned archive
   on the official `adonm/zuko` GitHub Release.
