@@ -1,5 +1,6 @@
 import 'package:flutter/foundation.dart';
 
+import 'client_name.dart';
 import 'model.dart';
 import 'pairing_code.dart';
 import 'storage.dart';
@@ -14,7 +15,7 @@ final class AppController extends ChangeNotifier {
   final ClientTransport transport;
   Future<void> _saveTail = Future.value();
   bool busy = false;
-  String status = 'ready';
+  String status = 'Ready to connect';
 
   Uint8List get clientKey => Uint8List.fromList(_state.clientKey);
   List<SavedHost> get hosts => _state.hosts;
@@ -22,10 +23,16 @@ final class AppController extends ChangeNotifier {
   double get terminalFontSize => _state.terminalFontSize;
   bool get terminalFontSizeCustomized => _state.terminalFontSizeCustomized;
   bool get showAdditionalKeys => _state.showAdditionalKeys;
+  String get clientName => _state.clientName ?? 'device';
+  String get clientLabel => clientAuthorizationLabel(clientName, clientKey);
 
   static Future<AppController> create() async {
     final store = ClientStateStore();
-    final state = await store.load();
+    var state = await store.load();
+    if (state.clientName == null) {
+      state = state.copyWith(clientName: await suggestClientName());
+      await store.save(state);
+    }
     final transport = await createClientTransport(state.clientKey);
     final controller = AppController._(store, state, transport);
     if (store.recoveredInvalidState) {
@@ -35,9 +42,9 @@ final class AppController extends ChangeNotifier {
     return controller;
   }
 
-  Future<SavedHost> claim(String code, String name) async {
+  Future<SavedHost> claim(String code) async {
     busy = true;
-    status = 'claiming host...';
+    status = 'Pairing with host…';
     notifyListeners();
     try {
       final normalizedCode = PairingCode.parse(code);
@@ -46,14 +53,9 @@ final class AppController extends ChangeNotifier {
           'Enter the two-word code shown by zuko share.',
         );
       }
-      final fingerprint = _state.clientKey
-          .take(3)
-          .map((byte) => byte.toRadixString(16).padLeft(2, '0'))
-          .join();
-      final platform = kIsWeb ? 'web' : defaultTargetPlatform.name;
-      final clientLabel = 'zuko-$platform-$fingerprint';
+      final clientLabel = this.clientLabel;
       final result = await transport.claim(normalizedCode, clientLabel);
-      final displayName = _displayName(name.isEmpty ? result.label : name);
+      final displayName = _displayName(result.label);
       final host = SavedHost(
         name: displayName,
         label: result.label,
@@ -69,10 +71,10 @@ final class AppController extends ChangeNotifier {
           ].take(12).toList(),
         ),
       );
-      status = 'paired with ${result.label}';
+      status = 'Paired with ${result.label}';
       return host;
     } catch (error) {
-      status = 'pairing failed: $error';
+      status = 'Pairing failed. Run zuko share again and retry.';
       rethrow;
     } finally {
       busy = false;
@@ -112,6 +114,16 @@ final class AppController extends ChangeNotifier {
 
   Future<void> setShowAdditionalKeys(bool value) =>
       _commit((state) => state.copyWith(showAdditionalKeys: value));
+
+  Future<void> setClientName(String value) {
+    final normalized = normalizeClientName(value);
+    if (normalized.isEmpty) {
+      return Future.error(
+        const FormatException('Enter a device name with letters or numbers.'),
+      );
+    }
+    return _commit((state) => state.copyWith(clientName: normalized));
+  }
 
   void setStatus(String value) {
     status = value;

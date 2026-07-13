@@ -2,13 +2,17 @@ import 'dart:async';
 
 import 'package:flterm/flterm.dart';
 import 'package:flutter/foundation.dart' show defaultTargetPlatform, kIsWeb;
+import 'package:flutter/gestures.dart' show kPrimaryButton;
 import 'package:flutter/material.dart' hide Key;
 import 'package:flutter/services.dart';
 import 'package:libghostty/libghostty.dart' show pasteIsSafe;
 import 'package:url_launcher/url_launcher.dart';
+import 'package:yaru/yaru.dart';
 
 import 'app_controller.dart';
+import 'client_name.dart';
 import 'model.dart';
+import 'pairing_screen.dart';
 import 'session_state.dart';
 import 'theme.dart';
 import 'transport.dart';
@@ -20,6 +24,342 @@ const _installCommand =
     'https://zuko.adonm.dev/install.sh | sh';
 const _shareCommand = 'zuko install\nzuko share';
 const terminalAccessoryHeight = 24.0;
+const terminalExtendedKeys = <({String label, Key key})>[
+  (label: 'Home', key: Key.home),
+  (label: 'End', key: Key.end),
+  (label: 'Page Up', key: Key.pageUp),
+  (label: 'Page Down', key: Key.pageDown),
+  (label: 'Insert', key: Key.insert),
+  (label: 'Delete', key: Key.delete),
+  (label: 'F1', key: Key.f1),
+  (label: 'F2', key: Key.f2),
+  (label: 'F3', key: Key.f3),
+  (label: 'F4', key: Key.f4),
+  (label: 'F5', key: Key.f5),
+  (label: 'F6', key: Key.f6),
+  (label: 'F7', key: Key.f7),
+  (label: 'F8', key: Key.f8),
+  (label: 'F9', key: Key.f9),
+  (label: 'F10', key: Key.f10),
+  (label: 'F11', key: Key.f11),
+  (label: 'F12', key: Key.f12),
+];
+
+double terminalAccessoryItemWidth({
+  required double availableWidth,
+  required int itemCount,
+}) {
+  if (!availableWidth.isFinite || itemCount <= 0) return 36;
+  return ((availableWidth - 8) / itemCount).clamp(28, 36).toDouble();
+}
+
+bool savedHostMatchesQuery(SavedHost host, String query) {
+  final terms = query
+      .trim()
+      .toLowerCase()
+      .split(RegExp(r'\s+'))
+      .where((term) => term.isNotEmpty);
+  final searchable = '${host.name}\n${host.label}\n${host.nodeId}'
+      .toLowerCase();
+  return terms.every(searchable.contains);
+}
+
+Future<String?> showDeviceNameDialog(
+  BuildContext context, {
+  required String initialName,
+}) => showDialog<String>(
+  context: context,
+  builder: (context) => _DeviceNameDialog(initialName: initialName),
+);
+
+class _DeviceNameDialog extends StatefulWidget {
+  const _DeviceNameDialog({required this.initialName});
+
+  final String initialName;
+
+  @override
+  State<_DeviceNameDialog> createState() => _DeviceNameDialogState();
+}
+
+class _DeviceNameDialogState extends State<_DeviceNameDialog> {
+  late final TextEditingController _name;
+  String? errorText;
+
+  @override
+  void initState() {
+    super.initState();
+    _name = TextEditingController(text: widget.initialName);
+  }
+
+  void _submit() {
+    final normalized = normalizeClientName(_name.text);
+    if (normalized.isEmpty) {
+      setState(() => errorText = 'Enter letters or numbers.');
+    } else {
+      Navigator.pop(context, normalized);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) => AlertDialog(
+    title: const Text('This device name'),
+    content: SingleChildScrollView(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          TextField(
+            controller: _name,
+            autofocus: true,
+            autocorrect: false,
+            maxLength: maxClientNameLength,
+            textInputAction: TextInputAction.done,
+            decoration: InputDecoration(
+              labelText: 'Device name',
+              errorText: errorText,
+            ),
+            onSubmitted: (_) => _submit(),
+          ),
+          const SizedBox(height: 8),
+          const Text(
+            'Used for new host authorizations. Re-pair a saved host to '
+            'update its existing label.',
+          ),
+        ],
+      ),
+    ),
+    actions: [
+      TextButton(
+        onPressed: () => Navigator.pop(context),
+        child: const Text('Cancel'),
+      ),
+      FilledButton(onPressed: _submit, child: const Text('Save')),
+    ],
+  );
+
+  @override
+  void dispose() {
+    _name.dispose();
+    super.dispose();
+  }
+}
+
+Future<void> showTerminalExtendedKeyPalette(
+  BuildContext context, {
+  required ValueChanged<Key> onKey,
+}) {
+  void sendAndClose(BuildContext routeContext, Key key) {
+    onKey(key);
+    Navigator.of(routeContext).pop();
+  }
+
+  final useBottomSheet =
+      !kIsWeb &&
+      switch (defaultTargetPlatform) {
+        TargetPlatform.android || TargetPlatform.iOS => true,
+        _ => false,
+      };
+  if (useBottomSheet) {
+    return showModalBottomSheet<void>(
+      context: context,
+      showDragHandle: true,
+      isScrollControlled: true,
+      builder: (sheetContext) => SafeArea(
+        top: false,
+        child: TerminalExtendedKeyPalette(
+          onKey: (key) => sendAndClose(sheetContext, key),
+        ),
+      ),
+    );
+  }
+
+  return showGeneralDialog<void>(
+    context: context,
+    barrierDismissible: true,
+    barrierLabel: 'Close extended terminal keys',
+    transitionDuration: const Duration(milliseconds: 120),
+    pageBuilder: (dialogContext, _, _) => SafeArea(
+      child: Align(
+        alignment: Alignment.bottomRight,
+        child: Padding(
+          padding: const EdgeInsets.only(right: 8, bottom: 32),
+          child: Material(
+            elevation: 8,
+            color: Theme.of(dialogContext).colorScheme.surfaceContainerHigh,
+            borderRadius: BorderRadius.circular(12),
+            clipBehavior: Clip.antiAlias,
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 400),
+              child: SizedBox(
+                width: MediaQuery.sizeOf(dialogContext).width - 16,
+                child: TerminalExtendedKeyPalette(
+                  onKey: (key) => sendAndClose(dialogContext, key),
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    ),
+    transitionBuilder: (context, animation, _, child) => FadeTransition(
+      opacity: animation,
+      child: ScaleTransition(
+        scale: Tween(begin: 0.96, end: 1.0).animate(animation),
+        alignment: Alignment.bottomRight,
+        child: child,
+      ),
+    ),
+  );
+}
+
+class TerminalExtendedKeyPalette extends StatelessWidget {
+  const TerminalExtendedKeyPalette({super.key, required this.onKey});
+
+  final ValueChanged<Key> onKey;
+
+  @override
+  Widget build(BuildContext context) => SingleChildScrollView(
+    padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Text('Extended keys', style: Theme.of(context).textTheme.titleMedium),
+        const SizedBox(height: 12),
+        _ExtendedKeyWrap(keys: terminalExtendedKeys.take(6), onKey: onKey),
+        const SizedBox(height: 12),
+        Text('Function keys', style: Theme.of(context).textTheme.labelLarge),
+        const SizedBox(height: 8),
+        _ExtendedKeyWrap(keys: terminalExtendedKeys.skip(6), onKey: onKey),
+      ],
+    ),
+  );
+}
+
+class _ExtendedKeyWrap extends StatelessWidget {
+  const _ExtendedKeyWrap({required this.keys, required this.onKey});
+
+  final Iterable<({String label, Key key})> keys;
+  final ValueChanged<Key> onKey;
+
+  @override
+  Widget build(BuildContext context) => LayoutBuilder(
+    builder: (context, constraints) {
+      final width = ((constraints.maxWidth - 16) / 3).clamp(72, 116).toDouble();
+      return Wrap(
+        spacing: 8,
+        runSpacing: 8,
+        children: [
+          for (final item in keys)
+            SizedBox(
+              width: width,
+              child: OutlinedButton(
+                style: OutlinedButton.styleFrom(
+                  padding: const EdgeInsets.symmetric(horizontal: 8),
+                ),
+                onPressed: () => onKey(item.key),
+                child: Text(item.label, maxLines: 1),
+              ),
+            ),
+        ],
+      );
+    },
+  );
+}
+
+class RepeatableAction extends StatefulWidget {
+  const RepeatableAction({
+    super.key,
+    required this.onInvoke,
+    required this.child,
+    this.initialDelay = const Duration(milliseconds: 400),
+    this.repeatInterval = const Duration(milliseconds: 80),
+  });
+
+  final VoidCallback onInvoke;
+  final Widget child;
+  final Duration initialDelay;
+  final Duration repeatInterval;
+
+  @override
+  State<RepeatableAction> createState() => _RepeatableActionState();
+}
+
+class _RepeatableActionState extends State<RepeatableAction> {
+  Timer? _delayTimer;
+  Timer? _repeatTimer;
+  int? _activePointer;
+  bool _pointerTap = false;
+
+  void _start(PointerDownEvent event) {
+    if (_activePointer != null || event.buttons != kPrimaryButton) return;
+    _activePointer = event.pointer;
+    _pointerTap = true;
+    widget.onInvoke();
+    _delayTimer = Timer(widget.initialDelay, () {
+      if (_activePointer == null) return;
+      widget.onInvoke();
+      _repeatTimer = Timer.periodic(
+        widget.repeatInterval,
+        (_) => widget.onInvoke(),
+      );
+    });
+  }
+
+  void _move(PointerMoveEvent event) {
+    if (event.pointer != _activePointer) return;
+    final renderBox = context.findRenderObject()! as RenderBox;
+    if (!renderBox.size.contains(event.localPosition)) _cancel();
+  }
+
+  void _finish(PointerEvent event) {
+    if (event.pointer != _activePointer) return;
+    _activePointer = null;
+    _stopTimers();
+  }
+
+  void _cancel([PointerEvent? event]) {
+    if (event != null && event.pointer != _activePointer) return;
+    _activePointer = null;
+    _pointerTap = false;
+    _stopTimers();
+  }
+
+  void _stopTimers() {
+    _delayTimer?.cancel();
+    _repeatTimer?.cancel();
+    _delayTimer = null;
+    _repeatTimer = null;
+  }
+
+  void _tap() {
+    if (!_pointerTap) widget.onInvoke();
+    _pointerTap = false;
+  }
+
+  @override
+  Widget build(BuildContext context) => MouseRegion(
+    onExit: _cancel,
+    child: Listener(
+      onPointerDown: _start,
+      onPointerMove: _move,
+      onPointerUp: _finish,
+      onPointerCancel: _cancel,
+      child: InkResponse(
+        onTap: _tap,
+        onTapCancel: _cancel,
+        containedInkWell: true,
+        child: widget.child,
+      ),
+    ),
+  );
+
+  @override
+  void dispose() {
+    _stopTimers();
+    super.dispose();
+  }
+}
 
 double effectiveTerminalFontSize({
   required double width,
@@ -290,54 +630,17 @@ class _HomeState extends State<_Home> with WidgetsBindingObserver {
     await active?.close();
   }
 
-  Future<void> _pair() async {
-    final code = TextEditingController();
-    final name = TextEditingController();
-    final accepted = await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Pair a host'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            TextField(
-              controller: code,
-              autofocus: true,
-              autocorrect: false,
-              decoration: const InputDecoration(labelText: 'Share code'),
-            ),
-            TextField(
-              controller: name,
-              decoration: const InputDecoration(labelText: 'Save as'),
-            ),
-          ],
+  Future<void> _pair({bool manual = false}) async {
+    final host = await Navigator.of(context).push<SavedHost>(
+      MaterialPageRoute(
+        fullscreenDialog: true,
+        builder: (context) => PairingScreen(
+          startInManual: manual,
+          onClaim: widget.controller.claim,
         ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: const Text('Cancel'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(context, true),
-            child: const Text('Pair'),
-          ),
-        ],
       ),
     );
-    if (accepted == true && mounted) {
-      try {
-        final host = await widget.controller.claim(code.text, name.text);
-        if (mounted) await _connect(host);
-      } catch (_) {
-        if (mounted) {
-          ScaffoldMessenger.of(
-            context,
-          ).showSnackBar(SnackBar(content: Text(widget.controller.status)));
-        }
-      }
-    }
-    code.dispose();
-    name.dispose();
+    if (host != null && mounted) await _connect(host);
   }
 
   Future<void> _forget(SavedHost host) async {
@@ -365,12 +668,14 @@ class _HomeState extends State<_Home> with WidgetsBindingObserver {
         platform: defaultTargetPlatform,
         isWeb: kIsWeb,
       );
+      final hasSavedHosts = widget.controller.hosts.isNotEmpty;
+      final showWelcome = !hasSavedHosts && selected == null;
       final sidebar = _Sidebar(
         controller: widget.controller,
         terminalFontSize: terminalFontSize,
         selected: selected,
         sessionState: sessionState,
-        onPair: _pair,
+        onPair: () => _pair(),
         onConnect: _connect,
         onDisconnect: _disconnect,
         onForget: _forget,
@@ -391,49 +696,58 @@ class _HomeState extends State<_Home> with WidgetsBindingObserver {
               _DesktopSidebar(
                 expanded: _sidebarExpanded,
                 onToggle: _toggleSidebar,
-                onPair: _pair,
+                onPair: () => _pair(),
+                showPairAction: hasSavedHosts,
                 child: sidebar,
               ),
             if (wide) const VerticalDivider(width: 1),
             Expanded(
-              child: Column(
-                children: [
-                  Expanded(
-                    child: Stack(
-                      fit: StackFit.expand,
+              child: showWelcome
+                  ? _Welcome(
+                      onScan: supportsQrScanning() ? () => _pair() : null,
+                      onEnterCode: () => _pair(manual: true),
+                    )
+                  : Column(
                       children: [
-                        TerminalView(
-                          controller: terminal,
-                          autofocus: true,
-                          theme: terminalTheme,
-                          semanticsLabel: 'Remote terminal',
-                          semanticsHint:
-                              'Activate to focus remote terminal input',
-                          linkSettings: LinkSettings(
-                            types: const {LinkType.osc8, LinkType.text},
-                            onActivate: (link) =>
-                                unawaited(_openTerminalLink(link)),
+                        Expanded(
+                          child: Stack(
+                            fit: StackFit.expand,
+                            children: [
+                              TerminalView(
+                                controller: terminal,
+                                autofocus: true,
+                                theme: terminalTheme,
+                                semanticsLabel: 'Remote terminal',
+                                semanticsHint:
+                                    'Activate to focus remote terminal input',
+                                linkSettings: LinkSettings(
+                                  types: const {LinkType.osc8, LinkType.text},
+                                  onActivate: (link) =>
+                                      unawaited(_openTerminalLink(link)),
+                                ),
+                              ),
+                              if (!sessionState.isAttached)
+                                _SessionOverlay(
+                                  state: sessionState,
+                                  hasHost: selected != null,
+                                  onReconnect: selectedHost == null
+                                      ? null
+                                      : () => _connect(selectedHost),
+                                  onPair: () => _pair(),
+                                  onDisconnect: selected == null
+                                      ? null
+                                      : _disconnect,
+                                ),
+                            ],
                           ),
                         ),
-                        if (!sessionState.isAttached)
-                          _SessionOverlay(
-                            state: sessionState,
-                            hasHost: selected != null,
-                            onReconnect: selectedHost == null
-                                ? null
-                                : () => _connect(selectedHost),
-                            onPair: _pair,
-                            onDisconnect: selected == null ? null : _disconnect,
-                          ),
+                        _TerminalAccessory(
+                          controller: terminal,
+                          showAdditionalKeys:
+                              widget.controller.showAdditionalKeys,
+                        ),
                       ],
                     ),
-                  ),
-                  _TerminalAccessory(
-                    controller: terminal,
-                    showAdditionalKeys: widget.controller.showAdditionalKeys,
-                  ),
-                ],
-              ),
             ),
           ],
         ),
@@ -447,12 +761,14 @@ class _DesktopSidebar extends StatelessWidget {
     required this.expanded,
     required this.onToggle,
     required this.onPair,
+    required this.showPairAction,
     required this.child,
   });
 
   final bool expanded;
   final VoidCallback onToggle;
   final VoidCallback onPair;
+  final bool showPairAction;
   final Widget child;
 
   @override
@@ -506,12 +822,14 @@ class _DesktopSidebar extends StatelessWidget {
                     ),
                   ),
                   const Divider(height: 1),
-                  const SizedBox(height: 6),
-                  IconButton(
-                    onPressed: onPair,
-                    tooltip: 'Pair a new host',
-                    icon: const Icon(Icons.add_link),
-                  ),
+                  if (showPairAction) ...[
+                    const SizedBox(height: 6),
+                    IconButton(
+                      onPressed: onPair,
+                      tooltip: 'Pair a new host',
+                      icon: const Icon(Icons.add_link),
+                    ),
+                  ],
                 ],
               ),
       ),
@@ -667,6 +985,7 @@ class _TerminalAccessory extends StatelessWidget {
     animation: controller,
     builder: (context, _) {
       final colors = Theme.of(context).colorScheme;
+      final itemCount = showAdditionalKeys ? 11 : 5;
       return Material(
         color: colors.surfaceContainerHigh,
         child: DecoratedBox(
@@ -677,86 +996,122 @@ class _TerminalAccessory extends StatelessWidget {
             top: false,
             child: SizedBox(
               height: terminalAccessoryHeight,
-              child: ListView(
-                scrollDirection: Axis.horizontal,
-                padding: const EdgeInsets.symmetric(horizontal: 4),
-                children: [
-                  _AccessoryKey(
-                    label: 'Esc',
-                    onPressed: () => controller.sendKey(Key.escape),
-                  ),
-                  _AccessoryIcon(
-                    tooltip: 'Tab',
-                    icon: Icons.keyboard_tab,
-                    onPressed: () => controller.sendKey(Key.tab),
-                  ),
-                  if (showAdditionalKeys) ...[
-                    _AccessoryIcon(
-                      tooltip: 'Control modifier',
-                      icon: Icons.keyboard_control_key,
-                      selected: controller.virtualMods.hasCtrl,
-                      onPressed: () => controller.toggleMod(const Mods.ctrl()),
-                    ),
-                    _AccessoryIcon(
-                      tooltip: 'Alt modifier',
-                      icon: Icons.alt_route,
-                      selected: controller.virtualMods.hasAlt,
-                      onPressed: () => controller.toggleMod(const Mods.alt()),
-                    ),
-                    _AccessoryIcon(
-                      tooltip: 'Left',
-                      icon: Icons.keyboard_arrow_left,
-                      onPressed: () => controller.sendKey(Key.arrowLeft),
-                    ),
-                    _AccessoryIcon(
-                      tooltip: 'Up',
-                      icon: Icons.keyboard_arrow_up,
-                      onPressed: () => controller.sendKey(Key.arrowUp),
-                    ),
-                    _AccessoryIcon(
-                      tooltip: 'Down',
-                      icon: Icons.keyboard_arrow_down,
-                      onPressed: () => controller.sendKey(Key.arrowDown),
-                    ),
-                    _AccessoryIcon(
-                      tooltip: 'Right',
-                      icon: Icons.keyboard_arrow_right,
-                      onPressed: () => controller.sendKey(Key.arrowRight),
-                    ),
-                  ],
-                  _AccessoryIcon(
-                    tooltip: controller.keyboardState == KeyboardState.showing
-                        ? 'Hide keyboard'
-                        : 'Show keyboard',
-                    icon: controller.keyboardState == KeyboardState.showing
-                        ? Icons.keyboard_hide
-                        : Icons.keyboard,
-                    onPressed: () {
-                      if (controller.keyboardState == KeyboardState.showing) {
-                        controller.disableKeyboard();
-                      } else {
-                        controller.showKeyboard();
-                      }
-                    },
-                  ),
-                  _AccessoryIcon(
-                    tooltip: 'Select all terminal text',
-                    icon: Icons.select_all,
-                    onPressed: controller.selectAll,
-                  ),
-                  _AccessoryIcon(
-                    tooltip: 'Copy selected text',
-                    icon: Icons.copy,
-                    onPressed: controller.hasSelection
-                        ? () => _copy(context)
-                        : null,
-                  ),
-                  _AccessoryIcon(
-                    tooltip: 'Paste',
-                    icon: Icons.content_paste,
-                    onPressed: () => _paste(context),
-                  ),
-                ],
+              child: LayoutBuilder(
+                builder: (context, constraints) {
+                  final itemWidth = terminalAccessoryItemWidth(
+                    availableWidth: constraints.maxWidth,
+                    itemCount: itemCount,
+                  );
+                  return ListView(
+                    scrollDirection: Axis.horizontal,
+                    padding: const EdgeInsets.symmetric(horizontal: 4),
+                    children: [
+                      _AccessoryKey(
+                        width: itemWidth,
+                        label: 'Esc',
+                        onPressed: () => controller.sendKey(Key.escape),
+                      ),
+                      _AccessoryKey(
+                        width: itemWidth,
+                        label: 'Tab',
+                        onPressed: () => controller.sendKey(Key.tab),
+                      ),
+                      if (showAdditionalKeys) ...[
+                        _AccessoryKey(
+                          width: itemWidth,
+                          label: 'Ctrl',
+                          selected: controller.virtualMods.hasCtrl,
+                          onPressed: () =>
+                              controller.toggleMod(const Mods.ctrl()),
+                        ),
+                        _AccessoryKey(
+                          width: itemWidth,
+                          label: 'Alt',
+                          selected: controller.virtualMods.hasAlt,
+                          onPressed: () =>
+                              controller.toggleMod(const Mods.alt()),
+                        ),
+                        _RepeatableAccessoryIcon(
+                          width: itemWidth,
+                          tooltip: 'Left',
+                          icon: YaruFreedesktopIcons.go_previous.icon,
+                          onPressed: () => controller.sendKey(Key.arrowLeft),
+                        ),
+                        _RepeatableAccessoryIcon(
+                          width: itemWidth,
+                          tooltip: 'Up',
+                          icon: YaruFreedesktopIcons.go_up.icon,
+                          onPressed: () => controller.sendKey(Key.arrowUp),
+                        ),
+                        _RepeatableAccessoryIcon(
+                          width: itemWidth,
+                          tooltip: 'Down',
+                          icon: YaruFreedesktopIcons.go_down.icon,
+                          onPressed: () => controller.sendKey(Key.arrowDown),
+                        ),
+                        _RepeatableAccessoryIcon(
+                          width: itemWidth,
+                          tooltip: 'Right',
+                          icon: YaruFreedesktopIcons.go_next.icon,
+                          onPressed: () => controller.sendKey(Key.arrowRight),
+                        ),
+                      ],
+                      _AccessoryIcon(
+                        width: itemWidth,
+                        tooltip:
+                            controller.keyboardState == KeyboardState.showing
+                            ? 'Hide keyboard'
+                            : 'Show keyboard',
+                        icon: controller.keyboardState == KeyboardState.showing
+                            ? YaruIcons.keyboard_filled
+                            : YaruFreedesktopIcons.input_keyboard.icon,
+                        selected:
+                            controller.keyboardState == KeyboardState.showing,
+                        onPressed: () {
+                          if (controller.keyboardState ==
+                              KeyboardState.showing) {
+                            controller.disableKeyboard();
+                          } else {
+                            controller.showKeyboard();
+                          }
+                        },
+                      ),
+                      _AccessoryIcon(
+                        width: itemWidth,
+                        tooltip: controller.hasSelection
+                            ? 'Copy selected text'
+                            : 'Paste',
+                        icon: controller.hasSelection
+                            ? YaruFreedesktopIcons.edit_copy.icon
+                            : YaruFreedesktopIcons.edit_paste.icon,
+                        onPressed: controller.hasSelection
+                            ? () => _copy(context)
+                            : () => _paste(context),
+                      ),
+                      _AccessoryMenu(
+                        width: itemWidth,
+                        hasSelection: controller.hasSelection,
+                        onSelected: (action) {
+                          switch (action) {
+                            case 'extended-keys':
+                              unawaited(
+                                showTerminalExtendedKeyPalette(
+                                  context,
+                                  onKey: (key) => controller.sendKey(key),
+                                ),
+                              );
+                            case 'select-all':
+                              controller.selectAll();
+                            case 'copy':
+                              unawaited(_copy(context));
+                            case 'paste':
+                              unawaited(_paste(context));
+                          }
+                        },
+                      ),
+                    ],
+                  );
+                },
               ),
             ),
           ),
@@ -767,32 +1122,51 @@ class _TerminalAccessory extends StatelessWidget {
 }
 
 class _AccessoryKey extends StatelessWidget {
-  const _AccessoryKey({required this.label, required this.onPressed});
+  const _AccessoryKey({
+    required this.width,
+    required this.label,
+    required this.onPressed,
+    this.selected = false,
+  });
+  final double width;
   final String label;
   final VoidCallback onPressed;
+  final bool selected;
 
   @override
-  Widget build(BuildContext context) => Padding(
-    padding: const EdgeInsets.symmetric(horizontal: 1, vertical: 3),
-    child: TextButton(
-      style: TextButton.styleFrom(
-        minimumSize: const Size(36, 18),
-        padding: const EdgeInsets.symmetric(horizontal: 6),
-        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+  Widget build(BuildContext context) => SizedBox(
+    width: width,
+    height: terminalAccessoryHeight,
+    child: Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 1, vertical: 3),
+      child: TextButton(
+        style: TextButton.styleFrom(
+          minimumSize: Size(width - 2, 18),
+          padding: const EdgeInsets.symmetric(horizontal: 2),
+          backgroundColor: selected
+              ? Theme.of(context).colorScheme.primaryContainer
+              : null,
+          foregroundColor: selected
+              ? Theme.of(context).colorScheme.onPrimaryContainer
+              : null,
+          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+        ),
+        onPressed: onPressed,
+        child: Text(label, style: const TextStyle(fontSize: 11, height: 1)),
       ),
-      onPressed: onPressed,
-      child: Text(label, style: const TextStyle(fontSize: 11, height: 1)),
     ),
   );
 }
 
 class _AccessoryIcon extends StatelessWidget {
   const _AccessoryIcon({
+    required this.width,
     required this.tooltip,
     required this.icon,
     required this.onPressed,
     this.selected = false,
   });
+  final double width;
   final String tooltip;
   final IconData icon;
   final VoidCallback? onPressed;
@@ -800,15 +1174,18 @@ class _AccessoryIcon extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => SizedBox(
-    width: 36,
-    height: 24,
+    width: width,
+    height: terminalAccessoryHeight,
     child: IconButton(
       tooltip: tooltip,
       onPressed: onPressed,
       icon: Icon(icon),
       iconSize: 18,
       padding: EdgeInsets.zero,
-      constraints: const BoxConstraints(minWidth: 36, minHeight: 24),
+      constraints: BoxConstraints(
+        minWidth: width,
+        minHeight: terminalAccessoryHeight,
+      ),
       style: IconButton.styleFrom(
         backgroundColor: selected
             ? Theme.of(context).colorScheme.primaryContainer
@@ -819,6 +1196,105 @@ class _AccessoryIcon extends StatelessWidget {
         tapTargetSize: MaterialTapTargetSize.shrinkWrap,
       ),
     ),
+  );
+}
+
+class _RepeatableAccessoryIcon extends StatelessWidget {
+  const _RepeatableAccessoryIcon({
+    required this.width,
+    required this.tooltip,
+    required this.icon,
+    required this.onPressed,
+  });
+
+  final double width;
+  final String tooltip;
+  final IconData icon;
+  final VoidCallback onPressed;
+
+  @override
+  Widget build(BuildContext context) => Tooltip(
+    message: tooltip,
+    child: Semantics(
+      button: true,
+      label: tooltip,
+      child: RepeatableAction(
+        onInvoke: onPressed,
+        child: SizedBox(
+          width: width,
+          height: terminalAccessoryHeight,
+          child: Icon(icon, size: 18),
+        ),
+      ),
+    ),
+  );
+}
+
+class _AccessoryMenu extends StatelessWidget {
+  const _AccessoryMenu({
+    required this.width,
+    required this.hasSelection,
+    required this.onSelected,
+  });
+
+  final double width;
+  final bool hasSelection;
+  final ValueChanged<String> onSelected;
+
+  @override
+  Widget build(BuildContext context) => SizedBox(
+    width: width,
+    height: terminalAccessoryHeight,
+    child: PopupMenuButton<String>(
+      tooltip: 'More terminal actions',
+      padding: EdgeInsets.zero,
+      iconSize: 18,
+      icon: const Icon(YaruIcons.view_more),
+      onSelected: onSelected,
+      itemBuilder: (context) => [
+        PopupMenuItem(
+          value: 'extended-keys',
+          child: _MenuAction(
+            icon: YaruFreedesktopIcons.input_keyboard.icon,
+            label: 'Extended keys',
+          ),
+        ),
+        PopupMenuItem(
+          value: 'select-all',
+          child: _MenuAction(
+            icon: YaruFreedesktopIcons.edit_select_all.icon,
+            label: 'Select all',
+          ),
+        ),
+        if (hasSelection)
+          PopupMenuItem(
+            value: 'copy',
+            child: _MenuAction(
+              icon: YaruFreedesktopIcons.edit_copy.icon,
+              label: 'Copy',
+            ),
+          ),
+        PopupMenuItem(
+          value: 'paste',
+          child: _MenuAction(
+            icon: YaruFreedesktopIcons.edit_paste.icon,
+            label: 'Paste',
+          ),
+        ),
+      ],
+    ),
+  );
+}
+
+class _MenuAction extends StatelessWidget {
+  const _MenuAction({required this.icon, required this.label});
+
+  final IconData icon;
+  final String label;
+
+  @override
+  Widget build(BuildContext context) => Row(
+    children: [Icon(icon, size: 18), const SizedBox(width: 12), Text(label)],
   );
 }
 
@@ -926,6 +1402,14 @@ class _Sidebar extends StatelessWidget {
     name.dispose();
   }
 
+  Future<void> _editClientName(BuildContext context) async {
+    final updated = await showDeviceNameDialog(
+      context,
+      initialName: controller.clientName,
+    );
+    if (updated != null) await controller.setClientName(updated);
+  }
+
   Future<void> _confirmForget(BuildContext context, SavedHost host) async {
     final accepted = await showDialog<bool>(
       context: context,
@@ -959,61 +1443,40 @@ class _Sidebar extends StatelessWidget {
       padding: const EdgeInsets.all(12),
       children: [
         const SizedBox(height: 2),
-        FilledButton.icon(
-          onPressed: controller.busy ? null : onPair,
-          icon: const Icon(Icons.add_link),
-          label: const Text('Pair host'),
-        ),
-        const SizedBox(height: 18),
-        const _SectionLabel('Saved hosts'),
+        if (controller.hosts.isNotEmpty) ...[
+          FilledButton.icon(
+            onPressed: controller.busy ? null : onPair,
+            icon: const Icon(Icons.add_link),
+            label: const Text('Pair host'),
+          ),
+          const SizedBox(height: 18),
+        ],
+        _SectionLabel('Saved hosts (${controller.hosts.length})'),
         const SizedBox(height: 8),
         if (controller.hosts.isEmpty)
-          _Onboarding(onCopy: (value) => _copy(context, value)),
-        if (controller.hosts.isNotEmpty)
-          Card(
-            child: Column(
-              children: [
-                for (
-                  var index = 0;
-                  index < controller.hosts.length;
-                  index++
-                ) ...[
-                  ListTile(
-                    selected:
-                        controller.hosts[index].nodeId == selected?.nodeId,
-                    leading: const Icon(Icons.computer_outlined),
-                    title: Text(controller.hosts[index].name),
-                    subtitle: Text(
-                      controller.hosts[index].label,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                    onTap: () => onConnect(controller.hosts[index]),
-                    trailing: PopupMenuButton<String>(
-                      tooltip: 'Manage ${controller.hosts[index].name}',
-                      onSelected: (action) {
-                        final host = controller.hosts[index];
-                        switch (action) {
-                          case 'details':
-                            unawaited(_details(context, host));
-                          case 'rename':
-                            unawaited(_rename(context, host));
-                          case 'forget':
-                            unawaited(_confirmForget(context, host));
-                        }
-                      },
-                      itemBuilder: (context) => const [
-                        PopupMenuItem(value: 'details', child: Text('Details')),
-                        PopupMenuItem(value: 'rename', child: Text('Rename')),
-                        PopupMenuItem(value: 'forget', child: Text('Forget')),
-                      ],
-                    ),
-                  ),
-                  if (index != controller.hosts.length - 1)
-                    const Divider(indent: 48),
-                ],
-              ],
+          const Card(
+            margin: EdgeInsets.zero,
+            child: ListTile(
+              leading: Icon(Icons.computer_outlined),
+              title: Text('No saved hosts'),
+              subtitle: Text('Pair your first host from the welcome screen.'),
             ),
+          ),
+        if (controller.hosts.isNotEmpty)
+          SavedHostList(
+            hosts: controller.hosts,
+            selected: selected,
+            onConnect: onConnect,
+            onAction: (action, host) {
+              switch (action) {
+                case 'details':
+                  unawaited(_details(context, host));
+                case 'rename':
+                  unawaited(_rename(context, host));
+                case 'forget':
+                  unawaited(_confirmForget(context, host));
+              }
+            },
           ),
         const SizedBox(height: 24),
         const _SectionLabel('Appearance'),
@@ -1111,6 +1574,24 @@ class _Sidebar extends StatelessWidget {
         const SizedBox(height: 24),
         const _SectionLabel('Connection'),
         const SizedBox(height: 8),
+        Card(
+          child: ListTile(
+            leading: const Icon(YaruIcons.computer, size: 20),
+            title: const Text('This device name'),
+            subtitle: Text(
+              '${controller.clientName}\n'
+              'New pairings use ${controller.clientLabel}',
+            ),
+            isThreeLine: true,
+            trailing: IconButton(
+              tooltip: 'Edit device name',
+              onPressed: () => unawaited(_editClientName(context)),
+              icon: const Icon(Icons.edit_outlined),
+            ),
+            onTap: () => unawaited(_editClientName(context)),
+          ),
+        ),
+        const SizedBox(height: 10),
         Semantics(
           label:
               'Connection status: '
@@ -1145,6 +1626,169 @@ class _Sidebar extends StatelessWidget {
   );
 }
 
+class SavedHostList extends StatefulWidget {
+  const SavedHostList({
+    super.key,
+    required this.hosts,
+    required this.selected,
+    required this.onConnect,
+    required this.onAction,
+  });
+
+  final List<SavedHost> hosts;
+  final SavedHost? selected;
+  final ValueChanged<SavedHost> onConnect;
+  final void Function(String action, SavedHost host) onAction;
+
+  @override
+  State<SavedHostList> createState() => _SavedHostListState();
+}
+
+class _SavedHostListState extends State<SavedHostList> {
+  final _search = TextEditingController();
+
+  @override
+  void initState() {
+    super.initState();
+    _search.addListener(_searchChanged);
+  }
+
+  void _searchChanged() => setState(() {});
+
+  @override
+  Widget build(BuildContext context) {
+    final matches = widget.hosts
+        .where((host) => savedHostMatchesQuery(host, _search.text))
+        .toList(growable: false);
+    return Column(
+      children: [
+        SizedBox(
+          height: 38,
+          child: TextField(
+            controller: _search,
+            autocorrect: false,
+            enableSuggestions: false,
+            textInputAction: TextInputAction.search,
+            decoration: InputDecoration(
+              hintText: 'Search hosts',
+              isDense: true,
+              contentPadding: const EdgeInsets.symmetric(vertical: 8),
+              prefixIcon: const Icon(YaruIcons.search, size: 18),
+              prefixIconConstraints: const BoxConstraints(minWidth: 36),
+              suffixIcon: _search.text.isEmpty
+                  ? null
+                  : IconButton(
+                      tooltip: 'Clear host search',
+                      onPressed: _search.clear,
+                      padding: EdgeInsets.zero,
+                      constraints: const BoxConstraints(
+                        minWidth: 36,
+                        minHeight: 36,
+                      ),
+                      icon: const Icon(YaruIcons.edit_clear, size: 18),
+                    ),
+              suffixIconConstraints: const BoxConstraints(minWidth: 36),
+            ),
+          ),
+        ),
+        const SizedBox(height: 6),
+        Card(
+          margin: EdgeInsets.zero,
+          child: matches.isEmpty
+              ? Padding(
+                  padding: const EdgeInsets.all(12),
+                  child: Column(
+                    children: [
+                      const Text(
+                        'No matching hosts',
+                        textAlign: TextAlign.center,
+                      ),
+                      const SizedBox(height: 4),
+                      TextButton(
+                        onPressed: _search.clear,
+                        child: const Text('Clear search'),
+                      ),
+                    ],
+                  ),
+                )
+              : Column(
+                  children: [
+                    for (var index = 0; index < matches.length; index++) ...[
+                      _SavedHostTile(
+                        host: matches[index],
+                        selected:
+                            matches[index].nodeId == widget.selected?.nodeId,
+                        onTap: () => widget.onConnect(matches[index]),
+                        onAction: (action) =>
+                            widget.onAction(action, matches[index]),
+                      ),
+                      if (index != matches.length - 1)
+                        const Divider(height: 1, indent: 38),
+                    ],
+                  ],
+                ),
+        ),
+      ],
+    );
+  }
+
+  @override
+  void dispose() {
+    _search.removeListener(_searchChanged);
+    _search.dispose();
+    super.dispose();
+  }
+}
+
+class _SavedHostTile extends StatelessWidget {
+  const _SavedHostTile({
+    required this.host,
+    required this.selected,
+    required this.onTap,
+    required this.onAction,
+  });
+
+  final SavedHost host;
+  final bool selected;
+  final VoidCallback onTap;
+  final ValueChanged<String> onAction;
+
+  @override
+  Widget build(BuildContext context) {
+    final showLabel =
+        host.name.trim().toLowerCase() != host.label.trim().toLowerCase();
+    return ListTile(
+      selected: selected,
+      dense: true,
+      minTileHeight: showLabel ? 48 : 40,
+      visualDensity: const VisualDensity(horizontal: -2, vertical: -4),
+      contentPadding: const EdgeInsetsDirectional.only(start: 10),
+      horizontalTitleGap: 8,
+      leading: Icon(
+        selected ? YaruIcons.computer_filled : YaruIcons.computer,
+        size: 18,
+      ),
+      title: Text(host.name, maxLines: 1, overflow: TextOverflow.ellipsis),
+      subtitle: showLabel
+          ? Text(host.label, maxLines: 1, overflow: TextOverflow.ellipsis)
+          : null,
+      onTap: onTap,
+      trailing: PopupMenuButton<String>(
+        tooltip: 'Manage ${host.name}',
+        padding: EdgeInsets.zero,
+        iconSize: 18,
+        icon: const Icon(YaruIcons.view_more),
+        onSelected: onAction,
+        itemBuilder: (context) => const [
+          PopupMenuItem(value: 'details', child: Text('Details')),
+          PopupMenuItem(value: 'rename', child: Text('Rename')),
+          PopupMenuItem(value: 'forget', child: Text('Forget')),
+        ],
+      ),
+    );
+  }
+}
+
 class _SectionLabel extends StatelessWidget {
   const _SectionLabel(this.label);
 
@@ -1163,25 +1807,135 @@ class _SectionLabel extends StatelessWidget {
   );
 }
 
-class _Onboarding extends StatelessWidget {
-  const _Onboarding({required this.onCopy});
+class _Welcome extends StatelessWidget {
+  const _Welcome({required this.onScan, required this.onEnterCode});
+
+  final VoidCallback? onScan;
+  final VoidCallback onEnterCode;
+
+  Future<void> _copy(BuildContext context, String value) async {
+    try {
+      await Clipboard.setData(ClipboardData(text: value));
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context)
+        ..hideCurrentSnackBar()
+        ..showSnackBar(const SnackBar(content: Text('Copied command')));
+    } on PlatformException {
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context)
+        ..hideCurrentSnackBar()
+        ..showSnackBar(
+          const SnackBar(content: Text('Clipboard access was denied')),
+        );
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) => SingleChildScrollView(
+    padding: const EdgeInsets.all(24),
+    child: Center(
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 680),
+        child: Column(
+          children: [
+            Image.asset('assets/zuko-logo.png', width: 64, height: 64),
+            const SizedBox(height: 16),
+            Text(
+              'Connect to your host',
+              textAlign: TextAlign.center,
+              style: Theme.of(context).textTheme.headlineMedium,
+            ),
+            const SizedBox(height: 8),
+            Text(
+              'Set up Zuko on the computer you want to reach, then pair it once.',
+              textAlign: TextAlign.center,
+              style: Theme.of(context).textTheme.bodyLarge,
+            ),
+            const SizedBox(height: 24),
+            _WelcomeStep(
+              number: 1,
+              title: 'Install Zuko on the host',
+              command: _installCommand,
+              onCopy: (value) => _copy(context, value),
+            ),
+            const SizedBox(height: 12),
+            _WelcomeStep(
+              number: 2,
+              title: 'Start it and create a one-time share code',
+              command: _shareCommand,
+              onCopy: (value) => _copy(context, value),
+            ),
+            const SizedBox(height: 20),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              alignment: WrapAlignment.center,
+              children: [
+                if (onScan != null)
+                  FilledButton.icon(
+                    onPressed: onScan,
+                    icon: const Icon(Icons.qr_code_scanner),
+                    label: const Text('Scan QR code'),
+                  )
+                else
+                  FilledButton.icon(
+                    onPressed: onEnterCode,
+                    icon: const Icon(Icons.keyboard_outlined),
+                    label: const Text('Enter pairing code'),
+                  ),
+                if (onScan != null)
+                  OutlinedButton.icon(
+                    onPressed: onEnterCode,
+                    icon: const Icon(Icons.keyboard_outlined),
+                    label: const Text('Enter code instead'),
+                  ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    ),
+  );
+}
+
+class _WelcomeStep extends StatelessWidget {
+  const _WelcomeStep({
+    required this.number,
+    required this.title,
+    required this.command,
+    required this.onCopy,
+  });
+
+  final int number;
+  final String title;
+  final String command;
   final ValueChanged<String> onCopy;
 
   @override
   Widget build(BuildContext context) => Card(
     margin: EdgeInsets.zero,
     child: Padding(
-      padding: const EdgeInsets.all(12),
-      child: Column(
+      padding: const EdgeInsets.fromLTRB(16, 14, 8, 10),
+      child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Text('1. Install zuko on the host'),
-          _Command(command: _installCommand, onCopy: onCopy),
-          const SizedBox(height: 8),
-          const Text('2. Start it and create a one-time share code'),
-          _Command(command: _shareCommand, onCopy: onCopy),
-          const SizedBox(height: 8),
-          const Text('3. Tap Pair host and enter the two-word code.'),
+          CircleAvatar(
+            radius: 14,
+            backgroundColor: Theme.of(context).colorScheme.primaryContainer,
+            foregroundColor: Theme.of(context).colorScheme.onPrimaryContainer,
+            child: Text('$number'),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(title, style: Theme.of(context).textTheme.titleSmall),
+                const SizedBox(height: 6),
+                _Command(command: command, onCopy: onCopy),
+              ],
+            ),
+          ),
         ],
       ),
     ),
@@ -1209,7 +1963,7 @@ class _Command extends StatelessWidget {
         visualDensity: VisualDensity.compact,
         tooltip: 'Copy command',
         onPressed: () => onCopy(command),
-        icon: const Icon(Icons.copy, size: 18),
+        icon: Icon(YaruFreedesktopIcons.edit_copy.icon, size: 18),
       ),
     ],
   );

@@ -6,6 +6,7 @@
 //! [`main.rs`](../src/main.rs) for the command surface.
 
 pub mod code;
+pub mod files;
 
 #[cfg(target_os = "linux")]
 pub mod app;

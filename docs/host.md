@@ -1,7 +1,8 @@
 # Host operations
 
 `zuko` is one binary: host daemon, CLI client, pairing helper, temporary TCP
-tunnel, service installer, upgrader, and Linux `zuko app` launcher.
+tunnel and file-share helper, service installer, upgrader, and Linux `zuko app`
+launcher.
 
 For binary installation, first service setup, and pairing, start with
 [Install and connect](getting-started.md).
@@ -27,6 +28,7 @@ zuko rm <name>         # remove saved host and/or authorised client
 zuko reset             # rotate host key; clear authorised clients
 
 zuko tunnel <port>     # inside hosted shell: client → host loopback TCP
+zuko files             # current directory via foreground dufs + tunnel
 zuko app <command>     # Linux GUI app over Kitty graphics
 ```
 
@@ -90,8 +92,9 @@ zuko <code>
 
 `claim` saves the ticket under the host label unless `--as <name>` is set.
 On an interactive terminal, `share` also renders a QR containing only the
-one-time code for the iOS scanner. The long-lived ticket is never in the QR,
-and stdout remains the plain code so scripts can continue to pipe it.
+one-time code for graphical clients with camera support. The long-lived ticket
+is never in the QR, and stdout remains the plain code so scripts can continue
+to pipe it.
 After pairing:
 
 ```sh
@@ -149,7 +152,7 @@ Mise-managed install:
 ```sh
 zuko upgrade --check
 zuko upgrade
-zuko upgrade --version 0.9.26
+zuko upgrade --version 0.10.0
 zuko upgrade --no-restart
 ```
 

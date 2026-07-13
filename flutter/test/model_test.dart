@@ -27,12 +27,14 @@ void main() {
     expect(state.terminalFontSize, 10);
     expect(state.terminalFontSizeCustomized, isFalse);
     expect(state.showAdditionalKeys, isTrue);
+    expect(state.clientName, isNull);
     expect(state.hosts.single.authorizedClientLabel, isNull);
   });
 
   test('current state round-trips preferences and exact client label', () {
     final original = ClientState(
       clientKey: key,
+      clientName: 'office-ipad',
       theme: AppThemePreference.light,
       terminalFontSize: 17,
       terminalFontSizeCustomized: true,
@@ -53,6 +55,7 @@ void main() {
     expect(decoded.terminalFontSize, 17);
     expect(decoded.terminalFontSizeCustomized, isTrue);
     expect(decoded.showAdditionalKeys, isFalse);
+    expect(decoded.clientName, 'office-ipad');
     expect(decoded.hosts.single.authorizedClientLabel, 'zuko-android-a1b2c3');
   });
 
@@ -83,6 +86,7 @@ void main() {
           'version': ClientState.currentVersion,
           'clientKey': base64Encode(key),
           'hosts': 'not-a-list',
+          'clientName': 7,
           'showAdditionalKeys': true,
         }),
       ),

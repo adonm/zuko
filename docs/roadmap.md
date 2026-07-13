@@ -32,8 +32,12 @@ All Android, iOS, macOS, web, Linux, and Windows client work now lands in
 `flutter/`.
 Flutter shares navigation, saved-host behavior, pairing, framing, reconnect,
 terminal integration, and tests. Platform code is limited to transport,
-credential storage, deep links, lifecycle, and packaging where the operating
+credential storage, camera access, lifecycle, and packaging where the operating
 system genuinely differs.
+
+The [Flutter human-centered design guide](flutter-design.md) records the shared
+interaction goals, current responsive behavior, accessibility expectations, and
+evidence required for client-facing changes.
 
 Chosen foundations:
 
@@ -140,7 +144,7 @@ The Flutter client must provide:
 - correct styles, cursor, alternate screen, selection, clipboard, scrollback,
   resize, keyboard/IME, mouse reporting, and supported Kitty graphics;
 - usable phone, tablet, desktop, and narrow-browser layouts;
-- QR pairing plus handled `zuko://pair` links;
+- in-app QR pairing with typed-code fallback;
 - explicit connecting, attached, retrying, rejected, ended, and disconnected
   states;
 - foreground/background and network-change recovery on mobile targets;
@@ -151,8 +155,8 @@ The Flutter client must provide:
 `flterm` supplies the shared terminal surface. Typed recovery states, foreground
 redial, mobile shortcut controls, host management, themes, font sizing, and
 baseline terminal viewport semantics now exist. Complete screen-reader
-navigation and testing, QR input, URI delivery, lifecycle tests, and
-representative physical-device coverage remain open.
+navigation and testing, QR scanner lifecycle tests, and representative
+physical-device coverage remain open.
 
 ### 3. Ship each target through its normal channel
 

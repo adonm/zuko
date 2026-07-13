@@ -30,6 +30,8 @@
 	<false/>
 	<key>NSLocalNetworkUsageDescription</key>
 	<string>Zuko connects directly to your own hosts when they are nearby.</string>
+	<key>NSCameraUsageDescription</key>
+	<string>Zuko uses the camera to scan one-time host pairing codes.</string>
 	<key>UIApplicationSceneManifest</key>
 	<dict>
 		<key>UIApplicationSupportsMultipleScenes</key>

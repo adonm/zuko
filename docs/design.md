@@ -3,6 +3,10 @@
 The product direction lives in the [roadmap](roadmap.md). These principles turn
 it into engineering constraints.
 
+The shared graphical client's interaction, accessibility, responsive-layout,
+and contributor-testing goals live in the
+[Flutter human-centered design guide](flutter-design.md).
+
 ## Product boundary
 
 zuko is a terminal-first, per-user remote shell for machines the user owns. The

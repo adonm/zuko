@@ -56,7 +56,7 @@ workflows:
 
       - &flutter_check
         name: Analyze and test shared client
-        script: $HOME/.local/bin/mise exec -- just flutter-check
+        script: $HOME/.local/bin/mise exec -- just flutter-ci-check
 
       - &prepare_ghostty
         name: Prepare App Store-compatible Ghostty library
@@ -443,7 +443,7 @@ workflows:
 
       - name: Analyze, test, and build web
         script: |
-          $HOME/.local/bin/mise exec -- just flutter-check
+          $HOME/.local/bin/mise exec -- just flutter-ci-check
           $HOME/.local/bin/mise exec -- just build-web
 
       - name: Build Android and Linux clients

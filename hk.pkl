@@ -1,0 +1,43 @@
+amends "package://github.com/jdx/hk/releases/download/v1.50.0/hk@1.50.0#/Config.pkl"
+
+hooks {
+    ["pre-commit"] {
+        steps {
+            ["format"] {
+                check = "mise exec -- just hook-format-check"
+            }
+        }
+    }
+    ["pre-push"] {
+        steps {
+            ["preflight"] {
+                glob = List(
+                    ".cargo/**",
+                    ".gitmodules",
+                    "Cargo.lock",
+                    "Cargo.toml",
+                    "Justfile",
+                    "build.rs",
+                    "codemagic.yaml",
+                    "docs/install.sh",
+                    "examples/**",
+                    "flutter/**",
+                    "hk.pkl",
+                    "mise.toml",
+                    "scripts/**",
+                    "src/**",
+                    "tests/**",
+                )
+                check = "mise exec -- just preflight"
+            }
+            ["docs"] {
+                glob = List("README.md", "book.toml", "docs/**")
+                check = "mise exec -- just build-docs"
+            }
+            ["ci"] {
+                glob = List(".github/actions/**", ".github/workflows/**")
+                check = "mise exec -- just lint-ci"
+            }
+        }
+    }
+}

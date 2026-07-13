@@ -7,6 +7,7 @@ and invokes the same Justfile recipes through `mise exec -- just <recipe>`.
 ```sh
 git submodule update --init --recursive
 mise bootstrap          # OS packages + shell activation + pinned tools
+hk install --mise       # local format and full pre-push gates
 just                     # grouped recipe list
 just check           # Rust + Flutter + release metadata
 just test            # Rust clippy + unit tests
@@ -49,6 +50,9 @@ Before PR:
 - `just check` is green.
 - If Flutter changed, keep shared logic in `flutter/lib/src/` and run
   `just flutter-check`; do not create a target-specific second implementation.
+- For Flutter UI or input changes, follow the
+  [human-centered design guide](flutter-design.md) and test the relevant narrow,
+  wide, keyboard, touch, and accessibility paths.
 - Keep commits terse and imperative.
 - Update `docs/protocol.md` for wire changes.
 - Update `docs/host.md` for CLI/state changes.
@@ -71,7 +75,26 @@ For a new platform, protocol, or background service, describe:
 - how failure and recovery work;
 - the tests and ongoing maintenance it requires.
 
-Client authors: start with [`protocol.md`](protocol.md), then
-[`clients.md`](clients.md).
+Client authors: start with [`clients.md`](clients.md), then read the
+[Flutter human-centered design guide](flutter-design.md) for graphical-client
+work and [`protocol.md`](protocol.md) for transport work.
 
 Security reports: use GitHub Security Advisories.
+
+## Local hooks and CI scope
+
+The committed `hk.pkl` keeps deterministic checks close to development:
+
+- pre-commit checks Rust and Dart formatting plus staged whitespace;
+- pre-push runs `just preflight` when code, Flutter, build, or tool
+  configuration changed, including Rust tests, Flutter application tests, and
+  the complete vendored `flterm` analysis and test suite. Documentation-only
+  and GitHub Actions-only changes use their smaller dedicated checks.
+
+Install the repository hooks with `hk install --mise`; `HK=0` is the explicit
+one-command escape hatch when a broken local environment must be bypassed.
+Hosted Flutter CI intentionally runs `just flutter-ci-check`, which retains
+configuration checks, formatting, application analysis, and application tests
+but does not repeat all vendored `flterm` tests. Cross-platform client builds
+still compile the pinned package. Release readiness continues to require the
+full local preflight rather than treating the lean hosted check as sufficient.

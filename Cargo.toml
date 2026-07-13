@@ -4,7 +4,7 @@ default-members = ["."]
 resolver = "3"
 
 [workspace.package]
-version = "0.9.26"
+version = "0.10.0"
 edition = "2024"
 license = "Apache-2.0"
 
@@ -59,8 +59,8 @@ inquire = "0.7"
 petname = { version = "3", default-features = false, features = ["default-words"] }
 # RNG for generate_code (petname's generate_into takes a &mut dyn Rng).
 rand = "0.10"
-# Render the one-time `zuko://pair/<code>` value as a terminal QR code for the
-# mobile scanner. No image encoders are needed; only the Unicode renderer is used.
+# Render the one-time pairing code as a terminal QR code for graphical clients.
+# No image encoders are needed; only the Unicode renderer is used.
 qrcode = { version = "0.14", default-features = false }
 # SHA-256 for deriving a stable, per-(client,host) reattach token from the
 # client's persistent key (so a client always lands on the same host PTY

@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import pathlib
 import plistlib
 import tomllib
@@ -87,6 +88,13 @@ def main() -> None:
     forbid_text("flutter/windows/runner/main.cpp", "set_impeller_switch")
     require_text("flutter/web/flutter_bootstrap.js", "renderer: 'skwasm'")
     forbid_text("flutter/web/flutter_bootstrap.js", "enableWimp")
+    require_text("flutter/lib/main.dart", "vendor/zxing/index.min.js")
+    forbid_text("flutter/web/index.html", "unpkg.com")
+    zxing = ROOT / "flutter/web/vendor/zxing/index.min.js"
+    if hashlib.sha256(zxing.read_bytes()).hexdigest() != (
+        "d7cc8f69dd70bdcf3ac00c9ae572bf2acb9f4132ba379c72df842e4db918652d"
+    ):
+        raise SystemExit("Flutter config: invalid vendored ZXing 0.21.3 runtime")
 
     for path, value in [
         ("codemagic.yaml", "flutter-linux-ci:"),

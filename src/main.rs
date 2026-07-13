@@ -53,7 +53,7 @@ use std::io::IsTerminal;
 use std::path::{Path, PathBuf};
 
 use zuko::{
-    HostArgs, ShareArgs, TunnelArgs, client, code, handoff, host, secret, service, store,
+    HostArgs, ShareArgs, TunnelArgs, client, code, files, handoff, host, secret, service, store,
     ticket_file, tunnel,
 };
 
@@ -88,6 +88,10 @@ enum Command {
     /// Forward an ephemeral client-loopback TCP port to a host-loopback port.
     /// Run inside a shell opened through Zuko; stays foreground until Ctrl-C.
     Tunnel(TunnelArgs),
+
+    /// Share the current directory through dufs and an authenticated Zuko
+    /// tunnel. Installs pinned dufs with mise when it is not already on PATH.
+    Files,
 
     /// Install the host daemon as a user service (systemd on Linux, launchd
     /// on macOS).
@@ -213,6 +217,7 @@ async fn main() -> Result<()> {
         Some(Command::Host(args)) => host::run(args).await,
         Some(Command::Connect { name }) => connect_by_name(&name).await,
         Some(Command::Tunnel(args)) => tunnel::run(args).await,
+        Some(Command::Files) => files::run().await,
         Some(Command::Install(args)) => {
             service::install(&args.resolve())?;
             Ok(())

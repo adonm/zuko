@@ -51,11 +51,12 @@ final class SavedHost {
 enum AppThemePreference { system, dark, light }
 
 final class ClientState {
-  static const currentVersion = 4;
+  static const currentVersion = 5;
 
   ClientState({
     required Uint8List clientKey,
     required List<SavedHost> hosts,
+    this.clientName,
     this.theme = AppThemePreference.system,
     double terminalFontSize = 10,
     this.terminalFontSizeCustomized = false,
@@ -66,6 +67,7 @@ final class ClientState {
 
   final Uint8List clientKey;
   final List<SavedHost> hosts;
+  final String? clientName;
   final AppThemePreference theme;
   final double terminalFontSize;
   final bool terminalFontSizeCustomized;
@@ -118,9 +120,17 @@ final class ClientState {
       if (showAdditionalKeys is! bool) {
         throw const FormatException('invalid additional keys preference');
       }
+      final clientName = version >= 5 ? decoded['clientName'] : null;
+      if (clientName != null &&
+          (clientName is! String ||
+              clientName.isEmpty ||
+              clientName.length > 64)) {
+        throw const FormatException('invalid client name');
+      }
       return ClientState(
         clientKey: key,
         hosts: hosts,
+        clientName: clientName as String?,
         theme: theme ?? AppThemePreference.system,
         terminalFontSize: (fontSize as num?)?.toDouble() ?? 10,
         terminalFontSizeCustomized: fontSizeCustomized,
@@ -135,6 +145,7 @@ final class ClientState {
 
   ClientState copyWith({
     List<SavedHost>? hosts,
+    String? clientName,
     AppThemePreference? theme,
     double? terminalFontSize,
     bool? terminalFontSizeCustomized,
@@ -142,6 +153,7 @@ final class ClientState {
   }) => ClientState(
     clientKey: clientKey,
     hosts: hosts ?? this.hosts,
+    clientName: clientName ?? this.clientName,
     theme: theme ?? this.theme,
     terminalFontSize: terminalFontSize ?? this.terminalFontSize,
     terminalFontSizeCustomized:
@@ -153,6 +165,7 @@ final class ClientState {
     'version': currentVersion,
     'clientKey': base64Encode(clientKey),
     'hosts': hosts.map((host) => host.toJson()).toList(),
+    if (clientName != null) 'clientName': clientName,
     'theme': theme.name,
     'terminalFontSize': terminalFontSize,
     'terminalFontSizeCustomized': terminalFontSizeCustomized,

@@ -23,7 +23,7 @@ void main() {
 
     expect(state.clientKey, key);
     expect(storage.values['zuko-client-state-v1'], isNull);
-    expect(storage.values['zuko-client-state-v4'], isNotNull);
+    expect(storage.values['zuko-client-state-v5'], isNotNull);
     expect(storage.values['unrelated'], 'preserve-me');
     expect(store.recoveredInvalidState, isFalse);
   });
@@ -50,13 +50,36 @@ void main() {
     expect(state.terminalFontSizeCustomized, isTrue);
     expect(state.showAdditionalKeys, isFalse);
     expect(storage.values['zuko-client-state-v3'], isNull);
-    expect(storage.values['zuko-client-state-v4'], isNotNull);
+    expect(storage.values['zuko-client-state-v5'], isNotNull);
     expect(storage.values['unrelated'], 'preserve-me');
+  });
+
+  test('migrates the previous current state key', () async {
+    final storage = _MemoryStorage({
+      'zuko-client-state-v4': jsonEncode({
+        'version': 4,
+        'clientKey': base64Encode(key),
+        'hosts': <Object?>[],
+        'theme': AppThemePreference.system.name,
+        'terminalFontSize': 10,
+        'terminalFontSizeCustomized': false,
+        'showAdditionalKeys': true,
+      }),
+    });
+    final store = ClientStateStore.withStorage(storage);
+
+    final state = await store.load();
+
+    expect(state.clientKey, key);
+    expect(state.clientName, isNull);
+    expect(storage.values['zuko-client-state-v4'], isNull);
+    expect(storage.values['zuko-client-state-v5'], isNotNull);
   });
 
   test('invalid state resets only Zuko state', () async {
     final storage = _MemoryStorage({
-      'zuko-client-state-v3': '{broken',
+      'zuko-client-state-v4': '{broken',
+      'zuko-client-state-v3': 'stale',
       'zuko-client-state-v1': 'stale',
       'unrelated': 'preserve-me',
     });
@@ -67,8 +90,10 @@ void main() {
     expect(state.clientKey, hasLength(32));
     expect(state.hosts, isEmpty);
     expect(storage.values['zuko-client-state-v1'], isNull);
+    expect(storage.values['zuko-client-state-v3'], isNull);
+    expect(storage.values['zuko-client-state-v4'], isNull);
     expect(
-      ClientState.decode(storage.values['zuko-client-state-v4']!),
+      ClientState.decode(storage.values['zuko-client-state-v5']!),
       isA<ClientState>(),
     );
     expect(storage.values['unrelated'], 'preserve-me');

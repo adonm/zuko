@@ -49,6 +49,13 @@ check: fmt-check test flutter-check check-release-metadata test-installer
 [group('quality')]
 preflight: check
 
+[group('quality')]
+hook-format-check:
+    git diff --cached --check
+    cargo fmt --check
+    python3 scripts/check-dart-format.py flutter/lib flutter/test
+    python3 scripts/check-dart-format.py --cwd flutter/packages/flterm lib test
+
 [group('flutter')]
 flutter-get:
     cd flutter && flutter pub get --enforce-lockfile
@@ -65,11 +72,20 @@ flutter-vendor-check: flutter-vendor-get
     cd flutter/packages/flterm && flutter test --no-pub
 
 [group('flutter')]
-flutter-check: flutter-get flutter-vendor-check
+flutter-app-check: flutter-get
     python3 scripts/check-flutter-config.py
     python3 scripts/check-dart-format.py flutter/lib flutter/test
     cd flutter && flutter analyze --no-pub
     cd flutter && flutter test --no-pub
+
+[group('flutter')]
+flutter-check: flutter-vendor-check flutter-app-check
+
+# Hosted CI keeps application analysis/tests and relies on target builds to
+# compile the pinned flterm integration. The exhaustive vendored package suite
+# remains in flutter-check and the hk pre-push gate.
+[group('flutter')]
+flutter-ci-check: flutter-app-check
 
 [group('flutter')]
 patch-flutter-plugins: flutter-get

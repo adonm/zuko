@@ -217,9 +217,11 @@ pub async fn read_control_registration(
     Ok(port)
 }
 
-async fn register_with_host(port: u16) -> Result<TcpStream> {
+pub(crate) fn require_control_environment(
+    command: &str,
+) -> Result<(SocketAddr, [u8; CONTROL_SECRET_LEN])> {
     let addr = std::env::var(CONTROL_ADDR_ENV)
-        .with_context(|| "`zuko tunnel` must run inside a shell opened through Zuko")?;
+        .with_context(|| format!("`{command}` must run inside a shell opened through Zuko"))?;
     let addr: SocketAddr = addr
         .parse()
         .context("invalid Zuko tunnel control address")?;
@@ -229,6 +231,11 @@ async fn register_with_host(port: u16) -> Result<TcpStream> {
     let secret = decode_control_secret(
         &std::env::var(CONTROL_SECRET_ENV).context("missing Zuko tunnel control capability")?,
     )?;
+    Ok((addr, secret))
+}
+
+async fn register_with_host(port: u16) -> Result<TcpStream> {
+    let (addr, secret) = require_control_environment("zuko tunnel")?;
     let mut stream = TcpStream::connect(addr)
         .await
         .context("connect to parent Zuko host")?;

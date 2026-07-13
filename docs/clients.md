@@ -57,9 +57,12 @@ toolchains, fresh-clone commands, signing behavior, and exact output paths, see
 The current Flutter client provides the same application behavior on all six
 targets unless a platform note below says otherwise:
 
-- pair by entering a two-word code or `zuko://pair/...` value;
+- pair by scanning the host's one-time QR code on camera-capable targets or by
+  entering its two-word code;
 - preserve a stable client identity and saved hosts in protected platform
   storage, with invalid-state recovery;
+- suggest and persist an editable device name for recognizable host-side
+  authorization labels while retaining an identity-derived collision suffix;
 - connect only after validating the saved endpoint ticket, host identity, and
   `ATTACHED` token;
 - expose connecting, attached, retrying, ended, rejected, and failed states,
@@ -78,9 +81,9 @@ window chrome.
 
 This is a remote shell client, not a durable session manager: it has no output
 replay, and forgetting a host locally does not revoke that client on the host.
-QR capture, operating-system deep-link registration, complete accessibility
-coverage, and representative physical-device/browser testing remain promotion
-gates rather than advertised capabilities.
+Complete accessibility coverage and representative camera, physical-device,
+and browser testing remain promotion gates rather than advertised
+capabilities.
 
 The Rust CLI and shared Flutter client are the behavior references. Former
 Compose, TypeScript, Relm4, and Swift UI implementations were removed.
@@ -95,7 +98,7 @@ The Flutter client shares:
 
 Native targets use `iroh_flutter`. Browser Iroh remains relay-only and uses the
 Rust/WASM bridge in `flutter/rust/web_transport/`. Platform-specific code is
-reserved for credential storage, URI delivery, lifecycle, and packaging.
+reserved for credential storage, camera permissions, lifecycle, and packaging.
 
 Apple builds use the same Flutter implementation as every other graphical
 target. A release tag automatically builds and uploads the protected iOS IPA to
@@ -104,7 +107,9 @@ jobs; neither Apple package is attached to the GitHub Release.
 
 ## Implementing or reviewing a client
 
-Read [`protocol.md`](protocol.md). A client must:
+For Flutter interaction and accessibility decisions, first read the
+[human-centered design guide](flutter-design.md). For transport behavior, read
+[`protocol.md`](protocol.md). A client must:
 
 1. claim through `zuko/handoff/1`, derive the canonical Argon2 key, read the
    endpoint ticket, persist a stable client identity, and send `AUTHORIZE`;

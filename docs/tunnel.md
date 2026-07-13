@@ -21,6 +21,29 @@ port is not HTTP-specific: for a TLS service, open
 `127.0.0.1:49152`. CLI users can set `ZUKO_NO_BROWSER=1` before connecting to
 suppress automatic browser launch.
 
+## Share files from the current directory
+
+Inside a shell opened through Zuko, run:
+
+```sh
+cd /path/to/share
+zuko files
+```
+
+The command uses `dufs` from `PATH`. If it is missing, Zuko checks for mise,
+installs the pinned `github:sigoden/dufs@0.46.0` tool, and runs it through
+`mise exec` without modifying the user's global mise configuration. It selects
+an unused host port, passes the current directory explicitly, ignores inherited
+`DUFS_*` overrides, starts dufs on `127.0.0.1`, waits for it to listen, and then
+opens the normal authenticated Zuko tunnel. Dufs stdout and stderr remain
+attached, so startup and request logs appear beside tunnel statistics.
+
+`zuko files` deliberately runs `dufs -A`. Anyone able to reach the temporary
+client-loopback URL can upload, delete, search, create archives, calculate
+hashes, and follow symlinks outside the shared directory under dufs's
+allow-all policy. Use it only for a directory and client machine you trust,
+and press Ctrl-C immediately when finished.
+
 ## Lifecycle and statistics
 
 The host-side command stays in the foreground. It prints connection-open and
@@ -30,8 +53,9 @@ traffic.
 
 Press Ctrl-C to stop. Command exit closes its control lease; the host removes
 the tunnel, closes active Iroh streams, and tells the native client to close
-its loopback listener. The target service is independent and is not started or
-stopped by Zuko.
+its loopback listener. For `zuko tunnel`, the target service is independent and
+is not started or stopped by Zuko. `zuko files` is the explicit exception: it
+supervises dufs and stops both dufs and the tunnel when either ends.
 
 ## Security boundary
 

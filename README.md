@@ -96,6 +96,7 @@ zuko claim <code> --as x # explicit claim form
 zuko doctor              # check service, ticket, state, and network
 # inside a connected host shell:
 zuko tunnel 8000         # client loopback → host 127.0.0.1:8000
+zuko files               # foreground dufs server + authenticated tunnel
 ```
 
 Session notes:
@@ -123,6 +124,13 @@ The command remains in the foreground and reports connection/byte totals.
 Ctrl-C closes the Iroh tunnel and client port. See
 [`docs/tunnel.md`](docs/tunnel.md).
 
+For a temporary writable file browser, run `zuko files` from the directory to
+share. It uses `dufs` from `PATH`, or installs pinned dufs through mise when
+missing, binds it to host loopback, and keeps both dufs access logs and tunnel
+statistics in the foreground. The required `dufs -A` mode grants anonymous
+upload, deletion, archive, search, and symlink access through the temporary
+client-loopback URL. Press Ctrl-C as soon as sharing is finished.
+
 ## Labs: `zuko app` (Linux)
 
 Run a GUI app inside an existing zuko shell. Output is Kitty graphics over the
@@ -141,6 +149,7 @@ See [`docs/app.md`](docs/app.md).
 
 ```sh
 mise install
+hk install --mise # local format and full pre-push checks
 just check
 just test-e2e      # live Iroh network + PTY
 cargo build --release

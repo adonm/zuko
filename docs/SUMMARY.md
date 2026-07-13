@@ -15,12 +15,13 @@
 # For client authors
 
 - [Building clients](building-clients.md)
+- [Flutter human-centered design](flutter-design.md)
 - [Wire protocol](protocol.md)
 
 # For maintainers
 
 - [Direction and roadmap](roadmap.md)
-- [Design notes](design.md)
+- [Design principles](design.md)
 - [Releasing](releasing.md)
   - [Distribution setup checklist](distribution-setup.md)
   - [Linux delivery through FlatPark](flatpark.md)
