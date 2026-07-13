@@ -22,6 +22,7 @@ API = "https://api.codemagic.io"
 TERMINAL_FAILURES = {"canceled", "cancelled", "failed", "skipped"}
 MAX_ARTIFACT_SIZE = 1_000_000_000
 POLL_SECONDS = 20
+NOT_FOUND_RETRY_SECONDS = 60
 WORKFLOWS = {
     "flutter-linux-android-release": "zuko-flutter-linux-android-{tag}.zip",
     "flutter-windows-release": "zuko-flutter-windows-{tag}-artifacts.zip",
@@ -33,20 +34,31 @@ def request_json(
     method: str,
     path: str,
     payload: dict[str, object] | None = None,
+    *,
+    retry_not_found: bool = False,
 ) -> dict[str, object]:
     data = json.dumps(payload).encode() if payload is not None else None
-    request = urllib.request.Request(
-        f"{API}{path}",
-        data=data,
-        method=method,
-        headers={"Content-Type": "application/json", "x-auth-token": token},
-    )
-    try:
-        with urllib.request.urlopen(request, timeout=60) as response:
-            value = json.load(response)
-    except urllib.error.HTTPError as error:
-        detail = error.read().decode(errors="replace")
-        raise SystemExit(f"Codemagic API {method} {path} failed: {error.code} {detail}")
+    deadline = time.monotonic() + NOT_FOUND_RETRY_SECONDS
+    while True:
+        request = urllib.request.Request(
+            f"{API}{path}",
+            data=data,
+            method=method,
+            headers={"Content-Type": "application/json", "x-auth-token": token},
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=60) as response:
+                value = json.load(response)
+            break
+        except urllib.error.HTTPError as error:
+            if error.code == 404 and retry_not_found and time.monotonic() < deadline:
+                error.close()
+                time.sleep(2)
+                continue
+            detail = error.read().decode(errors="replace")
+            raise SystemExit(
+                f"Codemagic API {method} {path} failed: {error.code} {detail}"
+            ) from error
     if not isinstance(value, dict):
         raise SystemExit(f"Codemagic API {method} {path} returned invalid JSON")
     return value
@@ -75,7 +87,9 @@ def wait_for_build(
     deadline: float,
 ) -> dict[str, object]:
     while time.monotonic() < deadline:
-        response = request_json(token, "GET", f"/builds/{build_id}")
+        response = request_json(
+            token, "GET", f"/builds/{build_id}", retry_not_found=True
+        )
         build = response.get("build", response)
         if not isinstance(build, dict):
             raise SystemExit(f"Codemagic build {build_id} returned invalid metadata")

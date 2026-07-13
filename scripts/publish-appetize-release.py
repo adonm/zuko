@@ -15,24 +15,39 @@ APP_ID = "6a52dc14add8531e99f88b8a"
 API = "https://api.codemagic.io"
 WORKFLOW = "mobile-appetize-release"
 FAILURES = {"canceled", "cancelled", "failed", "skipped"}
+NOT_FOUND_RETRY_SECONDS = 60
 
 
-def request(token: str, method: str, path: str, payload: object | None = None) -> dict:
+def request(
+    token: str,
+    method: str,
+    path: str,
+    payload: object | None = None,
+    *,
+    retry_not_found: bool = False,
+) -> dict:
     data = json.dumps(payload).encode() if payload is not None else None
-    call = urllib.request.Request(
-        f"{API}{path}",
-        data=data,
-        method=method,
-        headers={"Content-Type": "application/json", "x-auth-token": token},
-    )
-    try:
-        with urllib.request.urlopen(call, timeout=60) as response:
-            result = json.load(response)
-    except urllib.error.HTTPError as error:
-        detail = error.read().decode(errors="replace")
-        raise SystemExit(
-            f"Codemagic API {method} {path} failed: {error.code} {detail}"
-        ) from error
+    deadline = time.monotonic() + NOT_FOUND_RETRY_SECONDS
+    while True:
+        call = urllib.request.Request(
+            f"{API}{path}",
+            data=data,
+            method=method,
+            headers={"Content-Type": "application/json", "x-auth-token": token},
+        )
+        try:
+            with urllib.request.urlopen(call, timeout=60) as response:
+                result = json.load(response)
+            break
+        except urllib.error.HTTPError as error:
+            if error.code == 404 and retry_not_found and time.monotonic() < deadline:
+                error.close()
+                time.sleep(2)
+                continue
+            detail = error.read().decode(errors="replace")
+            raise SystemExit(
+                f"Codemagic API {method} {path} failed: {error.code} {detail}"
+            ) from error
     if not isinstance(result, dict):
         raise SystemExit(f"Codemagic API {method} {path} returned invalid JSON")
     return result
@@ -73,7 +88,9 @@ def main() -> None:
 
     deadline = time.monotonic() + 120 * 60
     while time.monotonic() < deadline:
-        result = request(token, "GET", f"/builds/{build_id}")
+        result = request(
+            token, "GET", f"/builds/{build_id}", retry_not_found=True
+        )
         build = result.get("build", result)
         if not isinstance(build, dict):
             raise SystemExit(f"Codemagic build {build_id} returned invalid metadata")
