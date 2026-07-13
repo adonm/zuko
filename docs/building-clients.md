@@ -69,7 +69,9 @@ just build-web
 Output: `target/book/web/`. The build uses base path `/web/` for deployment at
 [zuko.adonm.dev/web/](https://zuko.adonm.dev/web/); it is not a root-path static
 bundle without changing `scripts/build-web.sh`. Browser transport is relay-only,
-while terminal payloads remain end-to-end encrypted.
+while terminal payloads remain end-to-end encrypted. Production web builds
+currently retain JavaScript/Wasm source maps and Wasm symbol names so browser
+failures can be symbolized during the active null-exception investigation.
 
 ## Linux desktop
 
@@ -110,7 +112,7 @@ $env:Path = "$rustBin;$env:Path"
 Push-Location flutter
 mise exec -- flutter pub get
 Pop-Location
-python scripts/patch-iroh-flutter.py flutter
+python scripts/patch-flutter-plugins.py flutter
 Push-Location flutter
 mise exec -- flutter build windows --release
 Pop-Location

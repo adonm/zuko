@@ -34,6 +34,8 @@ mise exec -C "$CLIENT" -- flutter build web \
   --release \
   --no-pub \
   --wasm \
+  --source-maps \
+  --no-strip-wasm \
   --no-web-resources-cdn \
   --base-href /web/ \
   --output "$ROOT/target/book/web"

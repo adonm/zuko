@@ -56,6 +56,8 @@ TERMINAL_FONT_FAMILIES = {
     "Noto Emoji",
     "Noto Sans Symbols 2",
 }
+DIAGNOSTIC_SOURCE_MAPS = ("main.dart.js.map", "main.dart.wasm.map")
+DIAGNOSTIC_WASM_SYMBOLS = (b"ClientStateStore._load", b"transport_web.dart")
 
 
 def fail(message: str) -> None:
@@ -116,6 +118,21 @@ def avoid_deprecated_webgl_extension() -> None:
         path.write_text(text)
 
 
+def validate_source_map(path: pathlib.Path) -> None:
+    try:
+        source_map = json.loads(path.read_text())
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as error:
+        fail(f"invalid diagnostic source map {path}: {error}")
+    sources = source_map.get("sources")
+    if source_map.get("version") != 3 or not isinstance(sources, list):
+        fail(f"invalid diagnostic source map structure: {path}")
+    if not any(
+        isinstance(source, str) and source.endswith("lib/src/transport_web.dart")
+        for source in sources
+    ):
+        fail(f"diagnostic source map does not contain Zuko sources: {path}")
+
+
 def validate() -> None:
     if GHOSTTY_WASM_OUTPUT.read_bytes()[:4] != b"\0asm":
         fail(f"{GHOSTTY_WASM_OUTPUT} is not a WebAssembly module")
@@ -123,8 +140,14 @@ def validate() -> None:
         fail(f"{GHOSTTY_WASM_OUTPUT} has an unexpected SHA-256")
 
     dart_wasm = OUTPUT / "main.dart.wasm"
-    if dart_wasm.read_bytes()[:4] != b"\0asm":
+    dart_wasm_bytes = dart_wasm.read_bytes()
+    if dart_wasm_bytes[:4] != b"\0asm":
         fail(f"{dart_wasm} is not a WebAssembly module")
+    for symbol in DIAGNOSTIC_WASM_SYMBOLS:
+        if symbol not in dart_wasm_bytes:
+            fail(f"{dart_wasm} does not retain diagnostic symbol {symbol!r}")
+    for name in DIAGNOSTIC_SOURCE_MAPS:
+        validate_source_map(OUTPUT / name)
     bootstrap = (OUTPUT / "flutter_bootstrap.js").read_text()
     if FLUTTER_LOADER_CALL not in bootstrap:
         fail("Flutter bootstrap does not contain a loader call")
