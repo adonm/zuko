@@ -722,7 +722,7 @@ class _TerminalAccessory extends StatelessWidget {
                     ),
                     _AccessoryIcon(
                       tooltip: 'Alt modifier',
-                      icon: Icons.keyboard_alt,
+                      icon: Icons.alt_route,
                       selected: controller.virtualMods.hasAlt,
                       onPressed: () => controller.toggleMod(const Mods.alt()),
                     ),
