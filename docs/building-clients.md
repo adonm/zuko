@@ -17,7 +17,6 @@ read-only and copied into an ephemeral `/workspace`; only artifact and cache
 directories are mounted back into their normal host paths.
 
 ```sh
-git submodule update --init --recursive
 mise install just
 mise exec -- just container-ci  # Codemagic: Dart + web + Android + Linux
 mise exec -- just container-all # preflight + quality + all Linux builds
@@ -26,7 +25,7 @@ mise exec -- just container-all # preflight + quality + all Linux builds
 Focused recipes avoid rebuilding unrelated targets:
 
 ```sh
-just container-preflight       # Rust + full Flutter/flterm tests
+just container-preflight       # Rust + Flutter application tests
 just container-web
 just container-android         # ARM64 debug APK compile gate
 just container-android-release # unsigned release APK and AAB
@@ -55,7 +54,6 @@ Install [mise](https://mise.jdx.dev/getting-started.html), then bootstrap the
 repository-managed tools, Linux OS packages, and shell activation:
 
 ```sh
-git submodule update --init --recursive
 mise bootstrap
 just flutter-check
 ```
@@ -64,9 +62,9 @@ Use this path for native Apple/Windows work or quick host-side iteration. On
 Linux, a missing CMake or Android SDK is a signal to use the container recipes,
 not a reason to skip the corresponding compile gate.
 
-The shared client pins the focused `adonm/flterm` fork as a Git submodule.
-Clone with `--recurse-submodules` or run the update command above before any
-Flutter build.
+The shared client pins flterm and libghostty to the same immutable commit of
+the `adonm/libghostty` monorepo. `flutter pub get` resolves both package paths
+from one Git checkout.
 
 Flutter is installed by mise from the official checksum-pinned
 `3.47.0-0.1.pre` beta archives at revision

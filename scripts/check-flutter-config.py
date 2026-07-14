@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import pathlib
 import plistlib
+import re
 import tomllib
 import xml.etree.ElementTree as ET
 
@@ -24,7 +25,35 @@ def forbid_text(path: str, value: str) -> None:
         raise SystemExit(f"Flutter config: {path} must not contain {value!r}")
 
 
+def validate_terminal_dependency_pin() -> None:
+    pubspec = (ROOT / "flutter/pubspec.yaml").read_text(encoding="utf-8")
+    refs = re.findall(
+        r'^      ref: "?([0-9a-f]{40})"?[ \t]*$', pubspec, re.MULTILINE
+    )
+    if len(refs) != 2 or len(set(refs)) != 1:
+        raise SystemExit(
+            "Flutter config: flterm and libghostty must share one immutable Git ref"
+        )
+    if pubspec.count("url: https://github.com/adonm/libghostty.git") != 2:
+        raise SystemExit(
+            "Flutter config: flterm and libghostty must use the monorepo fork"
+        )
+    for package in ["packages/flterm", "packages/libghostty"]:
+        if f"path: {package}" not in pubspec:
+            raise SystemExit(f"Flutter config: missing monorepo package path {package}")
+
+    lock = (ROOT / "flutter/pubspec.lock").read_text(encoding="utf-8")
+    resolved = re.findall(
+        r'^      resolved-ref: "?([0-9a-f]{40})"?[ \t]*$', lock, re.MULTILINE
+    )
+    if resolved != refs:
+        raise SystemExit(
+            "Flutter config: terminal dependency lock refs must match pubspec refs"
+        )
+
+
 def main() -> None:
+    validate_terminal_dependency_pin()
     with (ROOT / "mise.toml").open("rb") as source:
         mise = tomllib.load(source)
     flutter = mise["tools"]["http:flutter"]
@@ -112,7 +141,7 @@ def main() -> None:
     ]:
         require_text(containerfile, value)
     require_text("Justfile", "flutter-linux-ci: flutter-ci-check flutter-linux-builds")
-    require_text("Justfile", "flutter-app-check: flutter-get flutter-vendor-get")
+    require_text("Justfile", "flutter-app-check: flutter-get")
     require_text("scripts/container-flutter.sh", "mise exec -- just flutter-linux-ci")
     require_text("scripts/container-flutter.sh", "localhost/zuko-flutter-ci:2026.07")
     require_text("scripts/container-flutter.sh", "zuko-flutter-dart-tool")

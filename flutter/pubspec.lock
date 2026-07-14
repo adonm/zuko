@@ -157,9 +157,11 @@ packages:
     dependency: "direct main"
     description:
       path: "packages/flterm"
-      relative: true
-    source: path
-    version: "0.0.4+zuko.1"
+      ref: "243d84171566af7796914473e2d6251494608860"
+      resolved-ref: "243d84171566af7796914473e2d6251494608860"
+      url: "https://github.com/adonm/libghostty.git"
+    source: git
+    version: "0.0.4"
   flutter:
     dependency: "direct main"
     description: flutter
@@ -338,10 +340,11 @@ packages:
   libghostty:
     dependency: "direct main"
     description:
-      name: libghostty
-      sha256: f6ab633e97d201bdaf48ad830eb0c61fd0361b79e1be2e1d00027ca1bb08fa30
-      url: "https://pub.dev"
-    source: hosted
+      path: "packages/libghostty"
+      ref: "243d84171566af7796914473e2d6251494608860"
+      resolved-ref: "243d84171566af7796914473e2d6251494608860"
+      url: "https://github.com/adonm/libghostty.git"
+    source: git
     version: "0.0.11"
   lints:
     dependency: transitive

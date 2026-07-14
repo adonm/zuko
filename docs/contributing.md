@@ -5,7 +5,6 @@ Use `mise` for pinned tools, environment, and bootstrap dependencies. Use
 and invokes the same Justfile recipes through `mise exec -- just <recipe>`.
 
 ```sh
-git submodule update --init --recursive
 mise bootstrap          # OS packages + shell activation + pinned tools
 hk install --mise       # local format and full pre-push gates
 just                     # grouped recipe list
@@ -27,9 +26,10 @@ Flutter or its build configuration changed. See
 [Building clients](building-clients.md) for the exact coverage and the
 Apple/Windows boundary.
 
-Flutter terminal changes live in the pinned `flutter/packages/flterm`
-submodule. Commit and push them in `adonm/flterm` first, then update the Zuko
-gitlink; do not vendor the package source or generated binary test fixtures.
+Flutter terminal and Dart binding changes live in the `adonm/libghostty`
+monorepo. Submit reusable changes upstream, then update both immutable Git
+package refs in `flutter/pubspec.yaml` to the same tested commit; do not vendor
+package source or generated binary test fixtures into Zuko.
 
 `Justfile` contains commands and dependencies between recipes. `mise.toml`
 contains only tool versions, OS packages, and environment. Put multi-step

@@ -107,7 +107,6 @@ run_args=(
   --volume "$root/target:/workspace/target"
   --volume zuko-flutter-cargo:/var/cache/zuko/cargo
   --volume zuko-flutter-dart-tool:/workspace/flutter/.dart_tool
-  --volume zuko-flterm-dart-tool:/workspace/flutter/packages/flterm/.dart_tool
   --volume zuko-flutter-pub:/var/cache/zuko/pub
   --volume zuko-flutter-gradle:/var/cache/zuko/gradle
   --volume "$plugins_metadata:/workspace/flutter/.flutter-plugins-dependencies"
@@ -141,8 +140,6 @@ exec podman run "${run_args[@]}" "$IMAGE" bash -lc \
     --exclude=./flutter/ios/Runner/GeneratedPluginRegistrant.m \
     --exclude=./flutter/linux/flutter/ephemeral \
     --exclude=./flutter/macos/Flutter/ephemeral \
-    --exclude=./flutter/packages/flterm/.dart_tool \
-    --exclude=./flutter/packages/flterm/build \
     --exclude=./flutter/windows/flutter/ephemeral \
     --exclude=./target \
     -cf - . | tar -C /workspace -xf -; \

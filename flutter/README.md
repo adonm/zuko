@@ -3,9 +3,9 @@
 One shared client targets Android, iOS, macOS, web, Linux, and Windows. The Core
 host and CLI remain in `../src/`.
 
-The terminal widget is pinned as the `packages/flterm` Git submodule from
-[`adonm/flterm`](https://github.com/adonm/flterm). Initialize submodules before
-running Flutter commands.
+The terminal widget and Dart bindings are immutable Git package dependencies
+from [`adonm/libghostty`](https://github.com/adonm/libghostty). Both resolve
+from the same commit so flterm and libghostty cannot drift independently.
 
 Fresh-clone prerequisites, platform commands, and output paths are documented
 in [`../docs/building-clients.md`](../docs/building-clients.md). In particular,

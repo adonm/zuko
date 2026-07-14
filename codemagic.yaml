@@ -328,7 +328,6 @@ workflows:
             test "$(git cat-file -t "$APPETIZE_RELEASE_TAG")" = tag
             test "$(git rev-parse "$APPETIZE_RELEASE_TAG^{commit}")" = "$APPETIZE_RELEASE_SHA"
             git checkout --detach "$APPETIZE_RELEASE_SHA"
-            git submodule update --init --recursive
             release_tag="$APPETIZE_RELEASE_TAG"
           else
             test -n "${CM_TAG:-}"

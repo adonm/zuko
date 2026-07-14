@@ -56,34 +56,22 @@ hook-format-check:
     git diff --cached --check
     cargo fmt --check
     python3 scripts/check-dart-format.py flutter/lib flutter/test
-    python3 scripts/check-dart-format.py --cwd flutter/packages/flterm lib test
 
 [group('flutter')]
 flutter-get:
     cd flutter && flutter pub get --enforce-lockfile
 
 [group('flutter')]
-flutter-vendor-get:
-    cd flutter/packages/flterm && flutter pub get
-
-[group('flutter')]
-flutter-vendor-check: flutter-vendor-get
-    sh flutter/packages/flterm/tool/fetch-test-assets.sh
-    python3 scripts/check-dart-format.py --cwd flutter/packages/flterm lib test
-    cd flutter/packages/flterm && flutter analyze --no-pub
-    cd flutter/packages/flterm && flutter test --no-pub
-
-[group('flutter')]
-flutter-app-check: flutter-get flutter-vendor-get
+flutter-app-check: flutter-get
     python3 scripts/check-flutter-config.py
     python3 scripts/check-dart-format.py flutter/lib flutter/test
     cd flutter && flutter analyze --no-pub
     cd flutter && flutter test --no-pub
 
 [group('flutter')]
-flutter-check: flutter-vendor-check flutter-app-check
+flutter-check: flutter-app-check
 
-# Lean hosted application tests; the full flterm suite stays in flutter-check.
+# Lean hosted application tests; the flterm suite runs in the libghostty repo.
 [group('flutter')]
 flutter-ci-check: flutter-app-check
 
@@ -180,12 +168,12 @@ container-ci:
 container-all:
     bash scripts/container-flutter.sh all
 
-# Run Rust and exhaustive Flutter/flterm checks without platform builds.
+# Run Rust and exhaustive Flutter application checks without platform builds.
 [group('containers')]
 container-preflight:
     bash scripts/container-flutter.sh preflight
 
-# Run the exhaustive Flutter application and flterm checks.
+# Run the exhaustive Flutter application checks.
 [group('containers')]
 container-flutter-check:
     bash scripts/container-flutter.sh check

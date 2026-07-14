@@ -240,7 +240,8 @@ target matrix, not by a single convenient widget.
 - `flutter/lib/src/model.dart` and `storage.dart`: migration-safe preferences,
   identity, and saved-host state.
 - `flutter/lib/src/client_name.dart`: safe friendly client labels.
-- `flutter/packages/flterm/`: terminal rendering and cross-input behavior.
+- `adonm/libghostty` `packages/flterm/`: terminal rendering and cross-input
+  behavior, consumed at the commit pinned in `flutter/pubspec.yaml`.
 
 ### Expected evidence
 

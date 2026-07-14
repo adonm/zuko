@@ -1,3 +1,0 @@
-[submodule "flutter/packages/flterm"]
-	path = flutter/packages/flterm
-	url = https://github.com/adonm/flterm.git
