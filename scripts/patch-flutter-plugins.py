@@ -68,6 +68,34 @@ def patch_iroh_flutter(flutter_root: pathlib.Path) -> None:
         )
 
 
+def patch_jni(flutter_root: pathlib.Path) -> None:
+    root = package_root(flutter_root, "jni")
+    require_version(root, "jni", "1.0.0")
+    patch_file(
+        root / "android/build.gradle",
+        [("ndkVersion flutter.ndkVersion", 'ndkVersion "29.0.14206865"')],
+    )
+    patch_file(
+        root / "src/CMakeLists.txt",
+        [
+            (
+                """    else()
+        # Flutter Plugin Build: Try to find JNI, but don't fail if missing
+        find_package(JNI COMPONENTS JVM)
+        if (JNI_FOUND)
+            set(JNI_AVAILABLE TRUE)
+        endif()
+    endif()
+""",
+                """    else()
+        # Zuko does not use desktop JNI; only build it when explicitly required.
+    endif()
+""",
+            ),
+        ],
+    )
+
+
 def patch_secure_storage_linux(flutter_root: pathlib.Path) -> None:
     # Backport upstream PR #1163 at f28ab833 until it reaches a pub release.
     root = package_root(flutter_root, "flutter_secure_storage_linux")
@@ -294,6 +322,7 @@ class SecretStorage {
 def main() -> None:
     flutter_root = pathlib.Path(sys.argv[1] if len(sys.argv) > 1 else "flutter").resolve()
     patch_iroh_flutter(flutter_root)
+    patch_jni(flutter_root)
     patch_secure_storage_linux(flutter_root)
 
 

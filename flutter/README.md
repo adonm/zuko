@@ -13,6 +13,11 @@ native Windows builds use the documented PowerShell sequence because the
 repository Justfile requires Bash. Apple builds require macOS/Xcode and use
 `just build-flutter-ios` or `just build-flutter-macos`.
 
+On x86_64 Linux, prefer `just container-ci` for the shared Dart, web, Android,
+and Linux compile gate, or the focused `container-web`, `container-android`,
+and `container-linux-build` recipes. The pinned image supplies CMake, GTK, JDK 17,
+the Android SDK/NDK, and Wasm tooling instead of relying on host setup.
+
 Architecture:
 
 - `lib/src/`: shared state, pairing, framing, reconnect, UI, and terminal glue
@@ -25,9 +30,7 @@ bundle path and Linux keyring handling in `flutter_secure_storage_linux` 3.0.1.
 The script fails closed when either package version changes.
 
 The pinned Flutter beta uses explicit Impeller enablement on Android, Linux,
-macOS, and web. Its Windows embedder predates the public
-`DartProject::set_impeller_switch` API, so Windows intentionally uses the SDK
-default until the Flutter pin and configuration check are advanced together.
+macOS, Windows, and web.
 
 CI analyzes and tests the shared Dart code, builds web plus all five native
 target families, and publishes only the channels documented in

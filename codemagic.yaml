@@ -414,14 +414,18 @@ workflows:
       changeset:
         includes:
           - flutter/**
+          - containers/**
           - codemagic.yaml
           - Justfile
           - mise.toml
           - scripts/build-web.sh
+          - scripts/prepare-web-plugins.py
           - scripts/check-dart-format.py
           - scripts/check-flutter-config.py
           - scripts/finalize-web-build.py
           - scripts/install-mise-codemagic.sh
+          - scripts/install-android-platform-tools.sh
+          - scripts/container-flutter.sh
           - scripts/patch-flutter-plugins.py
     scripts:
       - name: Install Linux desktop dependencies
@@ -435,22 +439,19 @@ workflows:
       - name: Ensure pinned Android SDK components
         script: |
           export ANDROID_HOME="${ANDROID_HOME:-$ANDROID_SDK_ROOT}"
+          scripts/install-android-platform-tools.sh "$ANDROID_SDK_ROOT"
           "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager" \
-            'platform-tools' \
+            'platforms;android-34' \
+            'platforms;android-35' \
             'platforms;android-36' \
             'build-tools;36.0.0' \
-            'ndk;28.2.13676358'
+            'cmake;3.22.1' \
+            'ndk;29.0.14206865'
 
-      - name: Analyze, test, and build web
-        script: |
-          $HOME/.local/bin/mise exec -- just flutter-ci-check
-          $HOME/.local/bin/mise exec -- just build-web
-
-      - name: Build Android and Linux clients
+      - name: Run Linux-hosted Flutter compile gate
         script: |
           export ANDROID_HOME="${ANDROID_HOME:-$ANDROID_SDK_ROOT}"
-          $HOME/.local/bin/mise exec -- just build-flutter-android-debug
-          $HOME/.local/bin/mise exec -- just build-flutter-linux
+          $HOME/.local/bin/mise exec -- just flutter-linux-ci
           tar -czf flutter-linux-x86_64.tar.gz \
             -C flutter/build/linux/x64/release bundle
 
@@ -483,11 +484,14 @@ workflows:
       - name: Ensure pinned Android SDK components
         script: |
           export ANDROID_HOME="${ANDROID_HOME:-$ANDROID_SDK_ROOT}"
+          scripts/install-android-platform-tools.sh "$ANDROID_SDK_ROOT"
           "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager" \
-            'platform-tools' \
+            'platforms;android-34' \
+            'platforms;android-35' \
             'platforms;android-36' \
             'build-tools;36.0.0' \
-            'ndk;28.2.13676358'
+            'cmake;3.22.1' \
+            'ndk;29.0.14206865'
 
       - name: Build unsigned Android packages
         script: |

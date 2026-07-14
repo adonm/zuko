@@ -3,10 +3,10 @@ import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:mobile_scanner/mobile_scanner.dart';
 
 import 'model.dart';
 import 'pairing_code.dart';
+import 'pairing_scanner.dart';
 
 typedef PairingScannerBuilder =
     Widget Function(BuildContext context, ValueChanged<String> onDetect);
@@ -28,23 +28,19 @@ String pairingClaimErrorMessage(Object error) {
   return 'Could not pair with that host. Check the code and try again.';
 }
 
-String scannerErrorMessage(MobileScannerErrorCode errorCode) =>
+String scannerErrorMessage(PairingScannerError errorCode) =>
     switch (errorCode) {
-      MobileScannerErrorCode.permissionDenied =>
+      PairingScannerError.permissionDenied =>
         'Camera permission was denied. Enter the share code instead.',
-      MobileScannerErrorCode.unsupported =>
+      PairingScannerError.unsupported =>
         'No supported camera is available. Enter the share code instead.',
-      _ => 'The camera could not be started. Enter the share code instead.',
+      PairingScannerError.unavailable =>
+        'The camera could not be started. Enter the share code instead.',
     };
 
 bool supportsQrScanning({TargetPlatform? platform, bool? isWeb}) {
-  if (isWeb ?? kIsWeb) return true;
-  return switch (platform ?? defaultTargetPlatform) {
-    TargetPlatform.android ||
-    TargetPlatform.iOS ||
-    TargetPlatform.macOS => true,
-    _ => false,
-  };
+  if (isWeb ?? kIsWeb) return false;
+  return pairingScannerSupported(platform ?? defaultTargetPlatform);
 }
 
 class PairingScreen extends StatefulWidget {
@@ -69,13 +65,12 @@ class PairingScreen extends StatefulWidget {
   State<PairingScreen> createState() => _PairingScreenState();
 }
 
-class _PairingScreenState extends State<PairingScreen>
-    with WidgetsBindingObserver {
+class _PairingScreenState extends State<PairingScreen> {
   final _code = TextEditingController();
   final _codeFocus = FocusNode();
-  MobileScannerController? _scanner;
   late final bool _scannerAvailable;
   late bool _manual;
+  int _scannerGeneration = 0;
   bool _submitting = false;
   bool _manualSubmitted = false;
   String? _message;
@@ -87,33 +82,6 @@ class _PairingScreenState extends State<PairingScreen>
     _scannerAvailable = widget.scannerAvailable ?? supportsQrScanning();
     _manual = widget.startInManual || !_scannerAvailable;
     _code.addListener(_codeChanged);
-    if (_scannerAvailable && widget.scannerBuilder == null) {
-      WidgetsBinding.instance.addObserver(this);
-      _scanner = MobileScannerController(
-        autoStart: false,
-        detectionSpeed: DetectionSpeed.noDuplicates,
-        formats: const [BarcodeFormat.qrCode],
-      );
-      if (!_manual) {
-        WidgetsBinding.instance.addPostFrameCallback((_) => _startScanner());
-      }
-    }
-  }
-
-  @override
-  void didChangeAppLifecycleState(AppLifecycleState state) {
-    final scanner = _scanner;
-    if (scanner == null || !scanner.value.hasCameraPermission) return;
-    switch (state) {
-      case AppLifecycleState.resumed:
-        if (!_manual && !_submitting) unawaited(scanner.start());
-      case AppLifecycleState.inactive:
-        unawaited(scanner.stop());
-      case AppLifecycleState.detached:
-      case AppLifecycleState.hidden:
-      case AppLifecycleState.paused:
-        return;
-    }
   }
 
   void _codeChanged() {
@@ -123,14 +91,7 @@ class _PairingScreenState extends State<PairingScreen>
     });
   }
 
-  Future<void> _startScanner() async {
-    final scanner = _scanner;
-    if (!mounted || _manual || _submitting || scanner == null) return;
-    await scanner.start();
-  }
-
-  Future<void> _showManual() async {
-    await _scanner?.stop();
+  void _showManual() {
     if (!mounted) return;
     setState(() {
       _manual = true;
@@ -149,26 +110,15 @@ class _PairingScreenState extends State<PairingScreen>
       _message = null;
       _claimError = null;
     });
-    WidgetsBinding.instance.addPostFrameCallback((_) => _startScanner());
   }
 
-  Future<void> _restartScanner() async {
+  void _restartScanner() {
     if (_submitting) return;
     setState(() {
       _message = null;
       _claimError = null;
+      _scannerGeneration++;
     });
-    await _startScanner();
-  }
-
-  void _detected(BarcodeCapture capture) {
-    for (final barcode in capture.barcodes) {
-      final value = barcode.rawValue;
-      if (value != null) {
-        _handleScannedValue(value);
-        return;
-      }
-    }
   }
 
   void _handleScannedValue(String value) {
@@ -178,24 +128,23 @@ class _PairingScreenState extends State<PairingScreen>
       setState(() => _message = 'Not a Zuko pairing code. Keep scanning.');
       return;
     }
-    unawaited(_claim(code, fromScanner: true));
+    unawaited(_claim(code));
   }
 
   Future<void> _submitManual() async {
     setState(() => _manualSubmitted = true);
     final code = PairingCode.parse(_code.text);
     if (code == null) return;
-    await _claim(code, fromScanner: false);
+    await _claim(code);
   }
 
-  Future<void> _claim(String code, {required bool fromScanner}) async {
+  Future<void> _claim(String code) async {
     if (_submitting) return;
     setState(() {
       _submitting = true;
       _message = null;
       _claimError = null;
     });
-    if (fromScanner) await _scanner?.stop();
     try {
       final host = await widget.onClaim(code);
       if (mounted) Navigator.of(context).pop(host);
@@ -235,14 +184,11 @@ class _PairingScreenState extends State<PairingScreen>
   Widget _buildScanner(BuildContext context) {
     final injected = widget.scannerBuilder;
     if (injected != null) return injected(context, _handleScannedValue);
-    return MobileScanner(
-      controller: _scanner,
-      onDetect: _detected,
-      placeholderBuilder: (context) => const ColoredBox(
-        color: Colors.black,
-        child: Center(child: CircularProgressIndicator()),
-      ),
-      errorBuilder: (context, error) => _ScannerFailure(error: error),
+    return PairingScannerView(
+      key: ValueKey(_scannerGeneration),
+      active: !_submitting,
+      onDetect: _handleScannedValue,
+      errorMessage: scannerErrorMessage,
     );
   }
 
@@ -322,26 +268,6 @@ class _PairingScreenState extends State<PairingScreen>
                       icon: const Icon(Icons.keyboard_outlined),
                       label: const Text('Enter code instead'),
                     ),
-                    if (_scanner != null)
-                      ValueListenableBuilder<MobileScannerState>(
-                        valueListenable: _scanner!,
-                        builder: (context, state, _) => IconButton.filledTonal(
-                          tooltip: state.torchState == TorchState.on
-                              ? 'Turn off flashlight'
-                              : 'Turn on flashlight',
-                          onPressed:
-                              !_submitting &&
-                                  state.isRunning &&
-                                  state.torchState != TorchState.unavailable
-                              ? _scanner!.toggleTorch
-                              : null,
-                          icon: Icon(
-                            state.torchState == TorchState.on
-                                ? Icons.flashlight_on
-                                : Icons.flashlight_off,
-                          ),
-                        ),
-                      ),
                   ],
                 ),
               ],
@@ -457,41 +383,9 @@ class _PairingScreenState extends State<PairingScreen>
 
   @override
   void dispose() {
-    WidgetsBinding.instance.removeObserver(this);
     _code.removeListener(_codeChanged);
     _code.dispose();
     _codeFocus.dispose();
-    final scanner = _scanner;
-    if (scanner != null) {
-      unawaited(() async {
-        await scanner.stop();
-        await scanner.dispose();
-      }());
-    }
     super.dispose();
-  }
-}
-
-class _ScannerFailure extends StatelessWidget {
-  const _ScannerFailure({required this.error});
-
-  final MobileScannerException error;
-
-  @override
-  Widget build(BuildContext context) {
-    final message = scannerErrorMessage(error.errorCode);
-    return ColoredBox(
-      color: Colors.black,
-      child: Center(
-        child: Padding(
-          padding: const EdgeInsets.all(32),
-          child: Text(
-            message,
-            textAlign: TextAlign.center,
-            style: const TextStyle(color: Colors.white),
-          ),
-        ),
-      ),
-    );
   }
 }

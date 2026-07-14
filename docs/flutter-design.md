@@ -124,7 +124,8 @@ the implementation changes.
 - Invalid scans are ignored with inline guidance. Failed claims retain retry
   and manual fallback instead of dismissing the flow.
 - Camera access exists only on supported targets. There is no operating-system
-  deep-link registration for pairing.
+  deep-link registration for pairing. Browser builds use validated typed-code
+  entry and do not register or ship the QR scanner runtime.
 
 ### Saved hosts and client identity
 
@@ -134,6 +135,13 @@ the implementation changes.
   across the friendly name, original label, and node ID.
 - The selected host uses both icon treatment and row state; selection must not
   rely on color alone.
+- Opening a saved host creates a closable Yaru tab with its own terminal,
+  transport session, geometry, status, and reconnect lifecycle. Other host
+  tabs remain connected when selection changes. Selecting an already-open host
+  focuses its existing tab, matching the protocol's single resumable PTY per
+  client/host identity.
+- The tab strip scrolls horizontally and shows Yaru undershoot indicators when
+  all open hosts do not fit.
 - **This device name** is suggested from a non-secret descriptive property,
   can be edited, and is persisted in protected client state. New host labels
   use `zuko-<device-name>-<identity-suffix>`.
@@ -150,7 +158,8 @@ the implementation changes.
 - Copy and paste are contextual; less common actions live in overflow.
 - The overflow opens Home, End, Page Up, Page Down, Insert, Delete, and F1–F12
   in a phone bottom sheet or compact desktop popover. Arrow buttons repeat
-  after a deliberate hold delay instead of requiring rapid tapping.
+  after a deliberate hold delay instead of requiring rapid tapping, and use
+  the predictable Up, Down, Left, Right order.
 - Multiline paste remains guarded. Supported terminal links are limited to
   absolute HTTP and HTTPS URLs.
 - Touch and stylus positions follow alternate-screen scroll conversion so

@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:math' as math;
 
 import 'package:flterm/flterm.dart';
 import 'package:flutter/foundation.dart' show defaultTargetPlatform, kIsWeb;
@@ -14,23 +15,25 @@ import 'client_name.dart';
 import 'model.dart';
 import 'pairing_screen.dart';
 import 'session_state.dart';
+import 'terminal_connection.dart';
 import 'theme.dart';
 import 'transport.dart';
 import 'window_frame.dart';
-import 'wire.dart';
 
 const _installCommand =
     "curl --proto '=https' --tlsv1.2 -LsSf "
     'https://zuko.adonm.dev/install.sh | sh';
 const _shareCommand = 'zuko install\nzuko share';
 const terminalAccessoryHeight = 24.0;
-const terminalExtendedKeys = <({String label, Key key})>[
+const terminalNavigationKeys = <({String label, Key key})>[
   (label: 'Home', key: Key.home),
   (label: 'End', key: Key.end),
   (label: 'Page Up', key: Key.pageUp),
   (label: 'Page Down', key: Key.pageDown),
   (label: 'Insert', key: Key.insert),
   (label: 'Delete', key: Key.delete),
+];
+const terminalFunctionKeys = <({String label, Key key})>[
   (label: 'F1', key: Key.f1),
   (label: 'F2', key: Key.f2),
   (label: 'F3', key: Key.f3),
@@ -44,6 +47,20 @@ const terminalExtendedKeys = <({String label, Key key})>[
   (label: 'F11', key: Key.f11),
   (label: 'F12', key: Key.f12),
 ];
+const terminalArrowKeys = <({String label, Key key})>[
+  (label: 'Up', key: Key.arrowUp),
+  (label: 'Down', key: Key.arrowDown),
+  (label: 'Left', key: Key.arrowLeft),
+  (label: 'Right', key: Key.arrowRight),
+];
+
+IconData _terminalArrowIcon(Key key) => switch (key) {
+  Key.arrowUp => YaruFreedesktopIcons.go_up.icon,
+  Key.arrowDown => YaruFreedesktopIcons.go_down.icon,
+  Key.arrowLeft => YaruFreedesktopIcons.go_previous.icon,
+  Key.arrowRight => YaruFreedesktopIcons.go_next.icon,
+  _ => throw ArgumentError.value(key, 'key', 'not an arrow key'),
+};
 
 double terminalAccessoryItemWidth({
   required double availableWidth,
@@ -226,11 +243,11 @@ class TerminalExtendedKeyPalette extends StatelessWidget {
       children: [
         Text('Extended keys', style: Theme.of(context).textTheme.titleMedium),
         const SizedBox(height: 12),
-        _ExtendedKeyWrap(keys: terminalExtendedKeys.take(6), onKey: onKey),
+        _ExtendedKeyWrap(keys: terminalNavigationKeys, onKey: onKey),
         const SizedBox(height: 12),
         Text('Function keys', style: Theme.of(context).textTheme.labelLarge),
         const SizedBox(height: 8),
-        _ExtendedKeyWrap(keys: terminalExtendedKeys.skip(6), onKey: onKey),
+        _ExtendedKeyWrap(keys: terminalFunctionKeys, onKey: onKey),
       ],
     ),
   );
@@ -308,7 +325,12 @@ class _RepeatableActionState extends State<RepeatableAction> {
 
   void _move(PointerMoveEvent event) {
     if (event.pointer != _activePointer) return;
-    final renderBox = context.findRenderObject()! as RenderBox;
+    final renderObject = context.findRenderObject();
+    if (renderObject is! RenderBox || !renderObject.attached) {
+      _cancel(event);
+      return;
+    }
+    final renderBox = renderObject;
     if (!renderBox.size.contains(event.localPosition)) _cancel();
   }
 
@@ -409,36 +431,23 @@ class _Home extends StatefulWidget {
   State<_Home> createState() => _HomeState();
 }
 
-class _HomeState extends State<_Home> with WidgetsBindingObserver {
-  late final TerminalController terminal;
-  TerminalSession? session;
-  StreamSubscription<Uint8List>? outputSubscription;
-  StreamSubscription<SessionState>? stateSubscription;
-  StreamSubscription<TunnelEndpoint>? tunnelSubscription;
-  SavedHost? selected;
-  SessionState sessionState = const SessionState.ended(
-    'Choose a saved host or pair a new one.',
-  );
-  TerminalGeometry geometry = const TerminalGeometry(80, 24, 0, 0);
+class _HomeState extends State<_Home>
+    with WidgetsBindingObserver, TickerProviderStateMixin {
+  final List<TerminalConnection> _connections = [];
+  TabController? _tabController;
+  int _activeIndex = -1;
   DateTime? _backgroundedAt;
-  int _sessionGeneration = 0;
   bool _sidebarExpanded = true;
+
+  TerminalConnection? get _activeConnection =>
+      _activeIndex >= 0 && _activeIndex < _connections.length
+      ? _connections[_activeIndex]
+      : null;
 
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
-    terminal = TerminalController();
-    terminal.onOutput = (bytes) => unawaited(session?.send(bytes));
-    terminal.onResize = (cols, rows) {
-      geometry = TerminalGeometry(cols, rows, 0, 0);
-      unawaited(session?.resize(geometry));
-    };
-    terminal.write(
-      Uint8List.fromList(
-        '\x1b[1;38;2;197;64;74mzuko\x1b[0m ready\r\n'.codeUnits,
-      ),
-    );
   }
 
   @override
@@ -451,101 +460,150 @@ class _HomeState extends State<_Home> with WidgetsBindingObserver {
     if (state != AppLifecycleState.resumed) return;
     final backgroundedAt = _backgroundedAt;
     _backgroundedAt = null;
-    final host = selected;
-    if (host != null &&
-        backgroundedAt != null &&
+    if (backgroundedAt != null &&
         DateTime.now().difference(backgroundedAt) >=
             const Duration(seconds: 5)) {
-      unawaited(_connect(host));
+      for (final connection in List.of(_connections)) {
+        unawaited(connection.reconnect());
+      }
     }
   }
 
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
-    _sessionGeneration++;
-    final active = session;
-    final output = outputSubscription;
-    final states = stateSubscription;
-    final tunnels = tunnelSubscription;
-    session = null;
-    outputSubscription = null;
-    stateSubscription = null;
-    tunnelSubscription = null;
+    _tabController?.dispose();
+    final connections = List.of(_connections);
+    _connections.clear();
+    for (final connection in connections) {
+      connection.removeListener(_connectionChanged);
+    }
     unawaited(() async {
-      await output?.cancel();
-      await states?.cancel();
-      await tunnels?.cancel();
-      await active?.close();
-      await widget.controller.close();
+      try {
+        await Future.wait(
+          connections.map((connection) async {
+            try {
+              await connection.close();
+            } finally {
+              connection.dispose();
+            }
+          }),
+        );
+      } finally {
+        await widget.controller.close();
+      }
     }());
-    terminal.dispose();
     super.dispose();
   }
 
-  Future<void> _connect(SavedHost host) async {
-    final generation = ++_sessionGeneration;
-    final previous = session;
-    final previousOutput = outputSubscription;
-    final previousStates = stateSubscription;
-    final previousTunnels = tunnelSubscription;
-    session = null;
-    outputSubscription = null;
-    stateSubscription = null;
-    tunnelSubscription = null;
-    selected = host;
-    sessionState = const SessionState.connecting();
+  void _replaceTabController() {
+    final previous = _tabController;
+    _tabController = _connections.isEmpty
+        ? null
+        : TabController(
+            length: _connections.length,
+            initialIndex: _activeIndex,
+            vsync: this,
+          );
+    previous?.dispose();
+  }
+
+  void _connectionChanged() {
     if (mounted) setState(() {});
+  }
 
-    await previousOutput?.cancel();
-    await previousStates?.cancel();
-    await previousTunnels?.cancel();
-    await previous?.close();
-    if (!mounted || generation != _sessionGeneration) return;
+  void _focusActiveTerminal() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _activeConnection?.terminal.requestFocus();
+    });
+  }
 
-    try {
-      final active = widget.controller.transport.connect(host, geometry);
-      if (!mounted || generation != _sessionGeneration) {
-        await active.close();
-        return;
-      }
-      session = active;
-      outputSubscription = active.output.listen((bytes) {
-        if (mounted &&
-            generation == _sessionGeneration &&
-            identical(session, active)) {
-          terminal.write(bytes);
-        }
-      });
-      stateSubscription = active.states.listen((state) {
-        if (!mounted ||
-            generation != _sessionGeneration ||
-            !identical(session, active)) {
-          return;
-        }
-        setState(() => sessionState = state);
-      });
-      tunnelSubscription = active.tunnels.listen((tunnel) {
-        if (mounted &&
-            generation == _sessionGeneration &&
-            identical(session, active)) {
-          unawaited(_openTunnel(tunnel, generation, active));
-        }
-      });
-      setState(() {});
-      terminal.requestFocus();
-    } catch (error) {
-      if (!mounted || generation != _sessionGeneration) return;
-      setState(() {
-        sessionState = SessionState.failed('Could not start session: $error');
-      });
+  void _selectConnection(TerminalConnection connection) {
+    final index = _connections.indexOf(connection);
+    if (index < 0 || index == _activeIndex) {
+      _focusActiveTerminal();
+      return;
     }
+    setState(() {
+      _activeIndex = index;
+      _tabController?.index = index;
+    });
+    _focusActiveTerminal();
+  }
+
+  void _selectConnectionAt(int index) {
+    if (index < 0 || index >= _connections.length) return;
+    _selectConnection(_connections[index]);
+  }
+
+  void _openConnection(SavedHost host) {
+    final existing = _connections
+        .where((connection) => connection.host.nodeId == host.nodeId)
+        .firstOrNull;
+    if (existing != null) {
+      _selectConnection(existing);
+      unawaited(existing.updateHost(host));
+      return;
+    }
+
+    late final TerminalConnection connection;
+    connection = TerminalConnection(
+      host: host,
+      connector: widget.controller.transport.connect,
+      onTunnel: _openTunnel,
+    );
+    connection.addListener(_connectionChanged);
+    setState(() {
+      _connections.add(connection);
+      _activeIndex = _connections.length - 1;
+      _replaceTabController();
+    });
+    unawaited(connection.reconnect());
+    _focusActiveTerminal();
+  }
+
+  Future<void> _closeConnection(TerminalConnection connection) =>
+      _closeConnections([connection]);
+
+  Future<void> _closeConnections(
+    Iterable<TerminalConnection> connections,
+  ) async {
+    final closing = connections
+        .where(_connections.contains)
+        .toList(growable: false);
+    if (closing.isEmpty) return;
+    final activeBefore = _activeConnection;
+    final firstIndex = _connections.indexOf(closing.first);
+    for (final connection in closing) {
+      connection.removeListener(_connectionChanged);
+    }
+    setState(() {
+      _connections.removeWhere(closing.contains);
+      if (_connections.isEmpty) {
+        _activeIndex = -1;
+      } else if (activeBefore != null && _connections.contains(activeBefore)) {
+        _activeIndex = _connections.indexOf(activeBefore);
+      } else {
+        _activeIndex = firstIndex.clamp(0, _connections.length - 1);
+      }
+      _replaceTabController();
+    });
+    await Future.wait(
+      closing.map((connection) async {
+        try {
+          await connection.close();
+        } finally {
+          connection.dispose();
+        }
+      }),
+    );
+    _focusActiveTerminal();
   }
 
   Future<void> _openTunnel(
+    TerminalConnection connection,
     TunnelEndpoint tunnel,
     int generation,
-    TerminalSession active,
   ) async {
     var opened = false;
     try {
@@ -570,14 +628,14 @@ class _HomeState extends State<_Home> with WidgetsBindingObserver {
       }
     }
     if (!mounted ||
-        generation != _sessionGeneration ||
-        !identical(session, active)) {
+        !_connections.contains(connection) ||
+        !connection.isCurrentGeneration(generation)) {
       return;
     }
     final local = '127.0.0.1:${tunnel.localPort}';
     final message = opened
-        ? 'Tunnel opened: $local → host 127.0.0.1:${tunnel.hostPort}'
-        : 'Tunnel ready at $local (browser could not be opened).';
+        ? '${connection.host.name}: $local → host 127.0.0.1:${tunnel.hostPort}'
+        : '${connection.host.name}: tunnel ready at $local; browser could not be opened.';
     ScaffoldMessenger.of(context)
       ..hideCurrentSnackBar()
       ..showSnackBar(SnackBar(content: Text(message)));
@@ -609,27 +667,6 @@ class _HomeState extends State<_Home> with WidgetsBindingObserver {
       );
   }
 
-  Future<void> _disconnect() async {
-    ++_sessionGeneration;
-    final active = session;
-    final output = outputSubscription;
-    final states = stateSubscription;
-    final tunnels = tunnelSubscription;
-    session = null;
-    outputSubscription = null;
-    stateSubscription = null;
-    tunnelSubscription = null;
-    selected = null;
-    sessionState = const SessionState.ended(
-      'Choose a saved host or pair a new one.',
-    );
-    if (mounted) setState(() {});
-    await output?.cancel();
-    await states?.cancel();
-    await tunnels?.cancel();
-    await active?.close();
-  }
-
   Future<void> _pair({bool manual = false}) async {
     final host = await Navigator.of(context).push<SavedHost>(
       MaterialPageRoute(
@@ -640,17 +677,30 @@ class _HomeState extends State<_Home> with WidgetsBindingObserver {
         ),
       ),
     );
-    if (host != null && mounted) await _connect(host);
+    if (host != null && mounted) _openConnection(host);
   }
 
   Future<void> _forget(SavedHost host) async {
-    if (selected?.nodeId == host.nodeId) await _disconnect();
-    await widget.controller.remove(host);
+    final matching = _connections
+        .where((connection) => connection.host.nodeId == host.nodeId)
+        .toList(growable: false);
+    try {
+      await _closeConnections(matching);
+    } finally {
+      await widget.controller.remove(host);
+    }
   }
 
   void _toggleSidebar() {
     setState(() => _sidebarExpanded = !_sidebarExpanded);
   }
+
+  String _connectionName(TerminalConnection connection) =>
+      widget.controller.hosts
+          .where((host) => host.nodeId == connection.host.nodeId)
+          .map((host) => host.name)
+          .firstOrNull ??
+      connection.host.name;
 
   @override
   Widget build(BuildContext context) => AnimatedBuilder(
@@ -669,22 +719,28 @@ class _HomeState extends State<_Home> with WidgetsBindingObserver {
         isWeb: kIsWeb,
       );
       final hasSavedHosts = widget.controller.hosts.isNotEmpty;
-      final showWelcome = !hasSavedHosts && selected == null;
+      final active = _activeConnection;
+      final selected = active?.host;
+      final sessionState =
+          active?.state ??
+          const SessionState.ended('Choose a saved host to open a terminal.');
       final sidebar = _Sidebar(
         controller: widget.controller,
         terminalFontSize: terminalFontSize,
         selected: selected,
         sessionState: sessionState,
+        openConnectionCount: _connections.length,
         onPair: () => _pair(),
-        onConnect: _connect,
-        onDisconnect: _disconnect,
+        onConnect: _openConnection,
+        onDisconnect: active == null
+            ? () {}
+            : () => unawaited(_closeConnection(active)),
         onForget: _forget,
       );
       final terminalTheme = buildZukoTerminalTheme(
         brightness: Theme.of(context).brightness,
         fontSize: terminalFontSize,
       );
-      final selectedHost = selected;
       return Scaffold(
         appBar: integratedDesktopHeader
             ? null
@@ -702,47 +758,68 @@ class _HomeState extends State<_Home> with WidgetsBindingObserver {
               ),
             if (wide) const VerticalDivider(width: 1),
             Expanded(
-              child: showWelcome
-                  ? _Welcome(
-                      onScan: supportsQrScanning() ? () => _pair() : null,
-                      onEnterCode: () => _pair(manual: true),
-                    )
+              child: active == null
+                  ? hasSavedHosts
+                        ? _NoOpenConnections(onPair: () => _pair())
+                        : _Welcome(
+                            onScan: supportsQrScanning() ? () => _pair() : null,
+                            onEnterCode: () => _pair(manual: true),
+                          )
                   : Column(
                       children: [
+                        ConnectionTabStrip(
+                          controller: _tabController!,
+                          selectedIndex: _activeIndex,
+                          connections: _connections,
+                          labelFor: _connectionName,
+                          onSelected: _selectConnectionAt,
+                          onClose: (connection) =>
+                              unawaited(_closeConnection(connection)),
+                        ),
+                        const Divider(height: 1),
                         Expanded(
-                          child: Stack(
-                            fit: StackFit.expand,
+                          child: IndexedStack(
+                            index: _activeIndex,
                             children: [
-                              TerminalView(
-                                controller: terminal,
-                                autofocus: true,
-                                theme: terminalTheme,
-                                semanticsLabel: 'Remote terminal',
-                                semanticsHint:
-                                    'Activate to focus remote terminal input',
-                                linkSettings: LinkSettings(
-                                  types: const {LinkType.osc8, LinkType.text},
-                                  onActivate: (link) =>
-                                      unawaited(_openTerminalLink(link)),
-                                ),
-                              ),
-                              if (!sessionState.isAttached)
-                                _SessionOverlay(
-                                  state: sessionState,
-                                  hasHost: selected != null,
-                                  onReconnect: selectedHost == null
-                                      ? null
-                                      : () => _connect(selectedHost),
-                                  onPair: () => _pair(),
-                                  onDisconnect: selected == null
-                                      ? null
-                                      : _disconnect,
+                              for (final connection in _connections)
+                                Stack(
+                                  key: ObjectKey(connection),
+                                  fit: StackFit.expand,
+                                  children: [
+                                    TerminalView(
+                                      controller: connection.terminal,
+                                      autofocus: identical(connection, active),
+                                      theme: terminalTheme,
+                                      semanticsLabel:
+                                          '${_connectionName(connection)} remote terminal',
+                                      semanticsHint:
+                                          'Activate to focus remote terminal input',
+                                      linkSettings: LinkSettings(
+                                        types: const {
+                                          LinkType.osc8,
+                                          LinkType.text,
+                                        },
+                                        onActivate: (link) =>
+                                            unawaited(_openTerminalLink(link)),
+                                      ),
+                                    ),
+                                    if (!connection.state.isAttached)
+                                      _SessionOverlay(
+                                        state: connection.state,
+                                        hasHost: true,
+                                        onReconnect: connection.reconnect,
+                                        onPair: () => _pair(),
+                                        onDisconnect: () => unawaited(
+                                          _closeConnection(connection),
+                                        ),
+                                      ),
+                                  ],
                                 ),
                             ],
                           ),
                         ),
                         _TerminalAccessory(
-                          controller: terminal,
+                          controller: active.terminal,
                           showAdditionalKeys:
                               widget.controller.showAdditionalKeys,
                         ),
@@ -753,6 +830,193 @@ class _HomeState extends State<_Home> with WidgetsBindingObserver {
         ),
       );
     },
+  );
+}
+
+class ConnectionTabStrip extends StatefulWidget {
+  const ConnectionTabStrip({
+    super.key,
+    required this.controller,
+    required this.selectedIndex,
+    required this.connections,
+    required this.labelFor,
+    required this.onSelected,
+    required this.onClose,
+  });
+
+  final TabController controller;
+  final int selectedIndex;
+  final List<TerminalConnection> connections;
+  final String Function(TerminalConnection connection) labelFor;
+  final ValueChanged<int> onSelected;
+  final ValueChanged<TerminalConnection> onClose;
+
+  @override
+  State<ConnectionTabStrip> createState() => _ConnectionTabStripState();
+}
+
+class _ConnectionTabStripState extends State<ConnectionTabStrip> {
+  static const _minimumTabWidth = 128.0;
+  final _scrollController = ScrollController();
+
+  @override
+  void didUpdateWidget(ConnectionTabStrip oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.controller != widget.controller ||
+        oldWidget.selectedIndex != widget.selectedIndex ||
+        oldWidget.connections.length != widget.connections.length) {
+      _revealSelectedTab();
+    }
+  }
+
+  void _revealSelectedTab([int? selectedIndex]) {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || !_scrollController.hasClients) return;
+      final position = _scrollController.position;
+      if (!position.hasContentDimensions || widget.connections.isEmpty) return;
+      final contentWidth = math.max(
+        position.viewportDimension,
+        widget.connections.length * _minimumTabWidth,
+      );
+      final tabWidth = contentWidth / widget.connections.length;
+      final start = (selectedIndex ?? widget.selectedIndex) * tabWidth;
+      final end = start + tabWidth;
+      final visibleStart = position.pixels;
+      final visibleEnd = visibleStart + position.viewportDimension;
+      final target = start < visibleStart
+          ? start
+          : end > visibleEnd
+          ? end - position.viewportDimension
+          : null;
+      if (target != null) {
+        unawaited(
+          _scrollController.animateTo(
+            target.clamp(position.minScrollExtent, position.maxScrollExtent),
+            duration: const Duration(milliseconds: 150),
+            curve: Curves.easeOut,
+          ),
+        );
+      }
+    });
+  }
+
+  void _selected(int index) {
+    widget.onSelected(index);
+    _revealSelectedTab(index);
+  }
+
+  @override
+  Widget build(BuildContext context) => Material(
+    color: Theme.of(context).colorScheme.surfaceContainerLow,
+    child: LayoutBuilder(
+      builder: (context, constraints) {
+        final width = math.max(
+          constraints.maxWidth,
+          widget.connections.length * _minimumTabWidth,
+        );
+        return YaruScrollViewUndershoot(
+          controller: _scrollController,
+          scrollDirection: Axis.horizontal,
+          child: SingleChildScrollView(
+            controller: _scrollController,
+            scrollDirection: Axis.horizontal,
+            child: SizedBox(
+              width: width,
+              child: YaruTabBar(
+                tabController: widget.controller,
+                onTap: _selected,
+                height: 42,
+                tabs: [
+                  for (final connection in widget.connections)
+                    Tab(
+                      key: ObjectKey(connection),
+                      height: 32,
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(
+                            connection.state.isAttached
+                                ? Icons.link
+                                : Icons.link_off,
+                            size: 14,
+                          ),
+                          const SizedBox(width: 6),
+                          Flexible(
+                            child: Text(
+                              widget.labelFor(connection),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
+                          const SizedBox(width: 2),
+                          IconButton(
+                            tooltip: 'Close ${widget.labelFor(connection)}',
+                            onPressed: () => widget.onClose(connection),
+                            icon: const Icon(YaruIcons.window_close, size: 14),
+                            padding: EdgeInsets.zero,
+                            constraints: const BoxConstraints.tightFor(
+                              width: 28,
+                              height: 28,
+                            ),
+                            style: IconButton.styleFrom(
+                              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                ],
+              ),
+            ),
+          ),
+        );
+      },
+    ),
+  );
+
+  @override
+  void dispose() {
+    _scrollController.dispose();
+    super.dispose();
+  }
+}
+
+class _NoOpenConnections extends StatelessWidget {
+  const _NoOpenConnections({required this.onPair});
+
+  final VoidCallback onPair;
+
+  @override
+  Widget build(BuildContext context) => Center(
+    child: Padding(
+      padding: const EdgeInsets.all(24),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(
+            YaruIcons.terminal,
+            size: 48,
+            color: Theme.of(context).colorScheme.primary,
+          ),
+          const SizedBox(height: 12),
+          Text(
+            'No open connections',
+            style: Theme.of(context).textTheme.titleLarge,
+          ),
+          const SizedBox(height: 6),
+          const Text(
+            'Choose a saved host to open a terminal. Open hosts stay connected in separate tabs.',
+            textAlign: TextAlign.center,
+          ),
+          const SizedBox(height: 16),
+          OutlinedButton.icon(
+            onPressed: onPair,
+            icon: const Icon(Icons.add_link),
+            label: const Text('Pair another host'),
+          ),
+        ],
+      ),
+    ),
   );
 }
 
@@ -1031,30 +1295,13 @@ class _TerminalAccessory extends StatelessWidget {
                           onPressed: () =>
                               controller.toggleMod(const Mods.alt()),
                         ),
-                        _RepeatableAccessoryIcon(
-                          width: itemWidth,
-                          tooltip: 'Left',
-                          icon: YaruFreedesktopIcons.go_previous.icon,
-                          onPressed: () => controller.sendKey(Key.arrowLeft),
-                        ),
-                        _RepeatableAccessoryIcon(
-                          width: itemWidth,
-                          tooltip: 'Up',
-                          icon: YaruFreedesktopIcons.go_up.icon,
-                          onPressed: () => controller.sendKey(Key.arrowUp),
-                        ),
-                        _RepeatableAccessoryIcon(
-                          width: itemWidth,
-                          tooltip: 'Down',
-                          icon: YaruFreedesktopIcons.go_down.icon,
-                          onPressed: () => controller.sendKey(Key.arrowDown),
-                        ),
-                        _RepeatableAccessoryIcon(
-                          width: itemWidth,
-                          tooltip: 'Right',
-                          icon: YaruFreedesktopIcons.go_next.icon,
-                          onPressed: () => controller.sendKey(Key.arrowRight),
-                        ),
+                        for (final item in terminalArrowKeys)
+                          _RepeatableAccessoryIcon(
+                            width: itemWidth,
+                            tooltip: item.label,
+                            icon: _terminalArrowIcon(item.key),
+                            onPressed: () => controller.sendKey(item.key),
+                          ),
                       ],
                       _AccessoryIcon(
                         width: itemWidth,
@@ -1304,6 +1551,7 @@ class _Sidebar extends StatelessWidget {
     required this.terminalFontSize,
     required this.selected,
     required this.sessionState,
+    required this.openConnectionCount,
     required this.onPair,
     required this.onConnect,
     required this.onDisconnect,
@@ -1314,6 +1562,7 @@ class _Sidebar extends StatelessWidget {
   final double terminalFontSize;
   final SavedHost? selected;
   final SessionState sessionState;
+  final int openConnectionCount;
   final Future<void> Function() onPair;
   final ValueChanged<SavedHost> onConnect;
   final VoidCallback onDisconnect;
@@ -1609,6 +1858,9 @@ class _Sidebar extends StatelessWidget {
                 selected == null ? controller.status : sessionState.message,
               ),
               subtitle: selected == null ? null : Text(selected!.name),
+              trailing: openConnectionCount == 0
+                  ? null
+                  : Text('$openConnectionCount open'),
             ),
           ),
         ),

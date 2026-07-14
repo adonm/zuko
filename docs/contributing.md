@@ -12,9 +12,20 @@ just                     # grouped recipe list
 just check           # Rust + Flutter + release metadata
 just test            # Rust clippy + unit tests
 just test-e2e        # live Iroh network + PTY
-just preflight       # full local CI mirror
+just preflight       # full source, analysis, and test preflight
+just container-ci    # web + Android + Linux compile gate on x86_64 Linux
+just container-all   # preflight + quality + Linux-hostable Flutter builds
 just build
 ```
+
+On x86_64 Linux, the container recipes are the expected path for Flutter
+compile coverage. They prevent host package drift and avoid silently skipping
+Android or Linux because CMake, GTK, Java, or the Android SDK is absent. Use
+focused `container-web`, `container-android`, and `container-linux-build`
+recipes during iteration; use `container-all` before requesting review when
+Flutter or its build configuration changed. See
+[Building clients](building-clients.md) for the exact coverage and the
+Apple/Windows boundary.
 
 Flutter terminal changes live in the pinned `flutter/packages/flterm`
 submodule. Commit and push them in `adonm/flterm` first, then update the Zuko
@@ -49,7 +60,9 @@ Before PR:
 
 - `just check` is green.
 - If Flutter changed, keep shared logic in `flutter/lib/src/` and run
-  `just flutter-check`; do not create a target-specific second implementation.
+  `just flutter-check`; on x86_64 Linux also run `just container-ci` so web,
+  Android, and Linux compile. Do not create a target-specific second
+  implementation.
 - For Flutter UI or input changes, follow the
   [human-centered design guide](flutter-design.md) and test the relevant narrow,
   wide, keyboard, touch, and accessibility paths.
@@ -98,3 +111,5 @@ configuration checks, formatting, application analysis, and application tests
 but does not repeat all vendored `flterm` tests. Cross-platform client builds
 still compile the pinned package. Release readiness continues to require the
 full local preflight rather than treating the lean hosted check as sufficient.
+The local container's `ci` mode and Codemagic both call `just flutter-linux-ci`
+for the Linux-hostable compile matrix.

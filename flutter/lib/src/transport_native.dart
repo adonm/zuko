@@ -25,10 +25,23 @@ final class _NativeTransport implements ClientTransport {
 
   final Uint8List _clientKey;
   final SecretKey _secretKey;
-  Endpoint? _endpoint;
+  Future<Endpoint>? _endpoint;
 
-  Future<Endpoint> _ready() async =>
-      _endpoint ??= await Endpoint.bind(secretKey: _secretKey);
+  Future<Endpoint> _ready() {
+    final existing = _endpoint;
+    if (existing != null) return existing;
+    late final Future<Endpoint> pending;
+    pending = () async {
+      try {
+        return await Endpoint.bind(secretKey: _secretKey);
+      } catch (_) {
+        if (identical(_endpoint, pending)) _endpoint = null;
+        rethrow;
+      }
+    }();
+    _endpoint = pending;
+    return pending;
+  }
 
   @override
   Future<ClaimResult> claim(String rawCode, String clientLabel) async {
@@ -93,9 +106,16 @@ final class _NativeTransport implements ClientTransport {
 
   @override
   Future<void> close() async {
-    final endpoint = _endpoint;
+    final pending = _endpoint;
     _endpoint = null;
-    await endpoint?.close();
+    if (pending == null) return;
+    Endpoint endpoint;
+    try {
+      endpoint = await pending;
+    } on Object {
+      return;
+    }
+    await endpoint.close();
   }
 }
 

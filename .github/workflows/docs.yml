@@ -18,6 +18,7 @@ on:
       - "mise.toml"
       - "scripts/build-web.sh"
       - "scripts/finalize-web-build.py"
+      - "scripts/prepare-web-plugins.py"
       - "flutter/**"
       - ".github/workflows/docs.yml"
   workflow_dispatch:

@@ -2,7 +2,7 @@
 set -euo pipefail
 
 readonly APP_ID=dev.adonm.zuko
-readonly IMAGE=localhost/zuko-flutter-linux:2026.07
+readonly IMAGE=localhost/zuko-flutter-ci:2026.07
 readonly FLATPARK_URL=https://github.com/flatpark/flatpark.git
 readonly FLATPARK_COMMIT=0ec1341c6c52ab75f9c0929654f3e530f8745422
 readonly RUNTIME_REPO=https://dl.flathub.org/repo/flathub.flatpakrepo
@@ -32,7 +32,7 @@ output=$output_dir/zuko-linux-$tag-x86_64-test.flatpak
 flatpark_ref=.tmp/ref/flatpark
 
 # Build and package the same relocatable Linux payload used by GitHub Releases.
-bash scripts/container-linux.sh bundle
+bash scripts/container-flutter.sh linux-bundle
 (
   cd "$(dirname "$archive")"
   sha256sum --check "$(basename "$archive").sha256"

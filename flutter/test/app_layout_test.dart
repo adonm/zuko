@@ -10,6 +10,26 @@ void main() {
     expect(terminalAccessoryHeight, 24);
   });
 
+  test('terminal navigation keys use predictable paired ordering', () {
+    expect(terminalArrowKeys.map((item) => item.label), [
+      'Up',
+      'Down',
+      'Left',
+      'Right',
+    ]);
+    expect(terminalNavigationKeys.map((item) => item.label), [
+      'Home',
+      'End',
+      'Page Up',
+      'Page Down',
+      'Insert',
+      'Delete',
+    ]);
+    expect(terminalFunctionKeys.map((item) => item.label), [
+      for (var index = 1; index <= 12; index++) 'F$index',
+    ]);
+  });
+
   test('terminal accessory controls fit normal narrow screens', () {
     expect(
       terminalAccessoryItemWidth(availableWidth: 390, itemCount: 11),
@@ -245,6 +265,40 @@ void main() {
     await tester.pumpWidget(const SizedBox());
     await tester.pump(const Duration(milliseconds: 600));
     expect(invocations, 1);
+    await gesture.cancel();
+  });
+
+  testWidgets('moving after a terminal action detaches does not throw', (
+    tester,
+  ) async {
+    var visible = true;
+    late StateSetter update;
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: StatefulBuilder(
+            builder: (context, setState) {
+              update = setState;
+              return visible
+                  ? RepeatableAction(
+                      onInvoke: () => update(() => visible = false),
+                      child: const SizedBox(width: 48, height: 48),
+                    )
+                  : const SizedBox();
+            },
+          ),
+        ),
+      ),
+    );
+
+    final gesture = await tester.startGesture(
+      tester.getCenter(find.byType(RepeatableAction)),
+    );
+    await tester.pump();
+    await gesture.moveBy(const Offset(10, 0));
+    await tester.pump();
+
+    expect(tester.takeException(), isNull);
     await gesture.cancel();
   });
 

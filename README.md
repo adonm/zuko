@@ -8,7 +8,7 @@
 [![flutter](https://api.codemagic.io/apps/6a52dc14add8531e99f88b8a/flutter-linux-ci/status_badge.svg)](https://codemagic.io/app/6a52dc14add8531e99f88b8a)
 [![docs](https://github.com/adonm/zuko/actions/workflows/docs.yml/badge.svg)](https://zuko.adonm.dev/)
 [![release](https://github.com/adonm/zuko/actions/workflows/release.yml/badge.svg)](https://github.com/adonm/zuko/releases/latest)
-[![Get it on FlatPark](https://img.shields.io/badge/Get_it_on-FlatPark-3584e4?logo=flatpak&logoColor=white)](https://flatpark.org/apps/dev.adonm.zuko/)
+[![FlatPark](https://img.shields.io/badge/FlatPark-zuko-4A90D9?logo=flatpak)](https://flatpark.org/apps/dev.adonm.zuko/)
 [![license](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 
 **Private remote shells for machines you own—without opening inbound ports or

@@ -1,8 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:mobile_scanner/mobile_scanner.dart';
 import 'package:zuko/src/model.dart';
 import 'package:zuko/src/pairing_screen.dart';
+import 'package:zuko/src/pairing_scanner.dart';
 
 const _host = SavedHost(
   name: 'workstation',
@@ -29,16 +29,16 @@ void main() {
 
   test('scanner failures always direct users to typed fallback', () {
     expect(
-      scannerErrorMessage(MobileScannerErrorCode.permissionDenied),
+      scannerErrorMessage(PairingScannerError.permissionDenied),
       contains('Enter the share code instead'),
     );
     expect(
-      scannerErrorMessage(MobileScannerErrorCode.unsupported),
+      scannerErrorMessage(PairingScannerError.unsupported),
       contains('Enter the share code instead'),
     );
   });
 
-  test('QR scanning support matches plugin platforms', () {
+  test('QR scanning is native-only on supported camera platforms', () {
     expect(
       supportsQrScanning(platform: TargetPlatform.android, isWeb: false),
       isTrue,
@@ -61,7 +61,7 @@ void main() {
     );
     expect(
       supportsQrScanning(platform: TargetPlatform.linux, isWeb: true),
-      isTrue,
+      isFalse,
     );
   });
 

@@ -1,7 +1,7 @@
 name: zuko
 description: Private remote shells over Iroh for Android, Apple platforms, web, Linux, and Windows.
 publish_to: 'none'
-version: 0.10.0+1800010000
+version: 0.10.1+1800010001
 
 environment:
   sdk: ^3.12.2
@@ -10,7 +10,6 @@ dependencies:
   flutter:
     sdk: flutter
   crypto: 3.0.7
-  device_info_plus: 13.2.0
   flterm:
     path: packages/flterm
   flutter_secure_storage: 10.3.1

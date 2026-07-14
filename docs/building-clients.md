@@ -4,7 +4,52 @@ This page starts from a fresh clone and names each build's output. The shared
 Flutter client targets Android, iOS, macOS, web, Linux, and Windows. Run commands
 from the repository root unless noted.
 
-## Common setup
+## Preferred Linux container setup
+
+On x86_64 Linux, use the repository's rootless Podman recipes for every build
+that does not require Apple or Windows host APIs. Install Podman and
+[mise](https://mise.jdx.dev/getting-started.html) on the host first; an
+activated mise shell supplies `just`, or use the explicit
+`mise exec -- just ...` form. The image contains the pinned Flutter and Rust
+toolchains, JDK 17, Android platforms/build-tools/NDK/CMake, the Freedesktop
+Linux SDK, LLVM, and the web Wasm tools. The source checkout is mounted
+read-only and copied into an ephemeral `/workspace`; only artifact and cache
+directories are mounted back into their normal host paths.
+
+```sh
+git submodule update --init --recursive
+mise install just
+mise exec -- just container-ci  # Codemagic: Dart + web + Android + Linux
+mise exec -- just container-all # preflight + quality + all Linux builds
+```
+
+Focused recipes avoid rebuilding unrelated targets:
+
+```sh
+just container-preflight       # Rust + full Flutter/flterm tests
+just container-web
+just container-android         # ARM64 debug APK compile gate
+just container-android-release # unsigned release APK and AAB
+just container-linux-build
+just container-linux-bundle
+just container-quality         # actionlint + mdBook
+just container-links           # network link check; honors GITHUB_TOKEN
+just container-e2e             # live relay/PTY test; requires network access
+```
+
+The image is checksum/digest pinned in `containers/flutter-ci.Containerfile`.
+Podman layer caching plus named Cargo, Dart, Pub, and Gradle volumes make
+subsequent runs incremental without leaking container-generated platform files
+or package paths into the host checkout. Normal checks/builds do not use a
+privileged container;
+Flatpak assembly remains the explicit exception because `flatpak-builder` needs
+additional sandbox privileges.
+
+Linux containers cannot faithfully build Windows, iOS, or macOS runners.
+Those targets remain native Windows/macOS builds in Codemagic and the protected
+release workflows.
+
+## Host toolchain setup
 
 Install [mise](https://mise.jdx.dev/getting-started.html), then bootstrap the
 repository-managed tools, Linux OS packages, and shell activation:
@@ -15,34 +60,49 @@ mise bootstrap
 just flutter-check
 ```
 
+Use this path for native Apple/Windows work or quick host-side iteration. On
+Linux, a missing CMake or Android SDK is a signal to use the container recipes,
+not a reason to skip the corresponding compile gate.
+
 The shared client pins the focused `adonm/flterm` fork as a Git submodule.
 Clone with `--recurse-submodules` or run the update command above before any
 Flutter build.
 
 Flutter is installed by mise from the official checksum-pinned
-`3.46.0-0.3.pre` beta archives at revision
-`677d472756f83c14371dd8cc624387065f3d32a7`, so the Impeller APIs cannot drift.
+`3.47.0-0.1.pre` beta archives at revision
+`bd1e75d918605c91b411e8789fb911e6c9a84534`, so the Impeller APIs cannot drift.
 
 ## Android
 
 Requirements:
 
-- Android SDK platform 36 and build-tools 36.0.0;
-- Android NDK 28.2.13676358;
+- Android SDK platforms 34–36, build-tools 36.0.0, and platform-tools 37.0.0;
+- Android NDK 29.0.14206865 and CMake 3.22.1;
 - JDK 17 and accepted Android licenses;
 - Android 15/API 35 or newer to run the app.
 
-For a locally installable development APK:
+Preferred Linux container build:
+
+```sh
+just container-android
+adb install -r flutter/build/app/outputs/flutter-apk/app-debug.apk # ARM64 device
+```
+
+The focused container compile gate intentionally emits ARM64 native libraries.
+Use an ARM64 physical device/emulator for that APK. For an x86_64 emulator,
+use the host-native unrestricted debug build below.
+
+For host-native Android development, after installing the requirements above:
 
 ```sh
 mise exec -C flutter -- flutter build apk --debug
 adb install -r flutter/build/app/outputs/flutter-apk/app-debug.apk
 ```
 
-Release outputs:
+Unsigned release outputs can also be compiled in the container:
 
 ```sh
-just build-flutter-android
+just container-android-release
 ```
 
 ```text
@@ -50,15 +110,22 @@ flutter/build/app/outputs/flutter-apk/app-release.apk
 flutter/build/app/outputs/bundle/release/app-release.aab
 ```
 
-Local release files are signed only when `ANDROID_KEYSTORE_PATH`,
+The container deliberately does not forward signing credentials. Host-native
+release files are signed only when `ANDROID_KEYSTORE_PATH`,
 `ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS`, and `ANDROID_KEY_PASSWORD` are
 all set. The AAB is a store upload, not a directly installable package. Tagged
 release CI requires all signing secrets and verifies both signatures.
 
 ## Web
 
-Linux needs `clang`; the script installs the WASM Rust target and the exact
-`wasm-bindgen-cli` version used by the bridge:
+Preferred Linux build:
+
+```sh
+just container-web
+```
+
+For host-native iteration, Linux needs `clang`; the script installs the Wasm
+Rust target and the exact `wasm-bindgen-cli` version used by the bridge:
 
 ```sh
 sudo apt-get install clang # Debian/Ubuntu
@@ -75,8 +142,15 @@ failures can be symbolized during the active null-exception investigation.
 
 ## Linux desktop
 
-`mise bootstrap` installs the configured dependencies on Debian/Ubuntu,
-Fedora, and Arch. The equivalent Debian/Ubuntu command is:
+The pinned Freedesktop container is the release-compatible default:
+
+```sh
+just container-linux-build
+```
+
+For host-native iteration, `mise bootstrap` installs the configured
+dependencies on Debian/Ubuntu, Fedora, and Arch. The equivalent Debian/Ubuntu
+command is:
 
 ```sh
 sudo apt-get update
@@ -173,6 +247,15 @@ The source of truth for build environments is:
 - `.github/workflows/release.yml` for exact-tag Codemagic orchestration,
   artifact verification, and the coordinated GitHub Release;
 - `Justfile` for supported local recipes.
+
+`just container-ci` invokes the same `flutter-linux-ci` recipe as Codemagic's
+Linux compile gate. It covers every target that can be built faithfully on a
+Linux host: shared Dart, web, Android, and Linux desktop. `just container-all`
+adds the exhaustive local preflight, workflow lint, and documentation build
+without rerunning the lean app tests. Network-dependent link and end-to-end
+tests remain explicit focused recipes. Native Windows and Apple compilation
+cannot be replaced by a Linux container and remains hosted on those operating
+systems.
 
 Current automation coverage is:
 

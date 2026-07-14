@@ -30,6 +30,12 @@ wasm-bindgen \
 cd "$CLIENT"
 rm -rf "$ROOT/target/book/web"
 mise exec -C "$CLIENT" -- flutter pub get --enforce-lockfile
+PLUGIN_STATE="$(mktemp "$ROOT/target/web-plugin-state.XXXXXX")"
+restore_web_plugins() {
+  python3 "$ROOT/scripts/prepare-web-plugins.py" --restore "$PLUGIN_STATE"
+}
+trap restore_web_plugins EXIT HUP INT TERM
+python3 "$ROOT/scripts/prepare-web-plugins.py" "$CLIENT" "$PLUGIN_STATE"
 mise exec -C "$CLIENT" -- flutter build web \
   --release \
   --no-pub \
@@ -39,5 +45,7 @@ mise exec -C "$CLIENT" -- flutter build web \
   --no-web-resources-cdn \
   --base-href /web/ \
   --output "$ROOT/target/book/web"
+restore_web_plugins
+trap - EXIT HUP INT TERM
 
 python3 "$ROOT/scripts/finalize-web-build.py"

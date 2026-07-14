@@ -28,6 +28,7 @@ GHOSTTY_WASM_OUTPUT = (
 LOADER_DEBUG = 'console.debug("Injecting <script> tag. Using callback.")'
 FLUTTER_SOURCE_MAP = "//# sourceMappingURL=flutter.js.map"
 DEPRECATED_WEBGL_EXTENSION = "WEBGL_debug_renderer_info"
+DEPRECATED_WEBGL_GUARD = 'b!="WEBGL_"+"debug_renderer_info"&&'
 GECKO_WASM_OPT_IN = "gecko: true"
 SKWASM_RENDERER = "renderer: 'skwasm'"
 FLUTTER_LOADER_CALL = "_flutter.loader.load({"
@@ -58,6 +59,14 @@ TERMINAL_FONT_FAMILIES = {
 }
 DIAGNOSTIC_SOURCE_MAPS = ("main.dart.js.map", "main.dart.wasm.map")
 DIAGNOSTIC_WASM_SYMBOLS = (b"ClientStateStore._load", b"transport_web.dart")
+WEB_ONLY_UNWANTED = (
+    "BrowserMultiFormatReader",
+    "getUserMedia",
+    "mobile_scanner",
+    "MobileScannerWebPlugin",
+    "device_info_plus",
+    "DeviceInfoPlusWebPlugin",
+)
 
 
 def fail(message: str) -> None:
@@ -108,13 +117,17 @@ def quiet_flutter_loader() -> None:
 def avoid_deprecated_webgl_extension() -> None:
     for path in (OUTPUT / "canvaskit").rglob("*.js"):
         text = path.read_text()
-        if DEPRECATED_WEBGL_EXTENSION not in text:
-            continue
-        text = text.replace(
-            f'.getExtension("{DEPRECATED_WEBGL_EXTENSION}");',
-            ";",
-        )
-        text = text.replace(f" {DEPRECATED_WEBGL_EXTENSION}", "")
+        if DEPRECATED_WEBGL_EXTENSION in text:
+            text = text.replace(
+                f'.getExtension("{DEPRECATED_WEBGL_EXTENSION}");',
+                ";",
+            )
+            text = text.replace(f" {DEPRECATED_WEBGL_EXTENSION}", "")
+        for receiver in ("a.o", "a.m"):
+            text = text.replace(
+                f"return!!{receiver}.getExtension(b)",
+                f"return {DEPRECATED_WEBGL_GUARD}!!{receiver}.getExtension(b)",
+            )
         path.write_text(text)
 
 
@@ -179,6 +192,24 @@ def validate() -> None:
         for unwanted in (LOADER_DEBUG, FLUTTER_SOURCE_MAP, DEPRECATED_WEBGL_EXTENSION):
             if unwanted in text:
                 fail(f"{path} still contains {unwanted!r}")
+    for name in ("skwasm.js", "skwasm_heavy.js"):
+        path = OUTPUT / "canvaskit" / name
+        if DEPRECATED_WEBGL_GUARD not in path.read_text():
+            fail(f"{path} does not block the deprecated WebGL renderer extension")
+
+    web_runtime_paths = (
+        OUTPUT / "main.dart.mjs",
+        OUTPUT / "main.dart.js",
+        OUTPUT / "main.dart.wasm",
+        *(OUTPUT / name for name in DIAGNOSTIC_SOURCE_MAPS),
+    )
+    for path in web_runtime_paths:
+        contents = path.read_bytes()
+        for unwanted in WEB_ONLY_UNWANTED:
+            if unwanted.encode() in contents:
+                fail(f"{path} still contains native-only dependency {unwanted!r}")
+    if (OUTPUT / "vendor/zxing").exists():
+        fail("web output still contains the ZXing scanner runtime")
 
 
 def main() -> None:

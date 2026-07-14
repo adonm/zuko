@@ -3,4 +3,5 @@
 !.flutter-version
 !scripts/
 !scripts/flutter-sdk.py
+!scripts/install-android-platform-tools.sh
 !scripts/install-freedesktop-llvm.sh

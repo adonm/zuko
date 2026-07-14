@@ -14,16 +14,16 @@ actionlint = "1.7.12"
 hk = "1.50.0"
 
 # Official beta archives for framework revision
-# 677d472756f83c14371dd8cc624387065f3d32a7. Platform checksums come from
+# bd1e75d918605c91b411e8789fb911e6c9a84534. Platform checksums come from
 # Flutter's published release manifests.
 [tools."http:flutter"]
-version = "3.46.0-0.3.pre"
+version = "3.47.0-0.1.pre"
 
 [tools."http:flutter".platforms]
-linux-x64 = { url = "https://storage.googleapis.com/flutter_infra_release/releases/beta/linux/flutter_linux_3.46.0-0.3.pre-beta.tar.xz", checksum = "sha256:931c30fde3cc9b4eae2bbae750914c1ec60bfea4d46531e37f25caaa1a47d2da" }
-macos-x64 = { url = "https://storage.googleapis.com/flutter_infra_release/releases/beta/macos/flutter_macos_3.46.0-0.3.pre-beta.zip", checksum = "sha256:788df8e91c57880b0559ceeb8e09021bbc841bd2e03f3e8d1a149cd127735f86" }
-macos-arm64 = { url = "https://storage.googleapis.com/flutter_infra_release/releases/beta/macos/flutter_macos_arm64_3.46.0-0.3.pre-beta.zip", checksum = "sha256:5191b391f00a8e3756c873e27326af01b62c40c152d8cfd4b490b9ed8a3530f0" }
-windows-x64 = { url = "https://storage.googleapis.com/flutter_infra_release/releases/beta/windows/flutter_windows_3.46.0-0.3.pre-beta.zip", checksum = "sha256:11e5b04a443f0a764ddcf36b53dca811f65f859b6074f7e4a3e8591075d572ed" }
+linux-x64 = { url = "https://storage.googleapis.com/flutter_infra_release/releases/beta/linux/flutter_linux_3.47.0-0.1.pre-beta.tar.xz", checksum = "sha256:2cf72c1bc8571f406dfb7a0b3d8128abd4f43d2c335d2ed76249fe492c0d7c34" }
+macos-x64 = { url = "https://storage.googleapis.com/flutter_infra_release/releases/beta/macos/flutter_macos_3.47.0-0.1.pre-beta.zip", checksum = "sha256:60b11ec8b5540de339c2aeaf19814d86f1232017bf82d3dc06f9cdad68092c97" }
+macos-arm64 = { url = "https://storage.googleapis.com/flutter_infra_release/releases/beta/macos/flutter_macos_arm64_3.47.0-0.1.pre-beta.zip", checksum = "sha256:688988016fa2f316963e12d993b5006541c2cdadfad3b9d9723da6ffaba16cd3" }
+windows-x64 = { url = "https://storage.googleapis.com/flutter_infra_release/releases/beta/windows/flutter_windows_3.47.0-0.1.pre-beta.zip", checksum = "sha256:ec2d657406924e87bc84af2f3f38b45efba3a27669e59aa269096deb29e53fef" }
 
 # System-level dependencies used by Linux builds. `mise bootstrap` installs
 # only entries for package managers available on the current OS.
@@ -59,4 +59,4 @@ experimental = true
 [env]
 CARGO_TERM_COLOR = "always"
 CODEMAGIC_APP_ID = "6a52dc14add8531e99f88b8a"
-ZUKO_FLUTTER_REVISION = "677d472756f83c14371dd8cc624387065f3d32a7"
+ZUKO_FLUTTER_REVISION = "bd1e75d918605c91b411e8789fb911e6c9a84534"

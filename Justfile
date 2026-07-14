@@ -1,6 +1,8 @@
 # Human-facing build, test, package, and release recipes.
 # Tool versions and bootstrap dependencies live in mise.toml.
 # Run through an activated Mise shell or `mise exec -- just <recipe>`.
+# On x86_64 Linux, prefer the `container-*` Flutter recipes: they include the
+# pinned JDK, Android SDK/NDK, Linux SDK, Flutter, Rust, and web toolchain.
 set shell := ["bash", "-euo", "pipefail", "-c"]
 
 default:
@@ -8,16 +10,16 @@ default:
 
 [group('core')]
 build:
-    cargo build --release
+    cargo build --locked --release
 
 [group('core')]
 test:
-    cargo clippy --all-targets -- -D warnings
-    cargo test
+    cargo clippy --locked --all-targets -- -D warnings
+    cargo test --locked
 
 [group('core')]
 test-e2e:
-    cargo test --release --test e2e -- --ignored --nocapture
+    cargo test --locked --release --test e2e -- --ignored --nocapture
 
 [group('core')]
 fmt:
@@ -72,7 +74,7 @@ flutter-vendor-check: flutter-vendor-get
     cd flutter/packages/flterm && flutter test --no-pub
 
 [group('flutter')]
-flutter-app-check: flutter-get
+flutter-app-check: flutter-get flutter-vendor-get
     python3 scripts/check-flutter-config.py
     python3 scripts/check-dart-format.py flutter/lib flutter/test
     cd flutter && flutter analyze --no-pub
@@ -81,27 +83,37 @@ flutter-app-check: flutter-get
 [group('flutter')]
 flutter-check: flutter-vendor-check flutter-app-check
 
-# Hosted CI keeps application analysis/tests and relies on target builds to
-# compile the pinned flterm integration. The exhaustive vendored package suite
-# remains in flutter-check and the hk pre-push gate.
+# Lean hosted application tests; the full flterm suite stays in flutter-check.
 [group('flutter')]
 flutter-ci-check: flutter-app-check
+
+# Shared web + Android + Linux gate; prefer container-ci on x86_64 Linux.
+[group('flutter')]
+flutter-linux-ci: flutter-ci-check flutter-linux-builds
+
+# Compile every Flutter target faithfully buildable on a Linux host.
+[group('flutter')]
+flutter-linux-builds:
+    rm -rf target/book/web flutter/build/app flutter/build/linux
+    just build-web
+    just build-flutter-android-debug
+    just build-flutter-linux
 
 [group('flutter')]
 patch-flutter-plugins: flutter-get
     {{ env_var_or_default('PYTHON', 'python3') }} scripts/patch-flutter-plugins.py flutter
 
 [group('flutter')]
-build-flutter-android: flutter-get
+build-flutter-android: patch-flutter-plugins
     cd flutter && flutter build apk --release --no-pub
     cd flutter && flutter build appbundle --release --no-pub
 
 [group('flutter')]
-build-flutter-android-debug: flutter-get
+build-flutter-android-debug: patch-flutter-plugins
     cd flutter && flutter build apk --debug --no-pub --target-platform android-arm64
 
 [group('flutter')]
-build-flutter-android-store tag version build_number:
+build-flutter-android-store tag version build_number: patch-flutter-plugins
     scripts/build-android-store-bundle.sh "{{ tag }}" "{{ version }}" "{{ build_number }}"
 
 [group('flutter')]
@@ -153,9 +165,75 @@ package-linux-release tag sha:
 install-freedesktop-llvm destination='/opt/llvm':
     bash scripts/install-freedesktop-llvm.sh "{{ destination }}"
 
-[group('flutter')]
+# Run any supported mode in the pinned Flutter CI image.
+[group('containers')]
+container-flutter mode='ci':
+    bash scripts/container-flutter.sh "{{ mode }}"
+
+# Mirror Codemagic's Linux-hosted Dart, web, Android, and Linux gate.
+[group('containers')]
+container-ci:
+    bash scripts/container-flutter.sh ci
+
+# Run preflight, workflow/docs checks, and Linux-hostable Flutter builds.
+[group('containers')]
+container-all:
+    bash scripts/container-flutter.sh all
+
+# Run Rust and exhaustive Flutter/flterm checks without platform builds.
+[group('containers')]
+container-preflight:
+    bash scripts/container-flutter.sh preflight
+
+# Run the exhaustive Flutter application and flterm checks.
+[group('containers')]
+container-flutter-check:
+    bash scripts/container-flutter.sh check
+
+# Validate GitHub Actions and build the documentation book.
+[group('containers')]
+container-quality:
+    bash scripts/container-flutter.sh quality
+
+# Check documentation links; pass GITHUB_TOKEN to avoid API rate limits.
+[group('containers')]
+container-links:
+    bash scripts/container-flutter.sh links
+
+# Run the live relay, pairing, revocation, and PTY integration test.
+[group('containers')]
+container-e2e:
+    bash scripts/container-flutter.sh e2e
+
+# Build the release web client with the pinned Wasm toolchain.
+[group('containers')]
+container-web:
+    bash scripts/container-flutter.sh web
+
+# Build the ARM64 Android debug compile gate.
+[group('containers')]
+container-android:
+    bash scripts/container-flutter.sh android
+
+# Build unsigned Android release APK and AAB artifacts.
+[group('containers')]
+container-android-release:
+    bash scripts/container-flutter.sh android-release
+
+# Compatibility entry point; defaults to the historical Flutter check mode.
+[group('containers')]
 container-linux mode='check':
     bash scripts/container-linux.sh "{{ mode }}"
+
+# Build the Linux desktop client in the pinned Freedesktop SDK.
+[group('containers')]
+container-linux-build:
+    bash scripts/container-flutter.sh linux
+
+# Build and package the checksummed Linux release archive.
+[group('containers')]
+container-linux-bundle:
+    bash scripts/container-flutter.sh linux-bundle
 
 [group('flutter')]
 build-flatpark-test-bundle:

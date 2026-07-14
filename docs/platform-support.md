@@ -8,7 +8,7 @@ Current build floors and validation:
 
 | Target | Enforced package/build floor | Automated validation |
 |--------|------------------------------|----------------------|
-| Android | API 35 minimum; SDK/build-tools 36; NDK 28.2 | shared tests plus ARM64 debug and signed release builds |
+| Android | API 35 minimum; SDK/build-tools 36; platform-tools 37.0; NDK 29.0 | shared tests plus ARM64 debug and signed release builds |
 | iOS/iPadOS | 18.0 deployment target | ARM64 Simulator build, Appetize preview, and signed device IPA validation |
 | macOS | 15.0 deployment target | release app build and protected Mac App Store package validation |
 | Windows | Windows 10 package target, x86_64 build | release bundle build; protected MSIX/MSIXBundle validation is manual |

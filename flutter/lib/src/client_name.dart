@@ -1,4 +1,3 @@
-import 'package:device_info_plus/device_info_plus.dart';
 import 'package:flutter/foundation.dart';
 
 import 'device_hostname.dart';
@@ -28,40 +27,10 @@ String clientAuthorizationLabel(String clientName, Uint8List clientKey) {
   return 'zuko-${name.isEmpty ? 'device' : name}-$fingerprint';
 }
 
-Future<String> suggestClientName({DeviceInfoPlugin? deviceInfo}) async {
+Future<String> suggestClientName() async {
   final fallback = _platformFallback();
   try {
-    final plugin = deviceInfo ?? DeviceInfoPlugin();
-    if (kIsWeb) {
-      final info = await plugin.webBrowserInfo;
-      return firstUsableClientName([
-        '${_browserName(info.browserName)}-web',
-      ], fallback: fallback);
-    }
-    switch (defaultTargetPlatform) {
-      case TargetPlatform.android:
-        final info = await plugin.androidInfo;
-        return firstUsableClientName([
-          info.name,
-          '${info.manufacturer} ${info.model}',
-          info.model,
-        ], fallback: fallback);
-      case TargetPlatform.iOS:
-        final info = await plugin.iosInfo;
-        return firstUsableClientName([
-          info.modelName,
-          info.localizedModel,
-          info.model,
-        ], fallback: fallback);
-      case TargetPlatform.macOS:
-      case TargetPlatform.windows:
-      case TargetPlatform.linux:
-        return firstUsableClientName([
-          readDeviceHostname(),
-        ], fallback: fallback);
-      case TargetPlatform.fuchsia:
-        return fallback;
-    }
+    return firstUsableClientName([readDeviceHostname()], fallback: fallback);
   } on Object {
     return fallback;
   }
@@ -103,10 +72,3 @@ String _platformFallback() {
     TargetPlatform.fuchsia => 'device',
   };
 }
-
-String _browserName(BrowserName name) => switch (name) {
-  BrowserName.samsungInternet => 'samsung-internet',
-  BrowserName.msie => 'internet-explorer',
-  BrowserName.unknown => 'browser',
-  _ => name.name,
-};

@@ -3,7 +3,6 @@
 
 from __future__ import annotations
 
-import hashlib
 import pathlib
 import plistlib
 import tomllib
@@ -29,24 +28,24 @@ def main() -> None:
     with (ROOT / "mise.toml").open("rb") as source:
         mise = tomllib.load(source)
     flutter = mise["tools"]["http:flutter"]
-    if flutter["version"] != "3.46.0-0.3.pre":
-        raise SystemExit("Flutter config: mise must pin Flutter 3.46.0-0.3.pre")
+    if flutter["version"] != "3.47.0-0.1.pre":
+        raise SystemExit("Flutter config: mise must pin Flutter 3.47.0-0.1.pre")
     expected_archives = {
         "linux-x64": (
-            "beta/linux/flutter_linux_3.46.0-0.3.pre-beta.tar.xz",
-            "sha256:931c30fde3cc9b4eae2bbae750914c1ec60bfea4d46531e37f25caaa1a47d2da",
+            "beta/linux/flutter_linux_3.47.0-0.1.pre-beta.tar.xz",
+            "sha256:2cf72c1bc8571f406dfb7a0b3d8128abd4f43d2c335d2ed76249fe492c0d7c34",
         ),
         "macos-x64": (
-            "beta/macos/flutter_macos_3.46.0-0.3.pre-beta.zip",
-            "sha256:788df8e91c57880b0559ceeb8e09021bbc841bd2e03f3e8d1a149cd127735f86",
+            "beta/macos/flutter_macos_3.47.0-0.1.pre-beta.zip",
+            "sha256:60b11ec8b5540de339c2aeaf19814d86f1232017bf82d3dc06f9cdad68092c97",
         ),
         "macos-arm64": (
-            "beta/macos/flutter_macos_arm64_3.46.0-0.3.pre-beta.zip",
-            "sha256:5191b391f00a8e3756c873e27326af01b62c40c152d8cfd4b490b9ed8a3530f0",
+            "beta/macos/flutter_macos_arm64_3.47.0-0.1.pre-beta.zip",
+            "sha256:688988016fa2f316963e12d993b5006541c2cdadfad3b9d9723da6ffaba16cd3",
         ),
         "windows-x64": (
-            "beta/windows/flutter_windows_3.46.0-0.3.pre-beta.zip",
-            "sha256:11e5b04a443f0a764ddcf36b53dca811f65f859b6074f7e4a3e8591075d572ed",
+            "beta/windows/flutter_windows_3.47.0-0.1.pre-beta.zip",
+            "sha256:ec2d657406924e87bc84af2f3f38b45efba3a27669e59aa269096deb29e53fef",
         ),
     }
     platforms = flutter["platforms"]
@@ -57,7 +56,7 @@ def main() -> None:
         if not entry.get("url", "").endswith(archive) or entry.get("checksum") != checksum:
             raise SystemExit(f"Flutter config: invalid {platform} beta archive pin")
     revision = mise["env"].get("ZUKO_FLUTTER_REVISION")
-    if revision != "677d472756f83c14371dd8cc624387065f3d32a7":
+    if revision != "bd1e75d918605c91b411e8789fb911e6c9a84534":
         raise SystemExit("Flutter config: mise must pin the published beta revision")
 
     android = ET.parse(ROOT / "flutter/android/app/src/main/AndroidManifest.xml").getroot()
@@ -82,19 +81,73 @@ def main() -> None:
         "flutter/linux/runner/my_application.cc",
         "fl_dart_project_set_enable_impeller(project, TRUE);",
     )
-    # This published beta predates the Windows DartProject Impeller API. Keep
-    # the runner compatible with its headers; later SDKs can use the explicit
-    # switch after the SDK pin and this check are updated together.
-    forbid_text("flutter/windows/runner/main.cpp", "set_impeller_switch")
+    require_text(
+        "flutter/windows/runner/main.cpp",
+        "project.set_impeller_switch(flutter::ImpellerSwitch::Enabled);",
+    )
     require_text("flutter/web/flutter_bootstrap.js", "renderer: 'skwasm'")
     forbid_text("flutter/web/flutter_bootstrap.js", "enableWimp")
-    require_text("flutter/lib/main.dart", "vendor/zxing/index.min.js")
+    forbid_text("flutter/lib/main.dart", "mobile_scanner")
+    require_text("flutter/pubspec.yaml", "mobile_scanner: 7.2.0")
     forbid_text("flutter/web/index.html", "unpkg.com")
-    zxing = ROOT / "flutter/web/vendor/zxing/index.min.js"
-    if hashlib.sha256(zxing.read_bytes()).hexdigest() != (
-        "d7cc8f69dd70bdcf3ac00c9ae572bf2acb9f4132ba379c72df842e4db918652d"
-    ):
-        raise SystemExit("Flutter config: invalid vendored ZXing 0.21.3 runtime")
+    require_text("scripts/build-web.sh", "prepare-web-plugins.py")
+    require_text("scripts/prepare-web-plugins.py", '"mobile_scanner"')
+    require_text("scripts/prepare-web-plugins.py", '"--restore"')
+    if (ROOT / "flutter/web/vendor/zxing").exists():
+        raise SystemExit("Flutter config: obsolete vendored ZXing runtime remains")
+
+    containerfile = "containers/flutter-ci.Containerfile"
+    for value in [
+        "eclipse-temurin@sha256:89dc1a6e09920ea26b2ede6fddfcac1a7508b50159a6d04c918a46132953aab6",
+        "flatpak-github-actions@sha256:bc5938197c339664f893828925061b08486e7f355c3e91eefcaae7293d3cfd6b",
+        "ANDROID_COMMAND_LINE_TOOLS_VERSION=14742923",
+        "ANDROID_COMMAND_LINE_TOOLS_SHA256=04453066b540409d975c676d781da1477479dde3761310f1a7eb92a1dfb15af7",
+        "'platforms;android-34'",
+        "'platforms;android-35'",
+        "'platforms;android-36'",
+        "'build-tools;36.0.0'",
+        "'cmake;3.22.1'",
+        "'ndk;29.0.14206865'",
+        "flutter precache --android --linux --web",
+    ]:
+        require_text(containerfile, value)
+    require_text("Justfile", "flutter-linux-ci: flutter-ci-check flutter-linux-builds")
+    require_text("Justfile", "flutter-app-check: flutter-get flutter-vendor-get")
+    require_text("scripts/container-flutter.sh", "mise exec -- just flutter-linux-ci")
+    require_text("scripts/container-flutter.sh", "localhost/zuko-flutter-ci:2026.07")
+    require_text("scripts/container-flutter.sh", "zuko-flutter-dart-tool")
+    require_text("scripts/container-flutter.sh", '"$root:/source:ro"')
+    forbid_text("scripts/container-flutter.sh", '"$root:/workspace"')
+    forbid_text(containerfile, "'platform-tools'")
+    require_text("scripts/container-flutter.sh", "mode == links")
+    require_text(containerfile, "install-android-platform-tools")
+    require_text("scripts/install-android-platform-tools.sh", "VERSION=37.0.0")
+    require_text(
+        "scripts/install-android-platform-tools.sh",
+        "198ae156ab285fa555987219af237b31102fefe8b9d2bc274708a8d4f2865a07",
+    )
+    require_text("flutter/android/app/build.gradle.kts", 'ndkVersion = "29.0.14206865"')
+    require_text("scripts/patch-flutter-plugins.py", 'ndkVersion "29.0.14206865"')
+    require_text(
+        "scripts/patch-flutter-plugins.py",
+        "Zuko does not use desktop JNI",
+    )
+    require_text("Justfile", "build-flutter-android: patch-flutter-plugins")
+    require_text("Justfile", "cargo test --locked")
+    require_text(
+        "scripts/build-flatpark-test-bundle.sh",
+        "localhost/zuko-flutter-ci:2026.07",
+    )
+    require_text("codemagic.yaml", "mise exec -- just flutter-linux-ci")
+    require_text("codemagic.yaml", "scripts/prepare-web-plugins.py")
+    require_text(".github/workflows/docs.yml", '"scripts/prepare-web-plugins.py"')
+    forbid_text("scripts/container-flutter.sh", "--privileged")
+    for obsolete in [
+        "containers/flutter-linux.Containerfile",
+        "containers/flutter-linux.ignore",
+    ]:
+        if (ROOT / obsolete).exists():
+            raise SystemExit(f"Flutter config: obsolete container definition remains: {obsolete}")
 
     for path, value in [
         ("codemagic.yaml", "flutter-linux-ci:"),

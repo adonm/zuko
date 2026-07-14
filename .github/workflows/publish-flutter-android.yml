@@ -90,10 +90,15 @@ jobs:
         uses: android-actions/setup-android@40fd30fb8d7440372e1316f5d1809ec01dcd3699 # v4.0.1
         with:
           packages: >-
-            platform-tools
+            platforms;android-34
+            platforms;android-35
             platforms;android-36
             build-tools;36.0.0
-            ndk;28.2.13676358
+            cmake;3.22.1
+            ndk;29.0.14206865
+
+      - name: Install pinned Android platform tools
+        run: scripts/install-android-platform-tools.sh "$ANDROID_SDK_ROOT"
 
       - name: Natively rebuild unsigned AAB from release tag
         env:
