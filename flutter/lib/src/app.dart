@@ -24,7 +24,9 @@ const _installCommand =
     "curl --proto '=https' --tlsv1.2 -LsSf "
     'https://zuko.adonm.dev/install.sh | sh';
 const _shareCommand = 'zuko install\nzuko share';
-const terminalAccessoryHeight = 24.0;
+const terminalAccessoryHeight = kYaruButtonHeight;
+const terminalAccessoryItemWidth = kYaruButtonHeight;
+const terminalAccessoryGroupSpacing = 6.0;
 const terminalNavigationKeys = <({String label, Key key})>[
   (label: 'Home', key: Key.home),
   (label: 'End', key: Key.end),
@@ -62,13 +64,7 @@ IconData _terminalArrowIcon(Key key) => switch (key) {
   _ => throw ArgumentError.value(key, 'key', 'not an arrow key'),
 };
 
-double terminalAccessoryItemWidth({
-  required double availableWidth,
-  required int itemCount,
-}) {
-  if (!availableWidth.isFinite || itemCount <= 0) return 36;
-  return ((availableWidth - 8) / itemCount).clamp(28, 36).toDouble();
-}
+bool showConnectionTabs(int connectionCount) => connectionCount > 1;
 
 bool savedHostMatchesQuery(SavedHost host, String query) {
   final terms = query
@@ -270,8 +266,8 @@ class _ExtendedKeyWrap extends StatelessWidget {
           for (final item in keys)
             SizedBox(
               width: width,
-              child: OutlinedButton(
-                style: OutlinedButton.styleFrom(
+              child: FilledButton(
+                style: FilledButton.styleFrom(
                   padding: const EdgeInsets.symmetric(horizontal: 8),
                 ),
                 onPressed: () => onKey(item.key),
@@ -291,12 +287,22 @@ class RepeatableAction extends StatefulWidget {
     required this.child,
     this.initialDelay = const Duration(milliseconds: 400),
     this.repeatInterval = const Duration(milliseconds: 80),
+    this.borderRadius,
+    this.focusColor,
+    this.highlightColor,
+    this.hoverColor,
+    this.onFocusChange,
   });
 
   final VoidCallback onInvoke;
   final Widget child;
   final Duration initialDelay;
   final Duration repeatInterval;
+  final BorderRadius? borderRadius;
+  final Color? focusColor;
+  final Color? highlightColor;
+  final Color? hoverColor;
+  final ValueChanged<bool>? onFocusChange;
 
   @override
   State<RepeatableAction> createState() => _RepeatableActionState();
@@ -370,7 +376,12 @@ class _RepeatableActionState extends State<RepeatableAction> {
       child: InkResponse(
         onTap: _tap,
         onTapCancel: _cancel,
+        borderRadius: widget.borderRadius,
         containedInkWell: true,
+        focusColor: widget.focusColor,
+        highlightColor: widget.highlightColor,
+        hoverColor: widget.hoverColor,
+        onFocusChange: widget.onFocusChange,
         child: widget.child,
       ),
     ),
@@ -767,16 +778,18 @@ class _HomeState extends State<_Home>
                           )
                   : Column(
                       children: [
-                        ConnectionTabStrip(
-                          controller: _tabController!,
-                          selectedIndex: _activeIndex,
-                          connections: _connections,
-                          labelFor: _connectionName,
-                          onSelected: _selectConnectionAt,
-                          onClose: (connection) =>
-                              unawaited(_closeConnection(connection)),
-                        ),
-                        const Divider(height: 1),
+                        if (showConnectionTabs(_connections.length)) ...[
+                          ConnectionTabStrip(
+                            controller: _tabController!,
+                            selectedIndex: _activeIndex,
+                            connections: _connections,
+                            labelFor: _connectionName,
+                            onSelected: _selectConnectionAt,
+                            onClose: (connection) =>
+                                unawaited(_closeConnection(connection)),
+                          ),
+                          const Divider(height: 1),
+                        ],
                         Expanded(
                           child: IndexedStack(
                             index: _activeIndex,
@@ -1249,9 +1262,8 @@ class _TerminalAccessory extends StatelessWidget {
     animation: controller,
     builder: (context, _) {
       final colors = Theme.of(context).colorScheme;
-      final itemCount = showAdditionalKeys ? 11 : 5;
       return Material(
-        color: colors.surfaceContainerHigh,
+        color: colors.surfaceContainerLow,
         child: DecoratedBox(
           decoration: BoxDecoration(
             border: Border(top: BorderSide(color: colors.outlineVariant)),
@@ -1260,105 +1272,95 @@ class _TerminalAccessory extends StatelessWidget {
             top: false,
             child: SizedBox(
               height: terminalAccessoryHeight,
-              child: LayoutBuilder(
-                builder: (context, constraints) {
-                  final itemWidth = terminalAccessoryItemWidth(
-                    availableWidth: constraints.maxWidth,
-                    itemCount: itemCount,
-                  );
-                  return ListView(
-                    scrollDirection: Axis.horizontal,
-                    padding: const EdgeInsets.symmetric(horizontal: 4),
-                    children: [
-                      _AccessoryKey(
-                        width: itemWidth,
-                        label: 'Esc',
-                        onPressed: () => controller.sendKey(Key.escape),
+              child: ListView(
+                scrollDirection: Axis.horizontal,
+                padding: const EdgeInsets.symmetric(horizontal: 6),
+                children: [
+                  _AccessoryKey(
+                    width: terminalAccessoryItemWidth,
+                    label: 'Esc',
+                    onPressed: () => controller.sendKey(Key.escape),
+                  ),
+                  _AccessoryKey(
+                    width: terminalAccessoryItemWidth,
+                    label: 'Tab',
+                    onPressed: () => controller.sendKey(Key.tab),
+                  ),
+                  const SizedBox(width: terminalAccessoryGroupSpacing),
+                  if (showAdditionalKeys) ...[
+                    _AccessoryKey(
+                      width: terminalAccessoryItemWidth,
+                      label: 'Ctrl',
+                      selected: controller.virtualMods.hasCtrl,
+                      onPressed: () => controller.toggleMod(const Mods.ctrl()),
+                    ),
+                    _AccessoryKey(
+                      width: terminalAccessoryItemWidth,
+                      label: 'Alt',
+                      selected: controller.virtualMods.hasAlt,
+                      onPressed: () => controller.toggleMod(const Mods.alt()),
+                    ),
+                    const SizedBox(width: terminalAccessoryGroupSpacing),
+                    for (final item in terminalArrowKeys)
+                      _RepeatableAccessoryIcon(
+                        width: terminalAccessoryItemWidth,
+                        tooltip: item.label,
+                        icon: _terminalArrowIcon(item.key),
+                        onPressed: () => controller.sendKey(item.key),
                       ),
-                      _AccessoryKey(
-                        width: itemWidth,
-                        label: 'Tab',
-                        onPressed: () => controller.sendKey(Key.tab),
-                      ),
-                      if (showAdditionalKeys) ...[
-                        _AccessoryKey(
-                          width: itemWidth,
-                          label: 'Ctrl',
-                          selected: controller.virtualMods.hasCtrl,
-                          onPressed: () =>
-                              controller.toggleMod(const Mods.ctrl()),
-                        ),
-                        _AccessoryKey(
-                          width: itemWidth,
-                          label: 'Alt',
-                          selected: controller.virtualMods.hasAlt,
-                          onPressed: () =>
-                              controller.toggleMod(const Mods.alt()),
-                        ),
-                        for (final item in terminalArrowKeys)
-                          _RepeatableAccessoryIcon(
-                            width: itemWidth,
-                            tooltip: item.label,
-                            icon: _terminalArrowIcon(item.key),
-                            onPressed: () => controller.sendKey(item.key),
-                          ),
-                      ],
-                      _AccessoryIcon(
-                        width: itemWidth,
-                        tooltip:
-                            controller.keyboardState == KeyboardState.showing
-                            ? 'Hide keyboard'
-                            : 'Show keyboard',
-                        icon: controller.keyboardState == KeyboardState.showing
-                            ? YaruIcons.keyboard_filled
-                            : YaruFreedesktopIcons.input_keyboard.icon,
-                        selected:
-                            controller.keyboardState == KeyboardState.showing,
-                        onPressed: () {
-                          if (controller.keyboardState ==
-                              KeyboardState.showing) {
-                            controller.disableKeyboard();
-                          } else {
-                            controller.showKeyboard();
-                          }
-                        },
-                      ),
-                      _AccessoryIcon(
-                        width: itemWidth,
-                        tooltip: controller.hasSelection
-                            ? 'Copy selected text'
-                            : 'Paste',
-                        icon: controller.hasSelection
-                            ? YaruFreedesktopIcons.edit_copy.icon
-                            : YaruFreedesktopIcons.edit_paste.icon,
-                        onPressed: controller.hasSelection
-                            ? () => _copy(context)
-                            : () => _paste(context),
-                      ),
-                      _AccessoryMenu(
-                        width: itemWidth,
-                        hasSelection: controller.hasSelection,
-                        onSelected: (action) {
-                          switch (action) {
-                            case 'extended-keys':
-                              unawaited(
-                                showTerminalExtendedKeyPalette(
-                                  context,
-                                  onKey: (key) => controller.sendKey(key),
-                                ),
-                              );
-                            case 'select-all':
-                              controller.selectAll();
-                            case 'copy':
-                              unawaited(_copy(context));
-                            case 'paste':
-                              unawaited(_paste(context));
-                          }
-                        },
-                      ),
-                    ],
-                  );
-                },
+                    const SizedBox(width: terminalAccessoryGroupSpacing),
+                  ],
+                  _AccessoryIcon(
+                    width: terminalAccessoryItemWidth,
+                    tooltip: controller.keyboardState == KeyboardState.showing
+                        ? 'Hide keyboard'
+                        : 'Show keyboard',
+                    icon: controller.keyboardState == KeyboardState.showing
+                        ? YaruIcons.keyboard_filled
+                        : YaruFreedesktopIcons.input_keyboard.icon,
+                    selected: controller.keyboardState == KeyboardState.showing,
+                    onPressed: () {
+                      if (controller.keyboardState == KeyboardState.showing) {
+                        controller.disableKeyboard();
+                      } else {
+                        controller.showKeyboard();
+                      }
+                    },
+                  ),
+                  _AccessoryIcon(
+                    width: terminalAccessoryItemWidth,
+                    tooltip: controller.hasSelection
+                        ? 'Copy selected text'
+                        : 'Paste',
+                    icon: controller.hasSelection
+                        ? YaruFreedesktopIcons.edit_copy.icon
+                        : YaruFreedesktopIcons.edit_paste.icon,
+                    onPressed: controller.hasSelection
+                        ? () => _copy(context)
+                        : () => _paste(context),
+                  ),
+                  _AccessoryMenu(
+                    width: terminalAccessoryItemWidth,
+                    hasSelection: controller.hasSelection,
+                    onSelected: (action) {
+                      switch (action) {
+                        case 'extended-keys':
+                          unawaited(
+                            showTerminalExtendedKeyPalette(
+                              context,
+                              onKey: (key) => controller.sendKey(key),
+                            ),
+                          );
+                        case 'select-all':
+                          controller.selectAll();
+                        case 'copy':
+                          unawaited(_copy(context));
+                        case 'paste':
+                          unawaited(_paste(context));
+                      }
+                    },
+                  ),
+                ],
               ),
             ),
           ),
@@ -1373,35 +1375,20 @@ class _AccessoryKey extends StatelessWidget {
     required this.width,
     required this.label,
     required this.onPressed,
-    this.selected = false,
+    this.selected,
   });
   final double width;
   final String label;
   final VoidCallback onPressed;
-  final bool selected;
+  final bool? selected;
 
   @override
-  Widget build(BuildContext context) => SizedBox(
+  Widget build(BuildContext context) => _AccessoryButton(
     width: width,
-    height: terminalAccessoryHeight,
-    child: Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 1, vertical: 3),
-      child: TextButton(
-        style: TextButton.styleFrom(
-          minimumSize: Size(width - 2, 18),
-          padding: const EdgeInsets.symmetric(horizontal: 2),
-          backgroundColor: selected
-              ? Theme.of(context).colorScheme.primaryContainer
-              : null,
-          foregroundColor: selected
-              ? Theme.of(context).colorScheme.onPrimaryContainer
-              : null,
-          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-        ),
-        onPressed: onPressed,
-        child: Text(label, style: const TextStyle(fontSize: 11, height: 1)),
-      ),
-    ),
+    tooltip: label,
+    selected: selected,
+    onPressed: onPressed,
+    child: Text(label),
   );
 }
 
@@ -1411,38 +1398,21 @@ class _AccessoryIcon extends StatelessWidget {
     required this.tooltip,
     required this.icon,
     required this.onPressed,
-    this.selected = false,
+    this.selected,
   });
   final double width;
   final String tooltip;
   final IconData icon;
   final VoidCallback? onPressed;
-  final bool selected;
+  final bool? selected;
 
   @override
-  Widget build(BuildContext context) => SizedBox(
+  Widget build(BuildContext context) => _AccessoryButton(
     width: width,
-    height: terminalAccessoryHeight,
-    child: IconButton(
-      tooltip: tooltip,
-      onPressed: onPressed,
-      icon: Icon(icon),
-      iconSize: 18,
-      padding: EdgeInsets.zero,
-      constraints: BoxConstraints(
-        minWidth: width,
-        minHeight: terminalAccessoryHeight,
-      ),
-      style: IconButton.styleFrom(
-        backgroundColor: selected
-            ? Theme.of(context).colorScheme.primaryContainer
-            : null,
-        foregroundColor: selected
-            ? Theme.of(context).colorScheme.onPrimaryContainer
-            : null,
-        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-      ),
-    ),
+    tooltip: tooltip,
+    selected: selected,
+    onPressed: onPressed,
+    child: Icon(icon),
   );
 }
 
@@ -1460,21 +1430,119 @@ class _RepeatableAccessoryIcon extends StatelessWidget {
   final VoidCallback onPressed;
 
   @override
-  Widget build(BuildContext context) => Tooltip(
-    message: tooltip,
-    child: Semantics(
-      button: true,
-      label: tooltip,
-      child: RepeatableAction(
-        onInvoke: onPressed,
-        child: SizedBox(
-          width: width,
-          height: terminalAccessoryHeight,
-          child: Icon(icon, size: 18),
+  Widget build(BuildContext context) => _AccessoryButton(
+    width: width,
+    tooltip: tooltip,
+    onPressed: onPressed,
+    repeatable: true,
+    child: Icon(icon),
+  );
+}
+
+class _AccessoryButton extends StatefulWidget {
+  const _AccessoryButton({
+    required this.width,
+    required this.tooltip,
+    required this.onPressed,
+    required this.child,
+    this.selected,
+    this.repeatable = false,
+  });
+
+  final double width;
+  final String tooltip;
+  final VoidCallback? onPressed;
+  final Widget child;
+  final bool? selected;
+  final bool repeatable;
+
+  @override
+  State<_AccessoryButton> createState() => _AccessoryButtonState();
+}
+
+class _AccessoryButtonState extends State<_AccessoryButton> {
+  bool _focused = false;
+
+  void _onFocusChange(bool focused) {
+    if (_focused != focused) setState(() => _focused = focused);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = Theme.of(context).colorScheme;
+    final radius = BorderRadius.circular(kYaruButtonRadius);
+    final foreground = widget.selected == true
+        ? colors.primary
+        : colors.onSurface.withValues(alpha: 0.8);
+    final hoverColor = colors.onSurfaceVariant.withValues(alpha: 0.08);
+    final pressedColor = colors.onSurfaceVariant.withValues(alpha: 0.12);
+    final content = SizedBox(
+      width: widget.width,
+      height: terminalAccessoryHeight,
+      child: Center(child: widget.child),
+    );
+    final interactive = widget.repeatable
+        ? RepeatableAction(
+            onInvoke: widget.onPressed!,
+            borderRadius: radius,
+            focusColor: hoverColor,
+            highlightColor: pressedColor,
+            hoverColor: hoverColor,
+            onFocusChange: _onFocusChange,
+            child: content,
+          )
+        : InkWell(
+            onTap: widget.onPressed,
+            borderRadius: radius,
+            focusColor: hoverColor,
+            highlightColor: pressedColor,
+            hoverColor: hoverColor,
+            onFocusChange: _onFocusChange,
+            child: content,
+          );
+
+    return Tooltip(
+      message: widget.tooltip,
+      child: Semantics(
+        button: true,
+        enabled: widget.onPressed != null,
+        selected: widget.selected,
+        label: widget.tooltip,
+        excludeSemantics: true,
+        child: AnimatedContainer(
+          duration: Durations.short2,
+          decoration: BoxDecoration(
+            color: widget.selected == true
+                ? colors.onSurface.withValues(alpha: 0.1)
+                : Colors.transparent,
+            borderRadius: radius,
+          ),
+          foregroundDecoration: BoxDecoration(
+            border: Border.all(
+              color: _focused ? colors.primary : Colors.transparent,
+              width: kYaruFocusBorderWidth,
+            ),
+            borderRadius: radius,
+          ),
+          clipBehavior: Clip.antiAlias,
+          child: Material(
+            type: MaterialType.transparency,
+            child: IconTheme(
+              data: IconThemeData(color: foreground, size: kYaruIconSize),
+              child: DefaultTextStyle(
+                style: Theme.of(context).textTheme.labelSmall!.copyWith(
+                  color: foreground,
+                  fontWeight: FontWeight.w500,
+                  height: 1,
+                ),
+                child: interactive,
+              ),
+            ),
+          ),
         ),
       ),
-    ),
-  );
+    );
+  }
 }
 
 class _AccessoryMenu extends StatelessWidget {
@@ -1489,48 +1557,75 @@ class _AccessoryMenu extends StatelessWidget {
   final ValueChanged<String> onSelected;
 
   @override
-  Widget build(BuildContext context) => SizedBox(
-    width: width,
-    height: terminalAccessoryHeight,
-    child: PopupMenuButton<String>(
-      tooltip: 'More terminal actions',
-      padding: EdgeInsets.zero,
-      iconSize: 18,
-      icon: const Icon(YaruIcons.view_more),
-      onSelected: onSelected,
-      itemBuilder: (context) => [
-        PopupMenuItem(
-          value: 'extended-keys',
-          child: _MenuAction(
-            icon: YaruFreedesktopIcons.input_keyboard.icon,
-            label: 'Extended keys',
+  Widget build(BuildContext context) {
+    final colors = Theme.of(context).colorScheme;
+    return SizedBox(
+      width: width,
+      height: terminalAccessoryHeight,
+      child: PopupMenuButton<String>(
+        tooltip: 'More terminal actions',
+        padding: EdgeInsets.zero,
+        iconSize: kYaruIconSize,
+        icon: const Icon(YaruIcons.view_more),
+        style: ButtonStyle(
+          fixedSize: WidgetStatePropertyAll(
+            Size(width, terminalAccessoryHeight),
           ),
-        ),
-        PopupMenuItem(
-          value: 'select-all',
-          child: _MenuAction(
-            icon: YaruFreedesktopIcons.edit_select_all.icon,
-            label: 'Select all',
-          ),
-        ),
-        if (hasSelection)
-          PopupMenuItem(
-            value: 'copy',
-            child: _MenuAction(
-              icon: YaruFreedesktopIcons.edit_copy.icon,
-              label: 'Copy',
+          padding: const WidgetStatePropertyAll(EdgeInsets.zero),
+          shape: WidgetStatePropertyAll(
+            RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(kYaruButtonRadius),
             ),
           ),
-        PopupMenuItem(
-          value: 'paste',
-          child: _MenuAction(
-            icon: YaruFreedesktopIcons.edit_paste.icon,
-            label: 'Paste',
+          foregroundColor: WidgetStatePropertyAll(
+            colors.onSurface.withValues(alpha: 0.8),
           ),
+          overlayColor: WidgetStateProperty.resolveWith((states) {
+            if (states.contains(WidgetState.pressed)) {
+              return colors.onSurfaceVariant.withValues(alpha: 0.12);
+            }
+            if (states.contains(WidgetState.hovered) ||
+                states.contains(WidgetState.focused)) {
+              return colors.onSurfaceVariant.withValues(alpha: 0.08);
+            }
+            return null;
+          }),
         ),
-      ],
-    ),
-  );
+        onSelected: onSelected,
+        itemBuilder: (context) => [
+          PopupMenuItem(
+            value: 'extended-keys',
+            child: _MenuAction(
+              icon: YaruFreedesktopIcons.input_keyboard.icon,
+              label: 'Extended keys',
+            ),
+          ),
+          PopupMenuItem(
+            value: 'select-all',
+            child: _MenuAction(
+              icon: YaruFreedesktopIcons.edit_select_all.icon,
+              label: 'Select all',
+            ),
+          ),
+          if (hasSelection)
+            PopupMenuItem(
+              value: 'copy',
+              child: _MenuAction(
+                icon: YaruFreedesktopIcons.edit_copy.icon,
+                label: 'Copy',
+              ),
+            ),
+          PopupMenuItem(
+            value: 'paste',
+            child: _MenuAction(
+              icon: YaruFreedesktopIcons.edit_paste.icon,
+              label: 'Paste',
+            ),
+          ),
+        ],
+      ),
+    );
+  }
 }
 
 class _MenuAction extends StatelessWidget {

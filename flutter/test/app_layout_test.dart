@@ -6,8 +6,10 @@ import 'package:zuko/src/model.dart';
 import 'package:zuko/src/window_frame.dart';
 
 void main() {
-  test('terminal accessory row is half the previous height', () {
-    expect(terminalAccessoryHeight, 24);
+  test('terminal accessory controls use compact Adwaita dimensions', () {
+    expect(terminalAccessoryHeight, 34);
+    expect(terminalAccessoryItemWidth, 34);
+    expect(terminalAccessoryGroupSpacing, 6);
   });
 
   test('terminal navigation keys use predictable paired ordering', () {
@@ -30,16 +32,10 @@ void main() {
     ]);
   });
 
-  test('terminal accessory controls fit normal narrow screens', () {
-    expect(
-      terminalAccessoryItemWidth(availableWidth: 390, itemCount: 11),
-      closeTo(34.73, 0.01),
-    );
-    expect(
-      terminalAccessoryItemWidth(availableWidth: 320, itemCount: 11),
-      closeTo(28.36, 0.01),
-    );
-    expect(terminalAccessoryItemWidth(availableWidth: 1280, itemCount: 11), 36);
+  test('connection tabs are only useful for parallel sessions', () {
+    expect(showConnectionTabs(0), isFalse);
+    expect(showConnectionTabs(1), isFalse);
+    expect(showConnectionTabs(2), isTrue);
   });
 
   test('saved host search matches identity fields and multiple terms', () {
@@ -153,6 +149,8 @@ void main() {
     await tester.tap(find.text('F12'));
 
     expect(keys, [Key.pageUp, Key.f12]);
+    expect(find.byType(FilledButton), findsNWidgets(18));
+    expect(find.byType(OutlinedButton), findsNothing);
   });
 
   testWidgets('held terminal actions repeat after a deliberate delay', (
