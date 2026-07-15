@@ -5,6 +5,7 @@
 import FlutterMacOS
 import Foundation
 
+import flterm
 import flutter_secure_storage_darwin
 import mobile_scanner
 import screen_retriever_macos
@@ -12,6 +13,7 @@ import url_launcher_macos
 import window_manager
 
 func RegisterGeneratedPlugins(registry: FlutterPluginRegistry) {
+  FltermPlugin.register(with: registry.registrar(forPlugin: "FltermPlugin"))
   FlutterSecureStorageDarwinPlugin.register(with: registry.registrar(forPlugin: "FlutterSecureStorageDarwinPlugin"))
   MobileScannerPlugin.register(with: registry.registrar(forPlugin: "MobileScannerPlugin"))
   ScreenRetrieverMacosPlugin.register(with: registry.registrar(forPlugin: "ScreenRetrieverMacosPlugin"))

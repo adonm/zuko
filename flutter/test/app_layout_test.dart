@@ -1,4 +1,4 @@
-import 'package:flterm/flterm.dart' show Key;
+import 'package:flterm/flterm.dart' show Key, TouchMouseTracking;
 import 'package:flutter/material.dart' hide Key;
 import 'package:flutter_test/flutter_test.dart';
 import 'package:zuko/src/app.dart';
@@ -44,6 +44,8 @@ void main() {
 
     expect(scrolling.longPressSelection, isFalse);
     expect(selecting.longPressSelection, isTrue);
+    expect(scrolling.touchMouseTracking, TouchMouseTracking.tapAndScroll);
+    expect(selecting.touchMouseTracking, TouchMouseTracking.tapAndScroll);
     expect(scrolling.dragSelection, isTrue);
     expect(selecting.dragSelection, isTrue);
   });

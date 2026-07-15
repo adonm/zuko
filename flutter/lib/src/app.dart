@@ -68,7 +68,10 @@ bool showConnectionTabs(int connectionCount) => connectionCount > 1;
 
 TerminalGestureSettings terminalGestureSettings({
   required bool touchSelectionEnabled,
-}) => TerminalGestureSettings(longPressSelection: touchSelectionEnabled);
+}) => TerminalGestureSettings(
+  longPressSelection: touchSelectionEnabled,
+  touchMouseTracking: TouchMouseTracking.tapAndScroll,
+);
 
 bool savedHostMatchesQuery(SavedHost host, String query) {
   final terms = query
