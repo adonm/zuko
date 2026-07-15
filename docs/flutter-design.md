@@ -93,7 +93,8 @@ Do not reduce spacing merely to show more inactive chrome.
 - Narrow layouts use a drawer and the main pane for the current task.
 - Wide layouts keep a persistent, collapsible connection sidebar.
 - Phones may use bottom sheets where desktops use anchored menus or popovers.
-- Touch dragging scrolls; touch selection starts with long press. Mouse and
+- Touch dragging scrolls by default. Touch text selection must be enabled from
+  the terminal accessory row and then starts with long press. Mouse and
   keyboard selection retain desktop conventions.
 - Terminal keys must go through `flterm`'s typed `Key` API, not handwritten
   escape sequences.
@@ -164,7 +165,8 @@ the implementation changes.
   absolute HTTP and HTTPS URLs.
 - Touch and stylus positions follow alternate-screen scroll conversion so
   mouse-aware programs receive wheel events at the intended terminal cell.
-  Long press gives platform feedback when touch selection becomes armed.
+  Touch selection is off by default; while enabled, long press gives platform
+  feedback when selection becomes armed.
 - Terminal output exposes a readable visible viewport and focus action to
   assistive technology, but continuous output is not a live region because
   announcement spam would make the client unusable.

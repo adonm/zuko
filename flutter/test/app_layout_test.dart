@@ -38,6 +38,16 @@ void main() {
     expect(showConnectionTabs(2), isTrue);
   });
 
+  test('touch scrolls until text selection is explicitly enabled', () {
+    final scrolling = terminalGestureSettings(touchSelectionEnabled: false);
+    final selecting = terminalGestureSettings(touchSelectionEnabled: true);
+
+    expect(scrolling.longPressSelection, isFalse);
+    expect(selecting.longPressSelection, isTrue);
+    expect(scrolling.dragSelection, isTrue);
+    expect(selecting.dragSelection, isTrue);
+  });
+
   test('saved host search matches identity fields and multiple terms', () {
     const host = SavedHost(
       name: 'Office workstation',

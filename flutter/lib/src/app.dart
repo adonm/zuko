@@ -66,6 +66,10 @@ IconData _terminalArrowIcon(Key key) => switch (key) {
 
 bool showConnectionTabs(int connectionCount) => connectionCount > 1;
 
+TerminalGestureSettings terminalGestureSettings({
+  required bool touchSelectionEnabled,
+}) => TerminalGestureSettings(longPressSelection: touchSelectionEnabled);
+
 bool savedHostMatchesQuery(SavedHost host, String query) {
   final terms = query
       .trim()
@@ -803,6 +807,10 @@ class _HomeState extends State<_Home>
                                       controller: connection.terminal,
                                       autofocus: identical(connection, active),
                                       theme: terminalTheme,
+                                      gestureSettings: terminalGestureSettings(
+                                        touchSelectionEnabled:
+                                            connection.touchSelectionEnabled,
+                                      ),
                                       semanticsLabel:
                                           '${_connectionName(connection)} remote terminal',
                                       semanticsHint:
@@ -835,6 +843,9 @@ class _HomeState extends State<_Home>
                           controller: active.terminal,
                           showAdditionalKeys:
                               widget.controller.showAdditionalKeys,
+                          touchSelectionEnabled: active.touchSelectionEnabled,
+                          onTouchSelectionChanged:
+                              active.setTouchSelectionEnabled,
                         ),
                       ],
                     ),
@@ -1197,9 +1208,13 @@ class _TerminalAccessory extends StatelessWidget {
   const _TerminalAccessory({
     required this.controller,
     required this.showAdditionalKeys,
+    required this.touchSelectionEnabled,
+    required this.onTouchSelectionChanged,
   });
   final TerminalController controller;
   final bool showAdditionalKeys;
+  final bool touchSelectionEnabled;
+  final ValueChanged<bool> onTouchSelectionChanged;
 
   void _showClipboardMessage(BuildContext context, String message) {
     if (!context.mounted) return;
@@ -1326,6 +1341,16 @@ class _TerminalAccessory extends StatelessWidget {
                         controller.showKeyboard();
                       }
                     },
+                  ),
+                  _AccessoryIcon(
+                    width: terminalAccessoryItemWidth,
+                    tooltip: touchSelectionEnabled
+                        ? 'Disable touch text selection'
+                        : 'Enable touch text selection',
+                    icon: Icons.text_fields,
+                    selected: touchSelectionEnabled,
+                    onPressed: () =>
+                        onTouchSelectionChanged(!touchSelectionEnabled),
                   ),
                   _AccessoryIcon(
                     width: terminalAccessoryItemWidth,

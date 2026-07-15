@@ -24,6 +24,28 @@ const _beta = SavedHost(
 );
 
 void main() {
+  test('touch selection is opt-in and disabling it clears selection', () {
+    final connection = TerminalConnection(
+      host: _alpha,
+      connector: (_, _) => _FakeTerminalSession(),
+      onTunnel: (_, _, _) {},
+    );
+    addTearDown(() async {
+      await connection.close();
+      connection.dispose();
+    });
+
+    expect(connection.touchSelectionEnabled, isFalse);
+    connection.setTouchSelectionEnabled(true);
+    connection.terminal.selectAll();
+    expect(connection.touchSelectionEnabled, isTrue);
+    expect(connection.terminal.hasSelection, isTrue);
+
+    connection.setTouchSelectionEnabled(false);
+    expect(connection.touchSelectionEnabled, isFalse);
+    expect(connection.terminal.hasSelection, isFalse);
+  });
+
   test(
     'parallel terminal connections keep independent session state',
     () async {

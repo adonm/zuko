@@ -50,9 +50,17 @@ final class TerminalConnection extends ChangeNotifier {
 
   SessionState state = const SessionState.connecting();
   TerminalGeometry geometry = const TerminalGeometry(80, 24, 0, 0);
+  bool touchSelectionEnabled = false;
 
   bool isCurrentGeneration(int generation) =>
       !_closed && generation == _generation;
+
+  void setTouchSelectionEnabled(bool enabled) {
+    if (touchSelectionEnabled == enabled) return;
+    touchSelectionEnabled = enabled;
+    if (!enabled) terminal.clearSelection();
+    _notify();
+  }
 
   Future<void> updateHost(SavedHost host) async {
     if (_closed) return;
