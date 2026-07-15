@@ -19,7 +19,7 @@ dependencies:
   flterm:
     git:
       url: https://github.com/adonm/libghostty.git
-      ref: bd55c09c8407ffcdbc79240d6230fbe936d9f475
+      ref: 1341797fc17503dcc539fc8951f67124f6492fac
       path: packages/flterm
   flutter_secure_storage: 10.3.1
   iroh_flutter: 1.0.1
@@ -33,7 +33,7 @@ dependency_overrides:
   libghostty:
     git:
       url: https://github.com/adonm/libghostty.git
-      ref: bd55c09c8407ffcdbc79240d6230fbe936d9f475
+      ref: 1341797fc17503dcc539fc8951f67124f6492fac
       path: packages/libghostty
 
 dev_dependencies:

@@ -45,6 +45,9 @@ if git rev-parse -q --verify "refs/tags/$TAG" >/dev/null || \
     exit 1
 fi
 
+echo "==> verifying exact-commit Codemagic release candidate"
+python3 scripts/check-codemagic-release-candidate.py "$HEAD_SHA"
+
 SHA="$(git rev-parse --short HEAD)"
 echo "==> creating annotated tag $TAG at $SHA"
 git tag -a "$TAG" -m "zuko $TAG

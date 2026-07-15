@@ -567,6 +567,8 @@ workflows:
 
       - name: Build Windows client
         script: |
+          $ErrorActionPreference = "Stop"
+          $PSNativeCommandUseErrorActionPreference = $true
           $mise = Join-Path $HOME ".local/bin/mise.exe"
           & $mise exec -- just --shell pwsh --shell-arg=-NoProfile --shell-arg=-Command build-flutter-windows-release v0.0.0
 
@@ -619,6 +621,8 @@ workflows:
 
       - name: Build and package Windows client
         script: |
+          $ErrorActionPreference = "Stop"
+          $PSNativeCommandUseErrorActionPreference = $true
           $mise = Join-Path $HOME ".local/bin/mise.exe"
           & $mise exec -- just --shell pwsh --shell-arg=-NoProfile --shell-arg=-Command build-flutter-windows-release $env:CM_TAG
           New-Item -ItemType Directory -Force dist/codemagic | Out-Null

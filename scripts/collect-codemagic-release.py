@@ -19,7 +19,14 @@ import zipfile
 
 APP_ID = "6a52dc14add8531e99f88b8a"
 API = "https://api.codemagic.io"
-TERMINAL_FAILURES = {"canceled", "cancelled", "failed", "skipped"}
+TERMINAL_FAILURES = {
+    "canceled",
+    "cancelled",
+    "failed",
+    "skipped",
+    "timed_out",
+    "timeout",
+}
 MAX_ARTIFACT_SIZE = 1_000_000_000
 POLL_SECONDS = 20
 NOT_FOUND_RETRY_SECONDS = 60
@@ -76,6 +83,93 @@ def trigger(token: str, workflow: str, tag: str) -> str:
         raise SystemExit(f"Codemagic returned an invalid build ID for {workflow}")
     print(f"Codemagic {workflow}: {build_id}", flush=True)
     return build_id
+
+
+def actions_succeeded(build: dict[str, object]) -> bool:
+    actions = build.get("buildActions")
+    return (
+        isinstance(actions, list)
+        and bool(actions)
+        and all(
+            isinstance(action, dict) and action.get("status") == "success"
+            for action in actions
+        )
+    )
+
+
+def matching_builds(
+    token: str, workflow: str, tag: str, sha: str
+) -> list[dict[str, object]]:
+    path: str | None = f"/builds?appId={APP_ID}"
+    builds: list[object] = []
+    seen: set[str] = set()
+    while path is not None:
+        if path in seen:
+            raise SystemExit("Codemagic build list pagination repeated a page")
+        seen.add(path)
+        result = request_json(token, "GET", path)
+        page = result.get("builds")
+        if not isinstance(page, list):
+            raise SystemExit("Codemagic build list returned invalid metadata")
+        builds.extend(page)
+        next_page = result.get("nextPageUrl")
+        if next_page is None:
+            path = None
+        elif (
+            isinstance(next_page, str)
+            and next_page.startswith(f"/builds?appId={APP_ID}&skip=")
+            and next_page.removeprefix(f"/builds?appId={APP_ID}&skip=").isdigit()
+        ):
+            path = next_page
+        else:
+            raise SystemExit("Codemagic build list returned an invalid next page")
+
+    matches = [
+        build
+        for build in builds
+        if isinstance(build, dict)
+        and build.get("fileWorkflowId") == workflow
+        and build.get("tag") == tag
+        and isinstance(build.get("commit"), dict)
+        and build["commit"].get("hash") == sha
+    ]
+    return sorted(
+        matches,
+        key=lambda build: build.get("finishedAt")
+        or build.get("startedAt")
+        or build.get("createdAt")
+        or "",
+        reverse=True,
+    )
+
+
+def reusable_build(
+    token: str, workflow: str, tag: str, sha: str
+) -> tuple[str, bool] | None:
+    builds = matching_builds(token, workflow, tag, sha)
+    completed = next(
+        (
+            build
+            for build in builds
+            if build.get("status") == "finished" and actions_succeeded(build)
+        ),
+        None,
+    )
+    candidate = completed or next(
+        (
+            build
+            for build in builds
+            if build.get("status") != "finished"
+            and build.get("status") not in TERMINAL_FAILURES
+        ),
+        None,
+    )
+    if candidate is None:
+        return None
+    build_id = candidate.get("_id")
+    if not isinstance(build_id, str) or not re.fullmatch(r"[0-9a-f]{24}", build_id):
+        raise SystemExit(f"Codemagic returned an invalid build ID for {workflow}")
+    return build_id, candidate is completed
 
 
 def wait_for_build(
@@ -221,7 +315,16 @@ def main() -> None:
     if any(destination.iterdir()):
         raise SystemExit(f"output directory is not empty: {destination}")
 
-    builds = {workflow: trigger(token, workflow, tag) for workflow in WORKFLOWS}
+    builds: dict[str, str] = {}
+    for workflow in WORKFLOWS:
+        reusable = reusable_build(token, workflow, tag, sha)
+        if reusable is None:
+            builds[workflow] = trigger(token, workflow, tag)
+            continue
+        build_id, completed = reusable
+        state = "reusing" if completed else "resuming"
+        print(f"Codemagic {workflow}: {build_id} ({state})", flush=True)
+        builds[workflow] = build_id
     deadline = time.monotonic() + 150 * 60
     expected = expected_files(tag)
     for workflow, build_id in builds.items():

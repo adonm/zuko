@@ -42,11 +42,15 @@ test-installer:
     sh scripts/test-installer.sh
 
 [group('quality')]
+test-release-automation:
+    python3 -m unittest scripts/test_release_automation.py
+
+[group('quality')]
 check-release-metadata:
     python3 scripts/check-release-metadata.py
 
 [group('quality')]
-check: fmt-check test flutter-check check-release-metadata test-installer
+check: fmt-check test flutter-check check-release-metadata test-installer test-release-automation
 
 [group('quality')]
 preflight: check

@@ -43,10 +43,14 @@ just release
 ```
 
 `scripts/release.sh` requires a clean `main` exactly matching `origin/main`,
-validates the committed package versions, creates the annotated `vX.Y.Z` tag,
-and pushes only that tag. It never stages files, creates a commit, pushes a
-branch, or moves an existing tag. Tag-triggered workflows verify that the tag
-resolves to their exact checkout before building anything.
+validates the committed package versions, and requires `CODEMAGIC_API_TOKEN`.
+It reuses or triggers the Apple, Linux/Android/web, and Windows compile gates
+for the exact `HEAD`, waits for every action to succeed, then creates the
+annotated `vX.Y.Z` tag and pushes only that tag. A failed candidate creates no
+tag, so fix the source or rerun `just release` after a transient provider
+failure. The script never stages files, creates a commit, pushes a branch, or
+moves an existing tag. Tag-triggered workflows verify that the tag resolves to
+their exact checkout before building anything.
 
 A release tag is the permanent source identity for that release. Re-run a
 failed job only for transient runner, network, or approval failures. If source,
