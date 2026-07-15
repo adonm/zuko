@@ -157,8 +157,8 @@ packages:
     dependency: "direct main"
     description:
       path: "packages/flterm"
-      ref: "433c50a43cfe435dad3e760f7858126125733e75"
-      resolved-ref: "433c50a43cfe435dad3e760f7858126125733e75"
+      ref: "f8f756e419f2097ba5d80e2f777e7b4f8d7ff0d6"
+      resolved-ref: "f8f756e419f2097ba5d80e2f777e7b4f8d7ff0d6"
       url: "https://github.com/adonm/libghostty.git"
     source: git
     version: "0.0.4"
@@ -341,8 +341,8 @@ packages:
     dependency: "direct main"
     description:
       path: "packages/libghostty"
-      ref: "433c50a43cfe435dad3e760f7858126125733e75"
-      resolved-ref: "433c50a43cfe435dad3e760f7858126125733e75"
+      ref: "f8f756e419f2097ba5d80e2f777e7b4f8d7ff0d6"
+      resolved-ref: "f8f756e419f2097ba5d80e2f777e7b4f8d7ff0d6"
       url: "https://github.com/adonm/libghostty.git"
     source: git
     version: "0.0.11"
