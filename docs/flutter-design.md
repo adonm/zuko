@@ -163,6 +163,10 @@ the implementation changes.
   the predictable Up, Down, Left, Right order.
 - Multiline paste remains guarded. Supported terminal links are limited to
   absolute HTTP and HTTPS URLs.
+- Remote OSC 52 output may write UTF-8 text to the system clipboard only from
+  the visible terminal while the app is foregrounded. Clipboard reads,
+  non-default selectors, malformed base64 or UTF-8, and decoded payloads over
+  1 MiB are ignored.
 - Touch and stylus positions follow alternate-screen scroll conversion so
   mouse-aware programs receive wheel events at the intended terminal cell.
   Touch selection is off by default; while enabled, long press gives platform

@@ -1,7 +1,10 @@
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:flterm/flterm.dart';
 import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart';
+import 'package:libghostty/libghostty.dart' show ClipboardWrite;
 
 import 'model.dart';
 import 'session_state.dart';
@@ -16,14 +19,49 @@ typedef TerminalTunnelHandler =
       TunnelEndpoint tunnel,
       int generation,
     );
+typedef RemoteClipboardWriter = Future<void> Function(String text);
+
+const maxRemoteClipboardBytes = 1024 * 1024;
+const _maxRemoteClipboardBase64Bytes = ((maxRemoteClipboardBytes + 2) ~/ 3) * 4;
+final _strictBase64 = RegExp(
+  r'^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$',
+);
+
+String? decodeRemoteClipboardWrite(ClipboardWrite request) {
+  if (request.selector != 'c'.codeUnitAt(0) ||
+      request.payload.length > _maxRemoteClipboardBase64Bytes) {
+    return null;
+  }
+  try {
+    final encoded = ascii.decode(request.payload, allowInvalid: false);
+    final match = _strictBase64.firstMatch(encoded);
+    if (match == null || match.end != encoded.length) return null;
+    final decoded = base64.decode(encoded);
+    if (decoded.length > maxRemoteClipboardBytes) return null;
+    return utf8.decode(decoded, allowMalformed: false);
+  } on FormatException {
+    return null;
+  }
+}
+
+Future<void> _writeSystemClipboard(String text) =>
+    Clipboard.setData(ClipboardData(text: text));
+
+bool _inactiveClipboardSource() => false;
 
 final class TerminalConnection extends ChangeNotifier {
   TerminalConnection({
     required this.host,
     required this.connector,
     required this.onTunnel,
-  }) : terminal = TerminalController() {
+    bool Function()? isClipboardSourceActive,
+    RemoteClipboardWriter? clipboardWriter,
+  }) : _isClipboardSourceActive =
+           isClipboardSourceActive ?? _inactiveClipboardSource,
+       _clipboardWriter = clipboardWriter ?? _writeSystemClipboard,
+       terminal = TerminalController() {
     terminal.onOutput = (bytes) => unawaited(_session?.send(bytes));
+    terminal.onClipboardWrite = _handleClipboardWrite;
     terminal.onResize = (cols, rows) {
       geometry = TerminalGeometry(cols, rows, 0, 0);
       unawaited(_session?.resize(geometry));
@@ -38,6 +76,8 @@ final class TerminalConnection extends ChangeNotifier {
   SavedHost host;
   final TerminalConnector connector;
   final TerminalTunnelHandler onTunnel;
+  final bool Function() _isClipboardSourceActive;
+  final RemoteClipboardWriter _clipboardWriter;
   final TerminalController terminal;
 
   TerminalSession? _session;
@@ -54,6 +94,21 @@ final class TerminalConnection extends ChangeNotifier {
 
   bool isCurrentGeneration(int generation) =>
       !_closed && generation == _generation;
+
+  void _handleClipboardWrite(ClipboardWrite request) {
+    if (_closed || !_isClipboardSourceActive()) return;
+    final text = decodeRemoteClipboardWrite(request);
+    if (text == null) return;
+    unawaited(_writeClipboard(text));
+  }
+
+  Future<void> _writeClipboard(String text) async {
+    try {
+      await _clipboardWriter(text);
+    } on Object {
+      // Clipboard denial must not interrupt terminal output processing.
+    }
+  }
 
   void setTouchSelectionEnabled(bool enabled) {
     if (touchSelectionEnabled == enabled) return;

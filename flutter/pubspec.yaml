@@ -6,6 +6,12 @@ version: 0.10.3+1800010003
 environment:
   sdk: ^3.12.2
 
+hooks:
+  user_defines:
+    libghostty:
+      source: compile
+      download: tarball
+
 dependencies:
   flutter:
     sdk: flutter
@@ -13,7 +19,7 @@ dependencies:
   flterm:
     git:
       url: https://github.com/adonm/libghostty.git
-      ref: 243d84171566af7796914473e2d6251494608860
+      ref: 0a3e3c2589fd0faadb57fdb10d54c3f133bcadad
       path: packages/flterm
   flutter_secure_storage: 10.3.1
   iroh_flutter: 1.0.1
@@ -27,7 +33,7 @@ dependency_overrides:
   libghostty:
     git:
       url: https://github.com/adonm/libghostty.git
-      ref: 243d84171566af7796914473e2d6251494608860
+      ref: 0a3e3c2589fd0faadb57fdb10d54c3f133bcadad
       path: packages/libghostty
 
 dev_dependencies:

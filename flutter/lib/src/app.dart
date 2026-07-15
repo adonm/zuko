@@ -452,6 +452,7 @@ class _HomeState extends State<_Home>
   TabController? _tabController;
   int _activeIndex = -1;
   DateTime? _backgroundedAt;
+  bool _isForeground = false;
   bool _sidebarExpanded = true;
 
   TerminalConnection? get _activeConnection =>
@@ -463,10 +464,13 @@ class _HomeState extends State<_Home>
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    _isForeground =
+        WidgetsBinding.instance.lifecycleState == AppLifecycleState.resumed;
   }
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
+    _isForeground = state == AppLifecycleState.resumed;
     if (state == AppLifecycleState.paused ||
         state == AppLifecycleState.hidden) {
       _backgroundedAt ??= DateTime.now();
@@ -566,6 +570,8 @@ class _HomeState extends State<_Home>
       host: host,
       connector: widget.controller.transport.connect,
       onTunnel: _openTunnel,
+      isClipboardSourceActive: () =>
+          mounted && _isForeground && identical(connection, _activeConnection),
     );
     connection.addListener(_connectionChanged);
     setState(() {

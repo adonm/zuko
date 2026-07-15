@@ -7,21 +7,15 @@ import hashlib
 import json
 import pathlib
 import shutil
+import subprocess
 import sys
-import urllib.request
+import urllib.parse
 
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 OUTPUT = ROOT / "target/book/web"
-CACHE = ROOT / "target/web-assets"
+PACKAGE_CONFIG = ROOT / "flutter/.dart_tool/package_config.json"
 GHOSTTY_WASM_NAME = "libghostty-wasm32-freestanding.wasm"
-GHOSTTY_WASM_URL = (
-    "https://github.com/elias8/libghostty/releases/download/"
-    f"libghostty-v0.0.11/{GHOSTTY_WASM_NAME}"
-)
-GHOSTTY_WASM_SHA256 = (
-    "b0f39cfe981af36745c6b9c6919e9ac9cdf20aa507764e78bfb7a63ddc945c5b"
-)
 GHOSTTY_WASM_OUTPUT = (
     OUTPUT / "assets/packages/libghostty/assets" / GHOSTTY_WASM_NAME
 )
@@ -82,27 +76,45 @@ def sha256(path: pathlib.Path) -> str:
     return digest.hexdigest()
 
 
-def cache_ghostty_wasm() -> pathlib.Path:
-    cached = CACHE / GHOSTTY_WASM_NAME
-    if cached.is_file() and sha256(cached) == GHOSTTY_WASM_SHA256:
-        return cached
-
-    CACHE.mkdir(parents=True, exist_ok=True)
-    temporary = cached.with_suffix(".wasm.tmp")
-    request = urllib.request.Request(GHOSTTY_WASM_URL, headers={"User-Agent": "zuko-build"})
+def libghostty_package_root() -> pathlib.Path:
     try:
-        with urllib.request.urlopen(request, timeout=120) as response:
-            temporary.write_bytes(response.read())
-    except Exception as error:
-        temporary.unlink(missing_ok=True)
-        fail(f"failed to download {GHOSTTY_WASM_URL}: {error}")
+        config = json.loads(PACKAGE_CONFIG.read_text())
+    except (OSError, json.JSONDecodeError) as error:
+        fail(f"cannot read {PACKAGE_CONFIG}: {error}")
+    package = next(
+        (entry for entry in config["packages"] if entry["name"] == "libghostty"),
+        None,
+    )
+    if package is None:
+        fail("libghostty is absent from Flutter's package resolution")
+    root_uri = urllib.parse.urlparse(package["rootUri"])
+    if root_uri.scheme != "file":
+        fail(f"expected a libghostty file URI, got {package['rootUri']}")
+    return pathlib.Path(urllib.parse.unquote(root_uri.path))
 
-    actual = sha256(temporary)
-    if actual != GHOSTTY_WASM_SHA256:
-        temporary.unlink(missing_ok=True)
-        fail(f"Ghostty WASM SHA-256 is {actual}, expected {GHOSTTY_WASM_SHA256}")
-    temporary.replace(cached)
-    return cached
+
+def build_ghostty_wasm() -> pathlib.Path:
+    package = libghostty_package_root()
+    dart = shutil.which("dart")
+    if dart is None:
+        fail("dart is absent from PATH")
+    result = subprocess.run(
+        [dart, "run", "tool/build_wasm.dart"],
+        cwd=package,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if result.returncode != 0:
+        fail(
+            "libghostty WASM compilation failed:\n"
+            f"stdout: {result.stdout}\n"
+            f"stderr: {result.stderr}"
+        )
+    wasm = package / "lib/src/wasm/libghostty.wasm"
+    if not wasm.is_file() or wasm.read_bytes()[:4] != b"\0asm":
+        fail(f"libghostty did not produce a WebAssembly module at {wasm}")
+    return wasm
 
 
 def quiet_flutter_loader() -> None:
@@ -146,10 +158,10 @@ def validate_source_map(path: pathlib.Path) -> None:
         fail(f"diagnostic source map does not contain Zuko sources: {path}")
 
 
-def validate() -> None:
+def validate(expected_ghostty_sha256: str) -> None:
     if GHOSTTY_WASM_OUTPUT.read_bytes()[:4] != b"\0asm":
         fail(f"{GHOSTTY_WASM_OUTPUT} is not a WebAssembly module")
-    if sha256(GHOSTTY_WASM_OUTPUT) != GHOSTTY_WASM_SHA256:
+    if sha256(GHOSTTY_WASM_OUTPUT) != expected_ghostty_sha256:
         fail(f"{GHOSTTY_WASM_OUTPUT} has an unexpected SHA-256")
 
     dart_wasm = OUTPUT / "main.dart.wasm"
@@ -216,12 +228,13 @@ def main() -> None:
     if not OUTPUT.is_dir():
         fail("run `flutter build web` first")
 
-    ghostty_wasm = cache_ghostty_wasm()
+    ghostty_wasm = build_ghostty_wasm()
+    ghostty_sha256 = sha256(ghostty_wasm)
     GHOSTTY_WASM_OUTPUT.parent.mkdir(parents=True, exist_ok=True)
     shutil.copyfile(ghostty_wasm, GHOSTTY_WASM_OUTPUT)
     quiet_flutter_loader()
     avoid_deprecated_webgl_extension()
-    validate()
+    validate(ghostty_sha256)
     print(f"web build finalization: validated {OUTPUT}")
 
 

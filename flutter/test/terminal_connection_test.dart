@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
@@ -24,6 +25,75 @@ const _beta = SavedHost(
 );
 
 void main() {
+  test('OSC 52 clipboard writes require strict base64 UTF-8 text', () {
+    ({int selector, Uint8List payload}) request(
+      String payload, {
+      String selector = 'c',
+    }) => (
+      selector: selector.codeUnitAt(0),
+      payload: Uint8List.fromList(ascii.encode(payload)),
+    );
+
+    expect(decodeRemoteClipboardWrite(request('aGVsbG8=')), 'hello');
+    expect(decodeRemoteClipboardWrite(request('')), '');
+    expect(decodeRemoteClipboardWrite(request('aGV sbG8=')), isNull);
+    expect(decodeRemoteClipboardWrite(request('aGVsbG8=\n')), isNull);
+    expect(decodeRemoteClipboardWrite(request('aGVsbG8')), isNull);
+    expect(decodeRemoteClipboardWrite(request('/w==')), isNull);
+    expect(
+      decodeRemoteClipboardWrite(request('aGVsbG8=', selector: 'p')),
+      isNull,
+    );
+  });
+
+  test('OSC 52 clipboard writes reject decoded text over 1 MiB', () {
+    final encoded = base64.encode(Uint8List(maxRemoteClipboardBytes + 3));
+
+    expect(
+      decodeRemoteClipboardWrite((
+        selector: 'c'.codeUnitAt(0),
+        payload: Uint8List.fromList(ascii.encode(encoded)),
+      )),
+      isNull,
+    );
+  });
+
+  test('only active terminal output may write the clipboard', () async {
+    final session = _FakeTerminalSession();
+    final writes = <String>[];
+    var active = false;
+    final connection = TerminalConnection(
+      host: _alpha,
+      connector: (_, _) => session,
+      onTunnel: (_, _, _) {},
+      isClipboardSourceActive: () => active,
+      clipboardWriter: (text) async => writes.add(text),
+    );
+    addTearDown(() async {
+      await connection.close();
+      connection.dispose();
+    });
+    await connection.reconnect();
+    final zellijWrite = Uint8List.fromList(
+      ascii.encode('\x1b]52;c;aGVsbG8=\x1b\\'),
+    );
+
+    session.emitOutput(zellijWrite);
+    await Future<void>.delayed(Duration.zero);
+    expect(writes, isEmpty);
+
+    active = true;
+    session.emitOutput(Uint8List.fromList(ascii.encode('\x1b]52;c;?\x07')));
+    session.emitOutput(zellijWrite);
+    await Future<void>.delayed(Duration.zero);
+    expect(writes, ['hello']);
+
+    active = false;
+    session.emitOutput(zellijWrite);
+    await Future<void>.delayed(Duration.zero);
+    expect(writes, ['hello']);
+  });
+
   test('touch selection is opt-in and disabling it clears selection', () {
     final connection = TerminalConnection(
       host: _alpha,
@@ -309,6 +379,8 @@ final class _FakeTerminalSession implements TerminalSession {
   Stream<TunnelEndpoint> get tunnels => _tunnels.stream;
 
   void emitState(SessionState state) => _states.add(state);
+
+  void emitOutput(Uint8List data) => _output.add(data);
 
   @override
   Future<void> send(List<int> bytes) async {
