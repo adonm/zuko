@@ -1,0 +1,30 @@
+dependency_overrides:
+  libghostty:
+    git:
+      url: https://github.com/adonm/libghostty.git
+      ref: eb0889fcfcc525da8adad642ef86d0d7c65517cb
+      path: packages/libghostty
+  gtk:
+    git:
+      url: https://github.com/adonm/gtk.dart.git
+      ref: 43d04c70db4b17a575ef2ffb4fc3569ca3ce81bf
+  screen_retriever_linux:
+    git:
+      url: https://github.com/adonm/screen_retriever.git
+      ref: b8cf0c47cec09b2b373b38b985678b05a474cbb5
+      path: packages/screen_retriever_linux
+  url_launcher_linux:
+    git:
+      url: https://github.com/adonm/packages.git
+      ref: ac83d62d91e121cbe80e2f44895c7b52c205572e
+      path: packages/url_launcher/url_launcher_linux
+  window_manager:
+    git:
+      url: https://github.com/adonm/window_manager.git
+      ref: 0b2d9542cb7bf2296ac40ad9005eb5ce7852e4a8
+      path: packages/window_manager
+  yaru_window_linux:
+    git:
+      url: https://github.com/adonm/yaru_window.dart.git
+      ref: 630dd21775906a298838ed92b5985a1cd460524b
+      path: packages/yaru_window_linux

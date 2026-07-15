@@ -13,7 +13,11 @@ G_DEFINE_TYPE(MyApplication, my_application, GTK_TYPE_APPLICATION)
 
 // Called when first Flutter frame received.
 static void first_frame_cb(MyApplication* self, FlView* view) {
-  gtk_widget_show(gtk_widget_get_toplevel(GTK_WIDGET(view)));
+  (void)self;
+  GtkRoot* root = gtk_widget_get_root(GTK_WIDGET(view));
+  if (root != nullptr) {
+    gtk_window_present(GTK_WINDOW(root));
+  }
 }
 
 // Implements GApplication::activate.
@@ -23,10 +27,10 @@ static void my_application_activate(GApplication* application) {
       GTK_WINDOW(gtk_application_window_new(GTK_APPLICATION(application)));
 
   GtkHeaderBar* header_bar = GTK_HEADER_BAR(gtk_header_bar_new());
-  gtk_widget_show(GTK_WIDGET(header_bar));
-  gtk_header_bar_set_title(header_bar, "Zuko");
-  gtk_header_bar_set_show_close_button(header_bar, TRUE);
+  gtk_header_bar_set_show_title_buttons(header_bar, TRUE);
+  gtk_header_bar_set_title_widget(header_bar, gtk_label_new("Zuko"));
   gtk_window_set_titlebar(window, GTK_WIDGET(header_bar));
+  gtk_window_set_title(window, "Zuko");
 
   gtk_window_set_default_size(window, 1280, 720);
 
@@ -41,8 +45,9 @@ static void my_application_activate(GApplication* application) {
   // for transparent.
   gdk_rgba_parse(&background_color, "#000000");
   fl_view_set_background_color(view, &background_color);
-  gtk_widget_show(GTK_WIDGET(view));
-  gtk_container_add(GTK_CONTAINER(window), GTK_WIDGET(view));
+  gtk_widget_set_focusable(GTK_WIDGET(view), TRUE);
+  gtk_widget_set_visible(GTK_WIDGET(view), TRUE);
+  gtk_window_set_child(window, GTK_WIDGET(view));
 
   // Show the window when Flutter renders.
   // Requires the view to be realized so we can start rendering.

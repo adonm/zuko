@@ -44,6 +44,7 @@ dev_dependencies:
 flutter:
   config:
     enable-swift-package-manager: false
+    linux-gtk-default: gtk4
   uses-material-design: true
   assets:
     - assets/zuko-logo.png
