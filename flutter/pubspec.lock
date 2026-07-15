@@ -253,11 +253,11 @@ packages:
     dependency: "direct overridden"
     description:
       path: "."
-      ref: "43d04c70db4b17a575ef2ffb4fc3569ca3ce81bf"
-      resolved-ref: "43d04c70db4b17a575ef2ffb4fc3569ca3ce81bf"
+      ref: "8f9a5db741176a25657fbf6fecb2a90df8741e48"
+      resolved-ref: "8f9a5db741176a25657fbf6fecb2a90df8741e48"
       url: "https://github.com/adonm/gtk.dart.git"
     source: git
-    version: "2.2.0"
+    version: "2.3.0"
   hooks:
     dependency: transitive
     description:
@@ -548,22 +548,23 @@ packages:
     source: hosted
     version: "0.6.0"
   screen_retriever:
-    dependency: transitive
+    dependency: "direct overridden"
     description:
-      name: screen_retriever
-      sha256: ace919117a7520c13a50a6259e60c4a0d4cbe98809468792a91b5c5adada2aa6
-      url: "https://pub.dev"
-    source: hosted
-    version: "0.2.2"
+      path: "packages/screen_retriever"
+      ref: a4d8f718ecbee78207945aa87ded0f97e2509c87
+      resolved-ref: a4d8f718ecbee78207945aa87ded0f97e2509c87
+      url: "https://github.com/adonm/screen_retriever.git"
+    source: git
+    version: "0.2.3"
   screen_retriever_linux:
     dependency: "direct overridden"
     description:
       path: "packages/screen_retriever_linux"
-      ref: b8cf0c47cec09b2b373b38b985678b05a474cbb5
-      resolved-ref: b8cf0c47cec09b2b373b38b985678b05a474cbb5
+      ref: a4d8f718ecbee78207945aa87ded0f97e2509c87
+      resolved-ref: a4d8f718ecbee78207945aa87ded0f97e2509c87
       url: "https://github.com/adonm/screen_retriever.git"
     source: git
-    version: "0.2.2"
+    version: "0.2.3"
   screen_retriever_macos:
     dependency: transitive
     description:
@@ -677,8 +678,8 @@ packages:
     dependency: "direct overridden"
     description:
       path: "packages/url_launcher/url_launcher_linux"
-      ref: ac83d62d91e121cbe80e2f44895c7b52c205572e
-      resolved-ref: ac83d62d91e121cbe80e2f44895c7b52c205572e
+      ref: "0ab767292efb16fadbfec3c7c119380343b4fbd8"
+      resolved-ref: "0ab767292efb16fadbfec3c7c119380343b4fbd8"
       url: "https://github.com/adonm/packages.git"
     source: git
     version: "3.2.3"
@@ -750,11 +751,11 @@ packages:
     dependency: "direct overridden"
     description:
       path: "packages/window_manager"
-      ref: "0b2d9542cb7bf2296ac40ad9005eb5ce7852e4a8"
-      resolved-ref: "0b2d9542cb7bf2296ac40ad9005eb5ce7852e4a8"
+      ref: "3acfbdd1624202edfe03ccc7d4eae548b6c18459"
+      resolved-ref: "3acfbdd1624202edfe03ccc7d4eae548b6c18459"
       url: "https://github.com/adonm/window_manager.git"
     source: git
-    version: "0.5.2"
+    version: "0.5.3"
   xdg_directories:
     dependency: transitive
     description:
@@ -799,11 +800,11 @@ packages:
     dependency: "direct overridden"
     description:
       path: "packages/yaru_window_linux"
-      ref: "630dd21775906a298838ed92b5985a1cd460524b"
-      resolved-ref: "630dd21775906a298838ed92b5985a1cd460524b"
+      ref: "4f22de320ea0270662506900e1ae070eb7b6cb13"
+      resolved-ref: "4f22de320ea0270662506900e1ae070eb7b6cb13"
       url: "https://github.com/adonm/yaru_window.dart.git"
     source: git
-    version: "0.2.2"
+    version: "0.2.3"
   yaru_window_manager:
     dependency: transitive
     description:
