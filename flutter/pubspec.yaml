@@ -1,7 +1,7 @@
 name: zuko
 description: Private remote shells over Iroh for Android, Apple platforms, web, Linux, and Windows.
 publish_to: 'none'
-version: 0.10.6+1800010006
+version: 0.10.7+1800010007
 
 environment:
   sdk: ^3.12.2
@@ -19,7 +19,7 @@ dependencies:
   flterm:
     git:
       url: https://github.com/adonm/libghostty.git
-      ref: f8f756e419f2097ba5d80e2f777e7b4f8d7ff0d6
+      ref: bd55c09c8407ffcdbc79240d6230fbe936d9f475
       path: packages/flterm
   flutter_secure_storage: 10.3.1
   iroh_flutter: 1.0.1
@@ -33,7 +33,7 @@ dependency_overrides:
   libghostty:
     git:
       url: https://github.com/adonm/libghostty.git
-      ref: f8f756e419f2097ba5d80e2f777e7b4f8d7ff0d6
+      ref: bd55c09c8407ffcdbc79240d6230fbe936d9f475
       path: packages/libghostty
 
 dev_dependencies:
