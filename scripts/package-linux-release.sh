@@ -14,7 +14,7 @@ readonly BUNDLE=$ROOT/flutter/build/linux-gtk4/x64/release/bundle
 readonly WORK=$ROOT/build/linux-release
 readonly OUTPUT_DIR=$ROOT/dist/linux
 readonly OUTPUT=$OUTPUT_DIR/zuko-linux-$TAG-x86_64.tar.gz
-readonly ENGINE_SHA256=bd80913e83fa9fac66bca3c90a020bc624827c610f3fcff7971455b4f858f701
+readonly ENGINE_SHA256=61cafba174d24e2c4f73e416cb98c0b33a0ca751b99bf0d9c42cf2c4f1f44add
 
 for command in find git gzip ldd readelf sha256sum strip tar; do
   command -v "$command" >/dev/null 2>&1 || {
