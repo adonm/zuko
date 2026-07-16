@@ -35,10 +35,13 @@ workflows:
           test "$CM_COMMIT" = "$RELEASE_CANDIDATE_SHA"
           test "$(git rev-parse HEAD)" = "$RELEASE_CANDIDATE_SHA"
           scripts/release-context.sh
-          test "$RELEASE_CANDIDATE_TAG" = "v$ZUKO_VERSION"
+          version="$(scripts/version.sh)"
+          IFS=. read -r major minor patch <<< "$version"
+          build_number=$((1800000000 + major * 1000000 + minor * 1000 + patch))
+          test "$RELEASE_CANDIDATE_TAG" = "v$version"
           if [ -n "${IOS_BUILD_NUMBER_OVERRIDE:-}" ]; then
             [[ "$IOS_BUILD_NUMBER_OVERRIDE" =~ ^[0-9]+$ ]]
-            test "$IOS_BUILD_NUMBER_OVERRIDE" -gt "$ZUKO_BUILD_NUMBER"
+            test "$IOS_BUILD_NUMBER_OVERRIDE" -gt "$build_number"
             test "$IOS_BUILD_NUMBER_OVERRIDE" -le 2100000000
             echo "ZUKO_BUILD_NUMBER=$IOS_BUILD_NUMBER_OVERRIDE" >> "$CM_ENV"
           fi

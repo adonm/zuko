@@ -190,6 +190,7 @@ def validate_automation() -> None:
         raise SystemExit(f"Flutter config: unexpected Codemagic workflows: {workflows}")
     require_text("codemagic.yaml", "instance_type: linux_x2")
     require_text("codemagic.yaml", 'MISE_AUTO_INSTALL: "0"')
+    require_text("codemagic.yaml", "build_number=$((1800000000 + major * 1000000 + minor * 1000 + patch))")
     require_text("codemagic.yaml", "Download exact release previews")
     for obsolete in [
         "flutter-apple-ci:",
