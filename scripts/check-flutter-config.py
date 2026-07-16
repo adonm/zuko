@@ -170,7 +170,10 @@ def main() -> None:
         "scripts/build-flatpark-test-bundle.sh",
         "localhost/zuko-flutter-ci:2026.07",
     )
-    require_text("codemagic.yaml", "mise exec -- just flutter-linux-ci")
+    require_text("codemagic.yaml", "mise exec -- just flutter-ci-check")
+    require_text("codemagic.yaml", "mise exec -- just build-web")
+    require_text("codemagic.yaml", "mise exec -- just build-flutter-android-debug")
+    require_text("codemagic.yaml", "with_flutter_gtk4_sdk.sh")
     require_text("codemagic.yaml", "scripts/prepare-web-plugins.py")
     require_text(".github/workflows/docs.yml", '"scripts/prepare-web-plugins.py"')
     require_text(".github/workflows/build.yml", "Flutter Linux GTK4 release")
@@ -192,6 +195,10 @@ def main() -> None:
     require_text(
         "scripts/install_flutter_gtk4_sdk.py",
         "61cafba174d24e2c4f73e416cb98c0b33a0ca751b99bf0d9c42cf2c4f1f44add",
+    )
+    require_text(
+        "scripts/with_flutter_gtk4_sdk.sh",
+        "469f2b34de41cab5f677ba84d6e9099c0e682d1e",
     )
     forbid_text("scripts/install_flutter_gtk4_sdk.py", "__CI_LIBRARY_SHA256__")
     require_text("scripts/package-linux-release.sh", "debug sections remain")

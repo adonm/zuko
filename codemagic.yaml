@@ -449,8 +449,16 @@ workflows:
 
       - name: Run Linux-hosted Flutter compile gate
         script: |
+          set -euo pipefail
           export ANDROID_HOME="${ANDROID_HOME:-$ANDROID_SDK_ROOT}"
-          $HOME/.local/bin/mise exec -- just flutter-linux-ci
+          $HOME/.local/bin/mise exec -- just flutter-ci-check
+          rm -rf target/book/web flutter/build/app flutter/build/linux-gtk4
+          $HOME/.local/bin/mise exec -- just build-web
+          $HOME/.local/bin/mise exec -- just build-flutter-android-debug
+          $HOME/.local/bin/mise exec -- \
+            scripts/with_flutter_gtk4_sdk.sh \
+            "$CM_BUILD_DIR/.tmp/flutter-gtk4-sdk" \
+            just build-flutter-linux
           tar -czf flutter-linux-x86_64.tar.gz \
             -C flutter/build/linux-gtk4/x64/release bundle
 
@@ -478,6 +486,12 @@ workflows:
           test "$(git rev-parse HEAD)" = "$CM_COMMIT"
           scripts/release-context.sh "$CM_TAG"
 
+      - name: Install Linux desktop dependencies
+        script: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            clang cmake libgtk-4-dev libsecret-1-dev ninja-build pkg-config
+
       - *install_toolchain
 
       - name: Ensure pinned Android SDK components
@@ -498,30 +512,22 @@ workflows:
           $HOME/.local/bin/mise exec -- just build-flutter-android
           $HOME/.local/bin/mise exec -- just package-codemagic-android-unsigned "$CM_TAG"
 
-      - name: Build and package x86_64 Linux client in pinned SDK
+      - name: Build and package x86_64 Linux client with pinned GTK4 SDK
         script: |
-          docker run --rm --privileged \
-            --env CI=true \
-            --env CM_COMMIT="$CM_COMMIT" \
-            --env CM_TAG="$CM_TAG" \
-            --env HOME=/home/builder \
-            --env MISE_TRUSTED_CONFIG_PATHS=/workspace \
-            --volume "$CM_BUILD_DIR:/workspace" \
-            --volume "$HOME/.local:/home/builder/.local" \
-            --volume "$HOME/.pub-cache:/home/builder/.pub-cache" \
-            --workdir /workspace \
-            ghcr.io/flathub-infra/flatpak-github-actions@sha256:bc5938197c339664f893828925061b08486e7f355c3e91eefcaae7293d3cfd6b \
-            bash -lc '
+          set -euo pipefail
+          $HOME/.local/bin/mise exec -- \
+            scripts/with_flutter_gtk4_sdk.sh \
+            "$CM_BUILD_DIR/.tmp/flutter-gtk4-sdk" \
+            bash -c '
               set -euo pipefail
-              export PATH=/home/builder/.local/bin:$PATH
-              git config --global --add safe.directory /workspace
-              flutter_root="$(mise where http:flutter)"
-              git config --global --add safe.directory "$flutter_root"
-              mise exec -- just install-freedesktop-llvm /opt/llvm
-              export PATH=/opt/llvm/bin:$PATH
-              mise exec -- just build-flutter-linux-release "$CM_COMMIT"
-              mise exec -- just package-linux-release "$CM_TAG" "$CM_COMMIT"
-            '
+              just build-flutter-linux-release "$1"
+              just package-linux-release "$2" "$1"
+              archive="dist/linux/zuko-linux-$2-x86_64.tar.gz"
+              first="$3/$(basename "$archive").first"
+              cp "$archive" "$first"
+              just package-linux-release "$2" "$1"
+              cmp "$first" "$archive"
+            ' _ "$CM_COMMIT" "$CM_TAG" "$CM_BUILD_DIR/.tmp"
 
       - name: Package Codemagic artifact handoff
         script: |
