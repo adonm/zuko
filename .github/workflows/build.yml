@@ -98,7 +98,15 @@ jobs:
         run: |
           flutter pub get --directory flutter --enforce-lockfile
           python3 scripts/patch-flutter-plugins.py flutter
-          (cd flutter && flutter build linux --release --no-pub)
+          for attempt in 1 2; do
+            if (cd flutter && flutter build linux --release --no-pub --verbose); then
+              break
+            fi
+            if test "$attempt" -eq 2; then
+              exit 1
+            fi
+            echo 'Native-assets build failed; retrying once with its populated cache' >&2
+          done
 
       - name: Package deterministic GTK4 archive
         run: |
