@@ -192,6 +192,8 @@ def validate_automation() -> None:
     require_text("codemagic.yaml", 'MISE_AUTO_INSTALL: "0"')
     require_text("codemagic.yaml", "build_number=$((1800000000 + major * 1000000 + minor * 1000 + patch))")
     require_text("codemagic.yaml", "Download exact release previews")
+    require_text("codemagic.yaml", "sh scripts/upload-appetize.sh android")
+    require_text("codemagic.yaml", "APPETIZE_RELEASE_SHA")
     for obsolete in [
         "flutter-apple-ci:",
         "flutter-linux-ci:",

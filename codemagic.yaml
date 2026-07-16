@@ -170,10 +170,25 @@ workflows:
     scripts:
       - name: Verify immutable release identity
         script: |
-          test -n "${CM_TAG:-}"
-          test "$(git rev-parse HEAD)" = "$CM_COMMIT"
-          scripts/release-context.sh "$CM_TAG"
-          echo "APPETIZE_TAG=$CM_TAG" >> "$CM_ENV"
+          if [ -n "${APPETIZE_RELEASE_TAG:-}" ]; then
+            test -z "${CM_TAG:-}"
+            test "${CM_BRANCH:-}" = main
+            [[ "$APPETIZE_RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]
+            [[ "${APPETIZE_RELEASE_SHA:-}" =~ ^[0-9a-f]{40}$ ]]
+            git fetch origin \
+              "refs/tags/$APPETIZE_RELEASE_TAG:refs/tags/$APPETIZE_RELEASE_TAG"
+            test "$(git cat-file -t "$APPETIZE_RELEASE_TAG")" = tag
+            test "$(git rev-parse "$APPETIZE_RELEASE_TAG^{commit}")" = \
+              "$APPETIZE_RELEASE_SHA"
+            git checkout --detach "$APPETIZE_RELEASE_SHA"
+            release_tag="$APPETIZE_RELEASE_TAG"
+          else
+            test -n "${CM_TAG:-}"
+            test "$(git rev-parse HEAD)" = "$CM_COMMIT"
+            release_tag="$CM_TAG"
+          fi
+          scripts/release-context.sh "$release_tag"
+          echo "APPETIZE_TAG=$release_tag" >> "$CM_ENV"
 
       - name: Verify Appetize configuration
         script: |
@@ -203,14 +218,14 @@ workflows:
 
       - name: Upload Android preview
         script: |
-          scripts/upload-appetize.sh android \
+          sh scripts/upload-appetize.sh android \
             "dist/appetize/zuko-android-$APPETIZE_TAG-signed.apk" \
             "$APPETIZE_ANDROID_PUBLIC_KEY" \
             "Zuko $APPETIZE_TAG release"
 
       - name: Upload iOS Simulator preview
         script: |
-          scripts/upload-appetize.sh ios \
+          sh scripts/upload-appetize.sh ios \
             dist/appetize/Zuko-Flutter-ios-simulator.zip \
             "$APPETIZE_IOS_PUBLIC_KEY" \
             "Zuko $APPETIZE_TAG iOS Simulator release"
