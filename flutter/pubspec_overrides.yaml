@@ -2,7 +2,7 @@ dependency_overrides:
   libghostty:
     git:
       url: https://github.com/adonm/libghostty.git
-      ref: 9e0b2afc5e04040b15f6dd11cfd07ad6dfc74470
+      ref: 8dca44bc084bb98951a47c21df5f6f774de7dfac
       path: packages/libghostty
   gtk:
     git:

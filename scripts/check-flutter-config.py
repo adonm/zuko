@@ -44,7 +44,10 @@ def validate_terminal_dependency_pin() -> None:
 
     lock = (ROOT / "flutter/pubspec.lock").read_text(encoding="utf-8")
     resolved = re.findall(
-        r'^      resolved-ref: "?([0-9a-f]{40})"?[ \t]*$', lock, re.MULTILINE
+        r'^      resolved-ref: "?([0-9a-f]{40})"?[ \t]*\n'
+        r'      url: "?https://github\.com/adonm/libghostty\.git"?[ \t]*$',
+        lock,
+        re.MULTILINE,
     )
     if resolved != refs:
         raise SystemExit(
