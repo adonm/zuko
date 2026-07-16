@@ -114,7 +114,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            build-essential cage clang cmake libegl-dev libgl-dev libgtk-4-dev \
+            build-essential cage clang cmake dbus-daemon libegl-dev libgl-dev libgtk-4-dev \
             libsecret-1-dev mesa-vulkan-drivers ninja-build pkg-config
 
       - name: Install pinned tools and Flutter SDK
@@ -155,7 +155,8 @@ jobs:
           GDK_BACKEND=wayland GDK_DISABLE=gl,vulkan GSK_RENDERER=cairo \
           WLR_BACKENDS=headless WLR_LIBINPUT_NO_DEVICES=1 \
           WLR_RENDERER=pixman LIBGL_ALWAYS_SOFTWARE=1 \
-          timeout 15s cage -- build/linux-release/extracted/bundle/zuko \
+          timeout 30s dbus-run-session -- \
+            cage -- build/linux-release/extracted/bundle/zuko \
             > gtk4-release-smoke.log 2>&1
           status=$?
           set -e
