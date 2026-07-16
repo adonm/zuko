@@ -12,7 +12,7 @@ that does not require Apple or Windows host APIs. Install Podman and
 activated mise shell supplies `just`, or use the explicit
 `mise exec -- just ...` form. The image contains the pinned Flutter and Rust
 toolchains, JDK 17, Android platforms/build-tools/NDK/CMake, the Freedesktop
-Linux SDK, LLVM, and the web Wasm tools. The source checkout is mounted
+Linux SDK, the pinned GNOME GTK4 SDK overlay, LLVM, and the web Wasm tools. The source checkout is mounted
 read-only and copied into an ephemeral `/workspace`; only artifact and cache
 directories are mounted back into their normal host paths.
 
@@ -55,6 +55,7 @@ repository-managed tools, Linux OS packages, and shell activation:
 
 ```sh
 mise bootstrap
+just setup-flutter
 just flutter-check
 ```
 
@@ -66,9 +67,11 @@ The shared client pins flterm and libghostty to the same immutable commit of
 the `adonm/libghostty` monorepo. `flutter pub get` resolves both package paths
 from one Git checkout.
 
-Flutter is installed by mise from the official checksum-pinned
-`3.47.0-0.1.pre` beta archives at revision
-`bd1e75d918605c91b411e8789fb911e6c9a84534`, so the Impeller APIs cannot drift.
+Every platform uses the repository-installed Flutter SDK at framework revision
+`328b829d35a3a5d7a00e0c2f0e97eb8cc0d97188`, with Dart
+`3.14.0-28.0.dev` and precache content hash `469f2b34de41cab5f677ba84d6e9099c0e682d1e`.
+Linux additionally installs the checksummed GTK4 engine from the matching
+immutable `flutter-dev` release.
 
 ## Android
 
@@ -153,7 +156,7 @@ command is:
 ```sh
 sudo apt-get update
 sudo apt-get install -y \
-  clang cmake libgtk-3-dev libsecret-1-dev ninja-build pkg-config
+  clang cmake libgtk-4-dev libsecret-1-dev ninja-build pkg-config
 just build-flutter-linux
 ```
 
@@ -164,7 +167,7 @@ flutter/build/linux-gtk4/x64/release/bundle/zuko
 ```
 
 Keep the complete `bundle/` directory together. The supported packaged target
-is Wayland with Impeller/OpenGL; runtime machines also need GTK 3, libsecret,
+is Wayland with Impeller/OpenGL; runtime machines also need GTK 4, libsecret,
 and an active Secret Service provider such as GNOME Keyring. Tagged releases
 package this directory for [FlatPark](flatpark.md). See the [Linux runtime
 notes](../flutter/linux/README.md).
@@ -190,17 +193,18 @@ with C++** workload. Confirm `flutter doctor -v` passes. The repository Justfile
 uses Bash, so native Windows CI uses this PowerShell sequence instead:
 
 ```powershell
-mise install rust http:flutter
-mise exec -- flutter --version
+mise install rust just
+just setup-flutter
+flutter --version
 $rustBin = Join-Path (mise where rust) "bin"
 $env:Path = "$rustBin;$env:Path"
 
 Push-Location flutter
-mise exec -- flutter pub get
+flutter pub get
 Pop-Location
 python scripts/patch-flutter-plugins.py flutter
 Push-Location flutter
-mise exec -- flutter build windows --release
+flutter build windows --release
 Pop-Location
 ```
 
@@ -216,7 +220,8 @@ selected Apple platform. The generated runners target iOS 18 and macOS 15.
 
 ```sh
 mise bootstrap
-mise exec -- flutter --version
+just setup-flutter
+flutter --version
 just build-flutter-ios
 just build-flutter-macos
 ```

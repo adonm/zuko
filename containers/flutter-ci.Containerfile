@@ -6,6 +6,8 @@ ARG MISE_VERSION=2026.7.5
 ARG MISE_SHA256=5f7ab76afdf0780d12edeaa67e908094e9ccf7924cfe203e415c1cfb87bbf778
 ARG ANDROID_COMMAND_LINE_TOOLS_VERSION=14742923
 ARG ANDROID_COMMAND_LINE_TOOLS_SHA256=04453066b540409d975c676d781da1477479dde3761310f1a7eb92a1dfb15af7
+ARG GNOME_SDK_REF=org.gnome.Sdk//49
+ARG GNOME_SDK_COMMIT=120462a79cee71477cfcbce3ec1785e20c39e56c76774eefcd3b4f3d5903a3bb
 
 COPY --from=java /opt/java/openjdk /opt/java/openjdk
 COPY scripts/install-android-platform-tools.sh /app/bin/install-android-platform-tools
@@ -31,9 +33,10 @@ ENV JAVA_HOME=/opt/java/openjdk \
     PUB_CACHE=/var/cache/zuko/pub \
     GRADLE_USER_HOME=/var/cache/zuko/gradle \
     CI=true \
+    FLUTTER_PREBUILT_ENGINE_VERSION=469f2b34de41cab5f677ba84d6e9099c0e682d1e \
     FLUTTER_SUPPRESS_ANALYTICS=true \
     TAR_OPTIONS=--no-same-owner \
-    PATH=/opt/android-sdk/cmdline-tools/latest/bin:/opt/android-sdk/platform-tools:/opt/java/openjdk/bin:/app/llvm/bin:/app/wasm-bindgen/bin:/app/bin:/opt/mise/data/shims:/usr/bin:/bin
+    PATH=/opt/flutter-sdk/bin:/opt/android-sdk/cmdline-tools/latest/bin:/opt/android-sdk/platform-tools:/opt/java/openjdk/bin:/app/llvm/bin:/app/wasm-bindgen/bin:/app/bin:/opt/mise/data/shims:/usr/bin:/bin
 
 RUN set -eux; \
     archive=/tmp/android-command-line-tools.zip; \
@@ -61,10 +64,25 @@ RUN set -eux; \
     rm -rf /root/.android/cache /root/.cache
 
 COPY scripts/install-freedesktop-llvm.sh /app/bin/install-freedesktop-llvm
+COPY scripts/install_flutter_sdk.py /app/bin/install_flutter_sdk.py
 
 RUN set -eux; \
     chmod 0755 /app/bin/install-freedesktop-llvm; \
-    /app/bin/install-freedesktop-llvm /app/llvm
+    chmod 0755 /app/bin/install_flutter_sdk.py; \
+    /app/bin/install-freedesktop-llvm /app/llvm; \
+    flatpak install --system --noninteractive --or-update flathub "$GNOME_SDK_REF"; \
+    flatpak update --system --noninteractive --commit="$GNOME_SDK_COMMIT" "$GNOME_SDK_REF"; \
+    test "$(flatpak info --system --show-commit "$GNOME_SDK_REF")" = "$GNOME_SDK_COMMIT"; \
+    gnome_sdk=$(flatpak info --system --show-location "$GNOME_SDK_REF"); \
+    cp -a "$gnome_sdk/files/include/gtk-4.0" /usr/include/; \
+    cp -a "$gnome_sdk/files/lib/x86_64-linux-gnu/libgtk-4.so"* /usr/lib/x86_64-linux-gnu/; \
+    cp -a "$gnome_sdk/files/lib/x86_64-linux-gnu/libgio-2.0.so"* /usr/lib/x86_64-linux-gnu/; \
+    cp -a "$gnome_sdk/files/lib/x86_64-linux-gnu/pkgconfig/gtk4.pc" /usr/lib/x86_64-linux-gnu/pkgconfig/; \
+    pkg-config --modversion gtk4; \
+    ldd -r /usr/lib/x86_64-linux-gnu/libgtk-4.so.1 | tee /tmp/gtk4-linkage; \
+    ! grep -Eq 'not found|undefined symbol' /tmp/gtk4-linkage; \
+    rm /tmp/gtk4-linkage; \
+    /app/bin/install_flutter_sdk.py /opt/flutter-sdk
 
 COPY mise.toml /opt/zuko/mise.toml
 
@@ -75,9 +93,7 @@ RUN set -eux; \
     mise exec -- rustup target add wasm32-unknown-unknown; \
     mise exec -- cargo install wasm-bindgen-cli \
       --version 0.2.122 --locked --root /app/wasm-bindgen; \
-    mise exec -- flutter config --no-analytics; \
-    mise exec -- flutter precache --android --linux --web; \
-    mise exec -- flutter --version; \
+    flutter --version; \
     mise exec -- rustc --version; \
     mise exec -- just --version; \
     java -version; \

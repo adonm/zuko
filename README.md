@@ -149,6 +149,7 @@ See [`docs/app.md`](docs/app.md).
 
 ```sh
 mise install
+just setup-flutter
 hk install --mise # local format and full pre-push checks
 just check
 just test-e2e      # live Iroh network + PTY

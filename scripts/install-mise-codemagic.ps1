@@ -30,7 +30,14 @@ try {
 
 & $bin --version | Select-String -SimpleMatch $version
 & $bin trust (Join-Path $PWD "mise.toml")
-& $bin install rust zig just "http:flutter"
+& $bin install rust zig just
+$sdk = Join-Path $PWD ".tmp/flutter-sdk"
+& $env:PYTHON scripts/install_flutter_sdk.py $sdk
+$sdkBin = Join-Path $sdk "bin"
+$env:Path = "$sdkBin;$env:Path"
+$env:FLUTTER_PREBUILT_ENGINE_VERSION = "469f2b34de41cab5f677ba84d6e9099c0e682d1e"
+Add-Content -Path $env:CM_ENV -Value "PATH=$env:Path"
+Add-Content -Path $env:CM_ENV -Value "FLUTTER_PREBUILT_ENGINE_VERSION=$env:FLUTTER_PREBUILT_ENGINE_VERSION"
 & $bin exec -- rustc --version
 & $bin exec -- zig version
-& $bin exec -- flutter --version
+& flutter --version

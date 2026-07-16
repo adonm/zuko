@@ -6,6 +6,7 @@ and invokes the same Justfile recipes through `mise exec -- just <recipe>`.
 
 ```sh
 mise bootstrap          # OS packages + shell activation + pinned tools
+just setup-flutter      # exact cross-platform Flutter/Dart SDK
 hk install --mise       # local format and full pre-push gates
 just                     # grouped recipe list
 just check           # Rust + Flutter + release metadata

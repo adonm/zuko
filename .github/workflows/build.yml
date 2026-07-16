@@ -94,7 +94,7 @@ jobs:
       - name: Install pinned Flutter GTK4 SDK
         run: |
           sdk="$RUNNER_TEMP/flutter-gtk4-sdk"
-          python3 scripts/install_flutter_gtk4_sdk.py "$sdk"
+          python3 scripts/install_flutter_sdk.py "$sdk"
           printf '%s\n' "$sdk/bin" >> "$GITHUB_PATH"
 
       - name: Build GTK4 release bundle

@@ -37,6 +37,7 @@ the platform guides provide deeper operational detail.
 
 ```sh
 mise bootstrap
+just setup-flutter
 just check
 just test-e2e
 just release

@@ -59,37 +59,19 @@ def main() -> None:
     validate_terminal_dependency_pin()
     with (ROOT / "mise.toml").open("rb") as source:
         mise = tomllib.load(source)
-    flutter = mise["tools"]["http:flutter"]
-    if flutter["version"] != "3.47.0-0.1.pre":
-        raise SystemExit("Flutter config: mise must pin Flutter 3.47.0-0.1.pre")
-    expected_archives = {
-        "linux-x64": (
-            "beta/linux/flutter_linux_3.47.0-0.1.pre-beta.tar.xz",
-            "sha256:2cf72c1bc8571f406dfb7a0b3d8128abd4f43d2c335d2ed76249fe492c0d7c34",
-        ),
-        "macos-x64": (
-            "beta/macos/flutter_macos_3.47.0-0.1.pre-beta.zip",
-            "sha256:60b11ec8b5540de339c2aeaf19814d86f1232017bf82d3dc06f9cdad68092c97",
-        ),
-        "macos-arm64": (
-            "beta/macos/flutter_macos_arm64_3.47.0-0.1.pre-beta.zip",
-            "sha256:688988016fa2f316963e12d993b5006541c2cdadfad3b9d9723da6ffaba16cd3",
-        ),
-        "windows-x64": (
-            "beta/windows/flutter_windows_3.47.0-0.1.pre-beta.zip",
-            "sha256:ec2d657406924e87bc84af2f3f38b45efba3a27669e59aa269096deb29e53fef",
-        ),
-    }
-    platforms = flutter["platforms"]
-    if set(platforms) != set(expected_archives):
-        raise SystemExit("Flutter config: Flutter archive platforms must match supported clients")
-    for platform, (archive, checksum) in expected_archives.items():
-        entry = platforms.get(platform, {})
-        if not entry.get("url", "").endswith(archive) or entry.get("checksum") != checksum:
-            raise SystemExit(f"Flutter config: invalid {platform} beta archive pin")
-    revision = mise["env"].get("ZUKO_FLUTTER_REVISION")
-    if revision != "bd1e75d918605c91b411e8789fb911e6c9a84534":
-        raise SystemExit("Flutter config: mise must pin the published beta revision")
+    if "http:flutter" in mise["tools"]:
+        raise SystemExit("Flutter config: official Flutter archives must not shadow the pinned SDK")
+    environment = mise["env"]
+    if environment.get("_", {}).get("path") != [".tmp/flutter-sdk/bin"]:
+        raise SystemExit("Flutter config: mise must select the repository SDK checkout")
+    if environment.get("ZUKO_FLUTTER_REVISION") != (
+        "328b829d35a3a5d7a00e0c2f0e97eb8cc0d97188"
+    ):
+        raise SystemExit("Flutter config: mise must pin the GTK4 framework revision")
+    if environment.get("FLUTTER_PREBUILT_ENGINE_VERSION") != (
+        "469f2b34de41cab5f677ba84d6e9099c0e682d1e"
+    ):
+        raise SystemExit("Flutter config: mise must pin the precache content hash")
 
     android = ET.parse(ROOT / "flutter/android/app/src/main/AndroidManifest.xml").getroot()
     namespace = "{http://schemas.android.com/apk/res/android}"
@@ -134,17 +116,21 @@ def main() -> None:
         "flatpak-github-actions@sha256:bc5938197c339664f893828925061b08486e7f355c3e91eefcaae7293d3cfd6b",
         "ANDROID_COMMAND_LINE_TOOLS_VERSION=14742923",
         "ANDROID_COMMAND_LINE_TOOLS_SHA256=04453066b540409d975c676d781da1477479dde3761310f1a7eb92a1dfb15af7",
+        "GNOME_SDK_COMMIT=120462a79cee71477cfcbce3ec1785e20c39e56c76774eefcd3b4f3d5903a3bb",
         "'platforms;android-34'",
         "'platforms;android-35'",
         "'platforms;android-36'",
         "'build-tools;36.0.0'",
         "'cmake;3.22.1'",
         "'ndk;29.0.14206865'",
-        "flutter precache --android --linux --web",
+        "install_flutter_sdk.py /opt/flutter-sdk",
+        "pkg-config --modversion gtk4",
     ]:
         require_text(containerfile, value)
     require_text("Justfile", "flutter-linux-ci: flutter-ci-check flutter-linux-builds")
     require_text("Justfile", "flutter-app-check: flutter-get")
+    require_text("Justfile", "setup-flutter:")
+    require_text("Justfile", "install_flutter_sdk.py .tmp/flutter-sdk")
     require_text("scripts/container-flutter.sh", "mise exec -- just flutter-linux-ci")
     require_text("scripts/container-flutter.sh", "localhost/zuko-flutter-ci:2026.07")
     require_text("scripts/container-flutter.sh", "zuko-flutter-dart-tool")
@@ -170,37 +156,42 @@ def main() -> None:
         "scripts/build-flatpark-test-bundle.sh",
         "localhost/zuko-flutter-ci:2026.07",
     )
-    require_text("codemagic.yaml", "mise exec -- just flutter-ci-check")
-    require_text("codemagic.yaml", "mise exec -- just build-web")
-    require_text("codemagic.yaml", "mise exec -- just build-flutter-android-debug")
-    require_text("codemagic.yaml", "with_flutter_gtk4_sdk.sh")
+    require_text("codemagic.yaml", "mise exec -- just flutter-linux-ci")
     require_text("codemagic.yaml", "scripts/prepare-web-plugins.py")
     require_text(".github/workflows/docs.yml", '"scripts/prepare-web-plugins.py"')
     require_text(".github/workflows/build.yml", "Flutter Linux GTK4 release")
     require_text(
-        ".github/workflows/build.yml", "scripts/install_flutter_gtk4_sdk.py"
+        ".github/workflows/build.yml", "scripts/install_flutter_sdk.py"
     )
     require_text(
-        "scripts/install_flutter_gtk4_sdk.py",
+        "scripts/install_flutter_sdk.py",
         "328b829d35a3a5d7a00e0c2f0e97eb8cc0d97188",
     )
     require_text(
-        "scripts/install_flutter_gtk4_sdk.py",
+        "scripts/install_flutter_sdk.py",
+        "3.14.0 (build 3.14.0-28.0.dev)",
+    )
+    require_text(
+        "scripts/install_flutter_sdk.py",
         "libflutter_linux_gtk4.so",
     )
     require_text(
-        "scripts/install_flutter_gtk4_sdk.py",
+        "scripts/install_flutter_sdk.py",
         "github.com/adonm/flutter-dev/releases/download",
     )
     require_text(
-        "scripts/install_flutter_gtk4_sdk.py",
+        "scripts/install_flutter_sdk.py",
         "61cafba174d24e2c4f73e416cb98c0b33a0ca751b99bf0d9c42cf2c4f1f44add",
     )
+    forbid_text("scripts/install_flutter_sdk.py", "__CI_LIBRARY_SHA256__")
+    require_text("scripts/install-mise-codemagic.sh", "install_flutter_sdk.py")
+    require_text("scripts/install-mise-codemagic.ps1", "install_flutter_sdk.py")
+    forbid_text("scripts/install-mise-codemagic.sh", "http:flutter")
+    forbid_text("scripts/install-mise-codemagic.ps1", "http:flutter")
     require_text(
-        "scripts/with_flutter_gtk4_sdk.sh",
-        "469f2b34de41cab5f677ba84d6e9099c0e682d1e",
+        "scripts/prepare-libghostty-ios-static.py",
+        'version != "3.47.0-1.0.pre-160"',
     )
-    forbid_text("scripts/install_flutter_gtk4_sdk.py", "__CI_LIBRARY_SHA256__")
     require_text("scripts/package-linux-release.sh", "debug sections remain")
     require_text(
         "scripts/package-linux-release.sh",
@@ -236,6 +227,8 @@ def main() -> None:
     forbid_text("codemagic.yaml", "flutter-linux-aarch64")
     forbid_text(".github/workflows/release.yml", "linux-arm-build")
     for removed in [
+        "scripts/install_flutter_gtk4_sdk.py",
+        "scripts/with_flutter_gtk4_sdk.sh",
         "scripts/build-flutter-linux-release.sh",
         "scripts/build-flatpak-repository.sh",
         "scripts/install-flatpak-sysroot.sh",
@@ -247,7 +240,10 @@ def main() -> None:
         if (ROOT / removed).exists():
             raise SystemExit(f"Flutter config: obsolete Linux packaging helper still exists: {removed}")
 
-    print(f"Flutter config: rendering policy uses beta revision {revision}")
+    print(
+        "Flutter config: all platforms use framework revision "
+        f"{environment['ZUKO_FLUTTER_REVISION']}"
+    )
 
 
 if __name__ == "__main__":

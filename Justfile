@@ -62,7 +62,11 @@ hook-format-check:
     python3 scripts/check-dart-format.py flutter/lib flutter/test
 
 [group('flutter')]
-flutter-get:
+setup-flutter:
+    python3 scripts/install_flutter_sdk.py .tmp/flutter-sdk
+
+[group('flutter')]
+flutter-get: setup-flutter
     cd flutter && flutter pub get --enforce-lockfile
 
 [group('flutter')]
@@ -146,7 +150,7 @@ package-apple-development:
     scripts/package-apple-development.sh
 
 [group('flutter')]
-package-ios-preview version:
+package-ios-preview version: flutter-get
     scripts/package-ios-preview.sh "{{ version }}"
 
 [group('flutter')]
@@ -240,7 +244,7 @@ serve-docs:
     mdbook serve --open
 
 [group('flutter')]
-build-web:
+build-web: setup-flutter
     scripts/build-web.sh
 
 [group('flutter')]
@@ -292,7 +296,7 @@ publish-android-store file sha package track mode label:
     scripts/android-upload-google-play.sh "{{ file }}" "{{ sha }}" "{{ package }}" "{{ track }}" "{{ mode }}" "{{ label }}"
 
 [group('release')]
-prepare-ios-ghostty:
+prepare-ios-ghostty: flutter-get
     python3 scripts/prepare-libghostty-ios-static.py
 
 [group('release')]

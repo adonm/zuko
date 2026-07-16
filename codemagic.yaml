@@ -282,6 +282,7 @@ workflows:
           - Justfile
           - mise.toml
           - scripts/install-mise-codemagic.sh
+          - scripts/install_flutter_sdk.py
           - scripts/package-apple-development.sh
           - scripts/patch-flutter-plugins.py
           - scripts/select-xcode.sh
@@ -423,6 +424,7 @@ workflows:
           - scripts/check-flutter-config.py
           - scripts/finalize-web-build.py
           - scripts/install-mise-codemagic.sh
+          - scripts/install_flutter_sdk.py
           - scripts/install-android-platform-tools.sh
           - scripts/container-flutter.sh
           - scripts/patch-flutter-plugins.py
@@ -451,14 +453,7 @@ workflows:
         script: |
           set -euo pipefail
           export ANDROID_HOME="${ANDROID_HOME:-$ANDROID_SDK_ROOT}"
-          $HOME/.local/bin/mise exec -- just flutter-ci-check
-          rm -rf target/book/web flutter/build/app flutter/build/linux-gtk4
-          $HOME/.local/bin/mise exec -- just build-web
-          $HOME/.local/bin/mise exec -- just build-flutter-android-debug
-          $HOME/.local/bin/mise exec -- \
-            scripts/with_flutter_gtk4_sdk.sh \
-            "$CM_BUILD_DIR/.tmp/flutter-gtk4-sdk" \
-            just build-flutter-linux
+          $HOME/.local/bin/mise exec -- just flutter-linux-ci
           tar -czf flutter-linux-x86_64.tar.gz \
             -C flutter/build/linux-gtk4/x64/release bundle
 
@@ -515,10 +510,7 @@ workflows:
       - name: Build and package x86_64 Linux client with pinned GTK4 SDK
         script: |
           set -euo pipefail
-          $HOME/.local/bin/mise exec -- \
-            scripts/with_flutter_gtk4_sdk.sh \
-            "$CM_BUILD_DIR/.tmp/flutter-gtk4-sdk" \
-            bash -c '
+          $HOME/.local/bin/mise exec -- bash -c '
               set -euo pipefail
               just build-flutter-linux-release "$1"
               just package-linux-release "$2" "$1"
@@ -565,6 +557,7 @@ workflows:
           - Justfile
           - mise.toml
           - scripts/install-mise-codemagic.ps1
+          - scripts/install_flutter_sdk.py
           - scripts/package-windows-release.ps1
           - scripts/patch-flutter-plugins.py
     scripts:

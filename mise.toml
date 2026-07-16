@@ -13,37 +13,25 @@ lychee = "0.24.2"
 actionlint = "1.7.12"
 hk = "1.50.0"
 
-# Official beta archives for framework revision
-# bd1e75d918605c91b411e8789fb911e6c9a84534. Platform checksums come from
-# Flutter's published release manifests.
-[tools."http:flutter"]
-version = "3.47.0-0.1.pre"
-
-[tools."http:flutter".platforms]
-linux-x64 = { url = "https://storage.googleapis.com/flutter_infra_release/releases/beta/linux/flutter_linux_3.47.0-0.1.pre-beta.tar.xz", checksum = "sha256:2cf72c1bc8571f406dfb7a0b3d8128abd4f43d2c335d2ed76249fe492c0d7c34" }
-macos-x64 = { url = "https://storage.googleapis.com/flutter_infra_release/releases/beta/macos/flutter_macos_3.47.0-0.1.pre-beta.zip", checksum = "sha256:60b11ec8b5540de339c2aeaf19814d86f1232017bf82d3dc06f9cdad68092c97" }
-macos-arm64 = { url = "https://storage.googleapis.com/flutter_infra_release/releases/beta/macos/flutter_macos_arm64_3.47.0-0.1.pre-beta.zip", checksum = "sha256:688988016fa2f316963e12d993b5006541c2cdadfad3b9d9723da6ffaba16cd3" }
-windows-x64 = { url = "https://storage.googleapis.com/flutter_infra_release/releases/beta/windows/flutter_windows_3.47.0-0.1.pre-beta.zip", checksum = "sha256:ec2d657406924e87bc84af2f3f38b45efba3a27669e59aa269096deb29e53fef" }
-
 # System-level dependencies used by Linux builds. `mise bootstrap` installs
 # only entries for package managers available on the current OS.
 [bootstrap.packages]
 "apt:gcc-aarch64-linux-gnu" = "latest"
 "apt:clang" = "latest"
 "apt:cmake" = "latest"
-"apt:libgtk-3-dev" = "latest"
+"apt:libgtk-4-dev" = "latest"
 "apt:libsecret-1-dev" = "latest"
 "apt:ninja-build" = "latest"
 "apt:pkg-config" = "latest"
 "dnf:clang" = "latest"
 "dnf:cmake" = "latest"
-"dnf:gtk3-devel" = "latest"
+"dnf:gtk4-devel" = "latest"
 "dnf:libsecret-devel" = "latest"
 "dnf:ninja-build" = "latest"
 "dnf:pkgconf-pkg-config" = "latest"
 "pacman:clang" = "latest"
 "pacman:cmake" = "latest"
-"pacman:gtk3" = "latest"
+"pacman:gtk4" = "latest"
 "pacman:libsecret" = "latest"
 "pacman:ninja" = "latest"
 "pacman:pkgconf" = "latest"
@@ -57,6 +45,8 @@ fish = "activate"
 experimental = true
 
 [env]
+_.path = [".tmp/flutter-sdk/bin"]
 CARGO_TERM_COLOR = "always"
 CODEMAGIC_APP_ID = "6a52dc14add8531e99f88b8a"
-ZUKO_FLUTTER_REVISION = "bd1e75d918605c91b411e8789fb911e6c9a84534"
+FLUTTER_PREBUILT_ENGINE_VERSION = "469f2b34de41cab5f677ba84d6e9099c0e682d1e"
+ZUKO_FLUTTER_REVISION = "328b829d35a3a5d7a00e0c2f0e97eb8cc0d97188"

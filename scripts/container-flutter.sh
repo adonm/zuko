@@ -144,5 +144,6 @@ exec podman run "${run_args[@]}" "$IMAGE" bash -lc \
     --exclude=./target \
     -cf - . | tar -C /workspace -xf -; \
   cd /workspace; git config --global --add safe.directory /workspace; \
-  flutter_root=\$(mise where http:flutter); \
-  git config --global --add safe.directory \"\$flutter_root\"; $command"
+  git config --global --add safe.directory /opt/flutter-sdk; \
+  mkdir -p .tmp; rm -rf .tmp/flutter-sdk; \
+  ln -s /opt/flutter-sdk .tmp/flutter-sdk; $command"

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Install the pinned Flutter SDK and its CI-built GTK4 release engine."""
+"""Install the pinned cross-platform Flutter SDK and Linux GTK4 engine."""
 
 from __future__ import annotations
 
@@ -8,8 +8,10 @@ import hashlib
 import json
 import os
 import pathlib
+import platform
 import shutil
 import subprocess
+import sys
 import tempfile
 
 FLUTTER_REPOSITORY = "https://github.com/adonm/flutter.git"
@@ -17,6 +19,7 @@ FLUTTER_SDK_REVISION = "328b829d35a3a5d7a00e0c2f0e97eb8cc0d97188"
 FLUTTER_VERSION_BASE_TAG = "3.47.0-0.1.pre"
 FLUTTER_FRAMEWORK_VERSION = "3.47.0-1.0.pre-160"
 FLUTTER_ENGINE_REVISION = "fc1ad955f16467c959e3cd8079b760d5af0984aa"
+DART_SDK_VERSION = "3.14.0 (build 3.14.0-28.0.dev)"
 ENGINE_BUILD_CONTENT_HASH = "4b9d582709c5336c84a698251b542d65ed790a9d"
 PRECACHE_ENGINE_CONTENT_HASH = "469f2b34de41cab5f677ba84d6e9099c0e682d1e"
 DART_REVISION = "d402ff7c9c8442d64aa8148609480aa0e04a24fd"
@@ -43,8 +46,23 @@ def run(
     return result.stdout.strip() if capture else ""
 
 
-def require_tools() -> None:
-    missing = [tool for tool in ("curl", "git", "readelf") if shutil.which(tool) is None]
+def host_name() -> str:
+    if sys.platform.startswith("linux"):
+        if platform.machine() not in {"x86_64", "amd64"}:
+            raise SystemExit("the Linux GTK4 engine is available only for x86_64")
+        return "linux"
+    if sys.platform == "darwin":
+        return "macos"
+    if os.name == "nt":
+        return "windows"
+    raise SystemExit(f"unsupported Flutter host: {sys.platform}")
+
+
+def require_tools(host: str) -> None:
+    tools = ["git"]
+    if host == "linux":
+        tools.extend(("curl", "readelf"))
+    missing = [tool for tool in tools if shutil.which(tool) is None]
     if missing:
         raise SystemExit(f"missing required tools: {', '.join(missing)}")
 
@@ -56,6 +74,8 @@ def checkout_sdk(destination: pathlib.Path) -> None:
     else:
         destination.mkdir(parents=True)
         run("git", "-C", str(destination), "init")
+        if os.name == "nt":
+            run("git", "-C", str(destination), "config", "core.longpaths", "true")
         run(
             "git",
             "-C",
@@ -132,34 +152,51 @@ def checkout_sdk(destination: pathlib.Path) -> None:
             f"Flutter SDK revision mismatch: expected {FLUTTER_SDK_REVISION}, got {revision}"
         )
     if subprocess.run(
-        ["git", "-C", str(destination), "diff", "--quiet", "HEAD", "--"], check=False
+        ["git", "-C", str(destination), "diff", "--quiet", "HEAD", "--"],
+        check=False,
     ).returncode != 0:
         raise SystemExit(f"Flutter SDK has tracked changes: {destination}")
 
 
-def prepare_sdk(destination: pathlib.Path) -> None:
-    flutter = destination / "bin/flutter"
+def flutter_command(destination: pathlib.Path, *args: str) -> tuple[str, ...]:
+    executable = destination / "bin" / ("flutter.bat" if os.name == "nt" else "flutter")
+    return (str(executable), *args)
+
+
+def prepare_sdk(destination: pathlib.Path, host: str) -> None:
     environment = os.environ.copy()
     environment["FLUTTER_PREBUILT_ENGINE_VERSION"] = PRECACHE_ENGINE_CONTENT_HASH
+    config_flags = {
+        "linux": ("--enable-linux-desktop",),
+        "macos": ("--enable-ios", "--enable-macos-desktop"),
+        "windows": ("--enable-windows-desktop",),
+    }[host]
+    precache_flags = {
+        "linux": ("--android", "--linux", "--web"),
+        "macos": ("--ios", "--macos"),
+        "windows": ("--windows",),
+    }[host]
     run(
-        str(flutter),
-        "--suppress-analytics",
-        "config",
-        "--enable-linux-desktop",
+        *flutter_command(
+            destination,
+            "--suppress-analytics",
+            "config",
+            *config_flags,
+        ),
         environment=environment,
     )
     run(
-        str(flutter),
-        "--suppress-analytics",
-        "precache",
-        "--linux",
+        *flutter_command(
+            destination,
+            "--suppress-analytics",
+            "precache",
+            *precache_flags,
+        ),
         environment=environment,
     )
     version = json.loads(
         run(
-            str(flutter),
-            "--version",
-            "--machine",
+            *flutter_command(destination, "--version", "--machine"),
             capture=True,
             environment=environment,
         )
@@ -168,6 +205,7 @@ def prepare_sdk(destination: pathlib.Path) -> None:
         "frameworkVersion": FLUTTER_FRAMEWORK_VERSION,
         "frameworkRevision": FLUTTER_SDK_REVISION,
         "engineRevision": FLUTTER_ENGINE_REVISION,
+        "dartSdkVersion": DART_SDK_VERSION,
     }
     actual = {key: version.get(key) for key in expected}
     if actual != expected:
@@ -204,11 +242,6 @@ def validate_download(directory: pathlib.Path) -> pathlib.Path:
     checksum = download(directory, "libflutter_linux_gtk4.so.sha256")
     metadata_path = download(directory, "engine-metadata.json")
 
-    digest = hashlib.sha256(library.read_bytes()).hexdigest()
-    if digest != LIBRARY_SHA256:
-        raise SystemExit(
-            f"GTK4 engine SHA-256 mismatch: expected {LIBRARY_SHA256}, got {digest}"
-        )
     sidecar = checksum.read_text().split()
     if sidecar != [LIBRARY_SHA256, library.name]:
         raise SystemExit(f"invalid GTK4 engine checksum sidecar: {sidecar}")
@@ -232,6 +265,16 @@ def validate_download(directory: pathlib.Path) -> pathlib.Path:
             f"GTK4 engine metadata mismatch: expected {expected_metadata}, got {actual_metadata}"
         )
 
+    validate_library(library)
+    return library
+
+
+def validate_library(library: pathlib.Path) -> None:
+    digest = hashlib.sha256(library.read_bytes()).hexdigest()
+    if digest != LIBRARY_SHA256:
+        raise SystemExit(
+            f"GTK4 engine SHA-256 mismatch: expected {LIBRARY_SHA256}, got {digest}"
+        )
     dynamic = run("readelf", "--dynamic", "--wide", str(library), capture=True)
     if "Shared library: [libgtk-4.so.1]" not in dynamic:
         raise SystemExit("GTK4 engine does not directly link libgtk-4.so.1")
@@ -240,7 +283,6 @@ def validate_download(directory: pathlib.Path) -> pathlib.Path:
     sections = run("readelf", "--sections", "--wide", str(library), capture=True)
     if ".debug_info" in sections or ".debug_line" in sections:
         raise SystemExit("GTK4 engine contains debug sections")
-    return library
 
 
 def install_library(sdk: pathlib.Path, library: pathlib.Path) -> pathlib.Path:
@@ -263,13 +305,25 @@ def main() -> None:
     parser.add_argument("destination", type=pathlib.Path)
     args = parser.parse_args()
 
-    require_tools()
+    host = host_name()
+    require_tools(host)
     destination = args.destination.resolve()
     checkout_sdk(destination)
-    prepare_sdk(destination)
-    with tempfile.TemporaryDirectory(prefix="flutter-gtk4-engine-") as temporary:
-        library = validate_download(pathlib.Path(temporary))
-        installed = install_library(destination, library)
+    prepare_sdk(destination, host)
+
+    installed: pathlib.Path | None = None
+    if host == "linux":
+        installed = (
+            destination
+            / "bin/cache/artifacts/engine/linux-x64-release/libflutter_linux_gtk4.so"
+        )
+        if installed.is_file():
+            validate_library(installed)
+        else:
+            with tempfile.TemporaryDirectory(prefix="flutter-gtk4-engine-") as temporary:
+                library = validate_download(pathlib.Path(temporary))
+                installed = install_library(destination, library)
+
     github_environment = os.environ.get("GITHUB_ENV")
     if github_environment:
         with pathlib.Path(github_environment).open("a") as output:
@@ -277,9 +331,12 @@ def main() -> None:
                 "FLUTTER_PREBUILT_ENGINE_VERSION="
                 f"{PRECACHE_ENGINE_CONTENT_HASH}\n"
             )
-    print(f"Flutter GTK4 SDK: {destination}")
-    print(f"Flutter GTK4 engine: {installed}")
-    print(f"Flutter GTK4 engine SHA-256: {LIBRARY_SHA256}")
+    print(f"Flutter SDK ({host}): {destination}")
+    print(f"Flutter framework revision: {FLUTTER_SDK_REVISION}")
+    print(f"Flutter Dart SDK: {DART_SDK_VERSION}")
+    if installed is not None:
+        print(f"Flutter GTK4 engine: {installed}")
+        print(f"Flutter GTK4 engine SHA-256: {LIBRARY_SHA256}")
     print(
         "export FLUTTER_PREBUILT_ENGINE_VERSION="
         f"{PRECACHE_ENGINE_CONTENT_HASH}"

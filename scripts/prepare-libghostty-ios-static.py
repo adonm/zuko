@@ -6,7 +6,7 @@ that Mach-O because it lacks Apple's LC_ENCRYPTION_INFO_64 load command. The
 upstream Ghostty build also emits a complete static archive. This patch compiles
 that archive and relinks it into the bundled dylib with Apple clang.
 
-Flutter 3.47.0-0.1.pre also hardcodes native-asset framework Info.plists to an
+Flutter 3.47.0-1.0.pre-160 also hardcodes native-asset framework Info.plists to an
 iOS 13.0 minimum even when the binary targets iOS 18.0. Patch the pinned Flutter
 generator so its framework metadata matches the linked binary.
 """
@@ -81,7 +81,7 @@ def patch_flutter_native_assets() -> None:
         text=True,
     )
     version = json.loads(version_result.stdout)["frameworkVersion"]
-    if version != "3.47.0-0.1.pre":
+    if version != "3.47.0-1.0.pre-160":
         fail(f"the patch must be reviewed for Flutter {version}")
 
     native_assets = (

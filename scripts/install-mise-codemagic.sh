@@ -42,7 +42,15 @@ fi
 
 "$BIN" --version | grep -F "$VERSION"
 "$BIN" trust "$PWD/mise.toml"
-"$BIN" install rust zig just 'http:flutter'
+"$BIN" install rust zig just
+SDK="$CM_BUILD_DIR/.tmp/flutter-sdk"
+python3 scripts/install_flutter_sdk.py "$SDK"
+export PATH="$SDK/bin:$PATH"
+export FLUTTER_PREBUILT_ENGINE_VERSION=469f2b34de41cab5f677ba84d6e9099c0e682d1e
+{
+  echo "PATH=$PATH"
+  echo "FLUTTER_PREBUILT_ENGINE_VERSION=$FLUTTER_PREBUILT_ENGINE_VERSION"
+} >> "$CM_ENV"
 "$BIN" exec -- rustc --version
 "$BIN" exec -- zig version
-"$BIN" exec -- flutter --version
+flutter --version
