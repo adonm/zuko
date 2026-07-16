@@ -43,11 +43,11 @@ case "$mode" in
     command='rm -rf flutter/build/app && mise exec -- just build-flutter-android'
     ;;
   linux)
-    command='rm -rf flutter/build/linux && mise exec -- just build-flutter-linux'
+    command='rm -rf flutter/build/linux-gtk4 && mise exec -- just build-flutter-linux'
     ;;
   linux-bundle)
     # shellcheck disable=SC2016 # Expanded by the container's bash.
-    command='rm -rf flutter/build/linux && mise exec -- just build-flutter-linux && mise exec -- just package-linux-release "v$(scripts/version.sh)" HEAD'
+    command='rm -rf flutter/build/linux-gtk4 && mise exec -- just build-flutter-linux && mise exec -- just package-linux-release "v$(scripts/version.sh)" HEAD'
     ;;
   ci)
     command='mise exec -- just flutter-linux-ci'
@@ -58,7 +58,7 @@ case "$mode" in
   legacy-all)
     # Compatibility for container-linux.sh all, which historically packaged Linux.
     # shellcheck disable=SC2016 # Expanded by the container's bash.
-    command='mise exec -- just flutter-check && rm -rf flutter/build/linux && mise exec -- just build-flutter-linux && mise exec -- just package-linux-release "v$(scripts/version.sh)" HEAD'
+    command='mise exec -- just flutter-check && rm -rf flutter/build/linux-gtk4 && mise exec -- just build-flutter-linux && mise exec -- just package-linux-release "v$(scripts/version.sh)" HEAD'
     ;;
   *)
     echo "usage: container-flutter.sh <check|preflight|quality|links|e2e|web|android|android-release|linux|linux-bundle|ci|all>" >&2
