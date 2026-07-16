@@ -88,6 +88,9 @@ jobs:
           cache: true
           install_args: rust zig
 
+      - name: Trust reviewed tool configuration
+        run: mise trust --yes "$GITHUB_WORKSPACE/mise.toml"
+
       - name: Install pinned Flutter GTK4 SDK
         run: |
           sdk="$RUNNER_TEMP/flutter-gtk4-sdk"
