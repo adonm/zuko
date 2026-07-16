@@ -50,6 +50,16 @@ test -f "$ARCHIVE"
 mkdir -p "$WORK/package"
 tar -xzf "$ARCHIVE" -C "$WORK/package"
 test -f "$PACKAGE/Cargo.toml"
+if find "$PACKAGE" -type f \( \
+  -path '*/.tmp/*' -o \
+  -path '*/.github/*' -o \
+  -path '*/docs/*' -o \
+  -path '*/flutter/*' -o \
+  -path '*/scripts/*' \
+\) | grep -q .; then
+  echo "crate package: non-crate workspace files leaked into the archive" >&2
+  exit 1
+fi
 
 echo "Checking the unpacked package with its crates.io-only lockfile..."
 cargo check \

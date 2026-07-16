@@ -21,13 +21,13 @@ publish = ["crates-io"]
 keywords = ["terminal", "remote", "shell", "iroh", "p2p"]
 categories = ["command-line-utilities", "network-programming"]
 include = [
-  "src/**/*.rs",
-  "src/app/keymap_us.xkb",
-  "build.rs",
-  "Cargo.toml",
-  "Cargo.lock",
-  "README.md",
-  "LICENSE",
+  "/src/**/*.rs",
+  "/src/app/keymap_us.xkb",
+  "/build.rs",
+  "/Cargo.toml",
+  "/Cargo.lock",
+  "/README.md",
+  "/LICENSE",
 ]
 
 [[bin]]
