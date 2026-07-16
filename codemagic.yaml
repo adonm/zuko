@@ -13,6 +13,7 @@ workflows:
         bundle_identifier: dev.adonm.zuko
       vars:
         MISE_LOG_LEVEL: info
+        MISE_AUTO_INSTALL: "0"
         MISE_TRUSTED_CONFIG_PATHS: $CM_BUILD_DIR
         MISE_YES: 1
         TEAM_ID: R8PN382RC4

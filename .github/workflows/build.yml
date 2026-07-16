@@ -9,6 +9,9 @@ on:
 permissions:
   contents: read
 
+env:
+  MISE_AUTO_INSTALL: "0"
+
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true

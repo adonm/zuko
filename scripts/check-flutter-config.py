@@ -146,6 +146,7 @@ def validate_automation() -> None:
     forbid_text("Justfile", "install-freedesktop-llvm")
     require_text("scripts/install-mise-codemagic.sh", "install rust zig just 'http:flutter'")
     require_text(".github/workflows/build.yml", "Assemble build-once release candidate")
+    require_text(".github/workflows/build.yml", 'MISE_AUTO_INSTALL: "0"')
     require_text(".github/workflows/build.yml", "zuko-release-candidate-${{ github.sha }}")
     require_text(".github/workflows/build.yml", "Flutter Windows candidate")
     require_text(".github/workflows/build.yml", "Flutter Apple candidate")
@@ -186,6 +187,7 @@ def validate_automation() -> None:
     if workflows != expected:
         raise SystemExit(f"Flutter config: unexpected Codemagic workflows: {workflows}")
     require_text("codemagic.yaml", "instance_type: linux_x2")
+    require_text("codemagic.yaml", 'MISE_AUTO_INSTALL: "0"')
     require_text("codemagic.yaml", "Download exact release previews")
     for obsolete in [
         "flutter-apple-ci:",
