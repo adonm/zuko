@@ -14,6 +14,8 @@ import tempfile
 
 FLUTTER_REPOSITORY = "https://github.com/adonm/flutter.git"
 FLUTTER_SDK_REVISION = "00fee9824a795ee9b5794e0a0e2bc5975e54dba8"
+FLUTTER_VERSION_BASE_TAG = "3.47.0-0.1.pre"
+FLUTTER_FRAMEWORK_VERSION = "3.47.0-1.0.pre-158"
 FLUTTER_ENGINE_REVISION = "fc1ad955f16467c959e3cd8079b760d5af0984aa"
 ENGINE_BUILD_CONTENT_HASH = "62b1a2404558a3078914891adf75668cffd8436b"
 PRECACHE_ENGINE_CONTENT_HASH = "469f2b34de41cab5f677ba84d6e9099c0e682d1e"
@@ -68,11 +70,61 @@ def checkout_sdk(destination: pathlib.Path) -> None:
             "-C",
             str(destination),
             "fetch",
-            "--depth=1",
+            "--no-tags",
             "origin",
             FLUTTER_SDK_REVISION,
         )
-        run("git", "-C", str(destination), "checkout", "--detach", "FETCH_HEAD")
+        run(
+            "git",
+            "-C",
+            str(destination),
+            "checkout",
+            "--detach",
+            FLUTTER_SDK_REVISION,
+        )
+
+    shallow = run(
+        "git",
+        "-C",
+        str(destination),
+        "rev-parse",
+        "--is-shallow-repository",
+        capture=True,
+    )
+    if shallow == "true":
+        run(
+            "git",
+            "-C",
+            str(destination),
+            "fetch",
+            "--unshallow",
+            "--no-tags",
+            "origin",
+            FLUTTER_SDK_REVISION,
+        )
+    tag = subprocess.run(
+        [
+            "git",
+            "-C",
+            str(destination),
+            "rev-parse",
+            "--quiet",
+            "--verify",
+            f"refs/tags/{FLUTTER_VERSION_BASE_TAG}",
+        ],
+        check=False,
+        stdout=subprocess.DEVNULL,
+    )
+    if tag.returncode != 0:
+        run(
+            "git",
+            "-C",
+            str(destination),
+            "fetch",
+            "--no-tags",
+            "origin",
+            f"refs/tags/{FLUTTER_VERSION_BASE_TAG}:refs/tags/{FLUTTER_VERSION_BASE_TAG}",
+        )
 
     revision = run("git", "-C", str(destination), "rev-parse", "HEAD", capture=True)
     if revision != FLUTTER_SDK_REVISION:
@@ -113,6 +165,7 @@ def prepare_sdk(destination: pathlib.Path) -> None:
         )
     )
     expected = {
+        "frameworkVersion": FLUTTER_FRAMEWORK_VERSION,
         "frameworkRevision": FLUTTER_SDK_REVISION,
         "engineRevision": FLUTTER_ENGINE_REVISION,
     }

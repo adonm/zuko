@@ -196,6 +196,10 @@ def main() -> None:
     forbid_text("scripts/install_flutter_gtk4_sdk.py", "__CI_LIBRARY_SHA256__")
     require_text("scripts/package-linux-release.sh", "debug sections remain")
     require_text(
+        "scripts/package-linux-release.sh",
+        "GTK4 engine does not match its immutable release",
+    )
+    require_text(
         "scripts/package-linux-release.sh", "release bundle contains a JIT artifact"
     )
     forbid_text("scripts/container-flutter.sh", "--privileged")

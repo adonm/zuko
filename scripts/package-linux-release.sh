@@ -14,6 +14,7 @@ readonly BUNDLE=$ROOT/flutter/build/linux-gtk4/x64/release/bundle
 readonly WORK=$ROOT/build/linux-release
 readonly OUTPUT_DIR=$ROOT/dist/linux
 readonly OUTPUT=$OUTPUT_DIR/zuko-linux-$TAG-x86_64.tar.gz
+readonly ENGINE_SHA256=bd80913e83fa9fac66bca3c90a020bc624827c610f3fcff7971455b4f858f701
 
 for command in find git gzip ldd readelf sha256sum strip tar; do
   command -v "$command" >/dev/null 2>&1 || {
@@ -87,7 +88,12 @@ check_linkage() {
 check_linkage "$BUNDLE"
 
 validate_release_payload() {
-  local root=$1 binary sections
+  local root=$1 binary engine sections
+  engine=$root/lib/libflutter_linux_gtk4.so
+  if ! printf '%s  %s\n' "$ENGINE_SHA256" "$engine" | sha256sum --check >/dev/null; then
+    echo "Linux package: GTK4 engine does not match its immutable release" >&2
+    exit 1
+  fi
   if find "$root" -type f \( \
     -name kernel_blob.bin -o \
     -name vm_snapshot_data -o \
@@ -122,7 +128,7 @@ while IFS= read -r -d '' binary; do
   strip --strip-unneeded "$binary"
 done < <(find "$WORK/staging/bundle" -type f \( \
   -name zuko -o -name '*.so' -o -name '*.so.*' \
-\) -print0)
+\) ! -name libflutter_linux_gtk4.so -print0)
 validate_release_payload "$WORK/staging/bundle"
 find "$WORK/staging" -exec touch --no-dereference --date="@$SOURCE_DATE_EPOCH" {} +
 
