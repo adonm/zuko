@@ -160,7 +160,7 @@ just build-flutter-linux
 Output and run command:
 
 ```sh
-flutter/build/linux/x64/release/bundle/zuko
+flutter/build/linux-gtk4/x64/release/bundle/zuko
 ```
 
 Keep the complete `bundle/` directory together. The supported packaged target

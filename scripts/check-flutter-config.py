@@ -44,7 +44,10 @@ def validate_terminal_dependency_pin() -> None:
 
     lock = (ROOT / "flutter/pubspec.lock").read_text(encoding="utf-8")
     resolved = re.findall(
-        r'^      resolved-ref: "?([0-9a-f]{40})"?[ \t]*$', lock, re.MULTILINE
+        r'^      resolved-ref: "?([0-9a-f]{40})"?[ \t]*\n'
+        r'      url: "?https://github\.com/adonm/libghostty\.git"?[ \t]*$',
+        lock,
+        re.MULTILINE,
     )
     if resolved != refs:
         raise SystemExit(
@@ -170,6 +173,35 @@ def main() -> None:
     require_text("codemagic.yaml", "mise exec -- just flutter-linux-ci")
     require_text("codemagic.yaml", "scripts/prepare-web-plugins.py")
     require_text(".github/workflows/docs.yml", '"scripts/prepare-web-plugins.py"')
+    require_text(".github/workflows/build.yml", "Flutter Linux GTK4 release")
+    require_text(
+        ".github/workflows/build.yml", "scripts/install_flutter_gtk4_sdk.py"
+    )
+    require_text(
+        "scripts/install_flutter_gtk4_sdk.py",
+        "328b829d35a3a5d7a00e0c2f0e97eb8cc0d97188",
+    )
+    require_text(
+        "scripts/install_flutter_gtk4_sdk.py",
+        "libflutter_linux_gtk4.so",
+    )
+    require_text(
+        "scripts/install_flutter_gtk4_sdk.py",
+        "github.com/adonm/flutter-dev/releases/download",
+    )
+    require_text(
+        "scripts/install_flutter_gtk4_sdk.py",
+        "61cafba174d24e2c4f73e416cb98c0b33a0ca751b99bf0d9c42cf2c4f1f44add",
+    )
+    forbid_text("scripts/install_flutter_gtk4_sdk.py", "__CI_LIBRARY_SHA256__")
+    require_text("scripts/package-linux-release.sh", "debug sections remain")
+    require_text(
+        "scripts/package-linux-release.sh",
+        "GTK4 engine does not match its immutable release",
+    )
+    require_text(
+        "scripts/package-linux-release.sh", "release bundle contains a JIT artifact"
+    )
     forbid_text("scripts/container-flutter.sh", "--privileged")
     for obsolete in [
         "containers/flutter-linux.Containerfile",

@@ -10,12 +10,13 @@ readonly ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 readonly TAG=$1
 readonly SHA=$2
 readonly VERSION=$($ROOT/scripts/version.sh)
-readonly BUNDLE=$ROOT/flutter/build/linux/x64/release/bundle
+readonly BUNDLE=$ROOT/flutter/build/linux-gtk4/x64/release/bundle
 readonly WORK=$ROOT/build/linux-release
 readonly OUTPUT_DIR=$ROOT/dist/linux
 readonly OUTPUT=$OUTPUT_DIR/zuko-linux-$TAG-x86_64.tar.gz
+readonly ENGINE_SHA256=61cafba174d24e2c4f73e416cb98c0b33a0ca751b99bf0d9c42cf2c4f1f44add
 
-for command in find git gzip ldd readelf sha256sum tar; do
+for command in find git gzip ldd readelf sha256sum strip tar; do
   command -v "$command" >/dev/null 2>&1 || {
     echo "Linux package: required command not found: $command" >&2
     exit 1
@@ -51,7 +52,7 @@ if find "$BUNDLE" -type f -perm /6000 -print -quit | grep -q .; then
 fi
 
 check_linkage() {
-  local root=$1 binary dynamic linkage runtime_path path paths
+  local root=$1 binary dynamic linkage runtime_path path paths saw_gtk4=false
   while IFS= read -r -d '' binary; do
     dynamic=$(readelf -d "$binary" 2>/dev/null || true)
     while IFS= read -r runtime_path; do
@@ -71,9 +72,45 @@ check_linkage() {
       echo "Linux package: unresolved dependency in $binary" >&2
       exit 1
     fi
+    if [[ $linkage == *"libgtk-3.so.0"* ]]; then
+      echo "Linux package: GTK4 bundle loads GTK3 through $binary" >&2
+      exit 1
+    fi
+    if [[ $linkage == *"libgtk-4.so.1"* ]]; then
+      saw_gtk4=true
+    fi
   done < <(find "$root" -type f \( -name zuko -o -name '*.so' -o -name '*.so.*' \) -print0)
+  if [[ $saw_gtk4 != true ]]; then
+    echo "Linux package: bundle does not load GTK4" >&2
+    exit 1
+  fi
 }
 check_linkage "$BUNDLE"
+
+validate_release_payload() {
+  local root=$1 binary engine sections
+  engine=$root/lib/libflutter_linux_gtk4.so
+  if ! printf '%s  %s\n' "$ENGINE_SHA256" "$engine" | sha256sum --check >/dev/null; then
+    echo "Linux package: GTK4 engine does not match its immutable release" >&2
+    exit 1
+  fi
+  if find "$root" -type f \( \
+    -name kernel_blob.bin -o \
+    -name vm_snapshot_data -o \
+    -name isolate_snapshot_data -o \
+    -name '*.dill' \
+  \) -print -quit | grep -q .; then
+    echo "Linux package: release bundle contains a JIT artifact" >&2
+    exit 1
+  fi
+  while IFS= read -r -d '' binary; do
+    sections=$(readelf --sections --wide "$binary" 2>/dev/null || true)
+    if grep -Eq '\.debug_(info|line)\b' <<<"$sections"; then
+      echo "Linux package: debug sections remain in $binary" >&2
+      exit 1
+    fi
+  done < <(find "$root" -type f \( -name zuko -o -name '*.so' -o -name '*.so.*' \) -print0)
+}
 
 if [[ -z ${SOURCE_DATE_EPOCH:-} ]]; then
   SOURCE_DATE_EPOCH=$(git -C "$ROOT" show -s --format=%ct "$commit")
@@ -87,6 +124,12 @@ export SOURCE_DATE_EPOCH TZ=UTC LC_ALL=C.UTF-8
 rm -rf "$WORK" "$OUTPUT_DIR"
 mkdir -p "$WORK/staging/bundle" "$WORK/extracted" "$OUTPUT_DIR"
 cp -a "$BUNDLE/." "$WORK/staging/bundle/"
+while IFS= read -r -d '' binary; do
+  strip --strip-unneeded "$binary"
+done < <(find "$WORK/staging/bundle" -type f \( \
+  -name zuko -o -name '*.so' -o -name '*.so.*' \
+\) ! -name libflutter_linux_gtk4.so -print0)
+validate_release_payload "$WORK/staging/bundle"
 find "$WORK/staging" -exec touch --no-dereference --date="@$SOURCE_DATE_EPOCH" {} +
 
 (
@@ -119,6 +162,7 @@ done
   exit 1
 }
 check_linkage "$WORK/extracted/bundle"
+validate_release_payload "$WORK/extracted/bundle"
 
 (
   cd "$OUTPUT_DIR"

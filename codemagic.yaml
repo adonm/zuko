@@ -431,7 +431,7 @@ workflows:
         script: |
           sudo apt-get update
           sudo apt-get install -y \
-            clang cmake libgtk-3-dev libsecret-1-dev ninja-build pkg-config
+            clang cmake libgtk-4-dev libsecret-1-dev ninja-build pkg-config
 
       - *install_toolchain
 
@@ -452,7 +452,7 @@ workflows:
           export ANDROID_HOME="${ANDROID_HOME:-$ANDROID_SDK_ROOT}"
           $HOME/.local/bin/mise exec -- just flutter-linux-ci
           tar -czf flutter-linux-x86_64.tar.gz \
-            -C flutter/build/linux/x64/release bundle
+            -C flutter/build/linux-gtk4/x64/release bundle
 
     artifacts:
       - flutter/build/app/outputs/flutter-apk/app-debug.apk

@@ -86,7 +86,7 @@ flutter-linux-ci: flutter-ci-check flutter-linux-builds
 # Compile every Flutter target faithfully buildable on a Linux host.
 [group('flutter')]
 flutter-linux-builds:
-    rm -rf target/book/web flutter/build/app flutter/build/linux
+    rm -rf target/book/web flutter/build/app flutter/build/linux-gtk4
     just build-web
     just build-flutter-android-debug
     just build-flutter-linux
