@@ -51,7 +51,7 @@ if find "$BUNDLE" -type f -perm /6000 -print -quit | grep -q .; then
 fi
 
 check_linkage() {
-  local root=$1 binary dynamic linkage runtime_path path paths
+  local root=$1 binary dynamic linkage runtime_path path paths saw_gtk4=false
   while IFS= read -r -d '' binary; do
     dynamic=$(readelf -d "$binary" 2>/dev/null || true)
     while IFS= read -r runtime_path; do
@@ -71,7 +71,18 @@ check_linkage() {
       echo "Linux package: unresolved dependency in $binary" >&2
       exit 1
     fi
+    if [[ $linkage == *"libgtk-3.so.0"* ]]; then
+      echo "Linux package: GTK4 bundle loads GTK3 through $binary" >&2
+      exit 1
+    fi
+    if [[ $linkage == *"libgtk-4.so.1"* ]]; then
+      saw_gtk4=true
+    fi
   done < <(find "$root" -type f \( -name zuko -o -name '*.so' -o -name '*.so.*' \) -print0)
+  if [[ $saw_gtk4 != true ]]; then
+    echo "Linux package: bundle does not load GTK4" >&2
+    exit 1
+  fi
 }
 check_linkage "$BUNDLE"
 
