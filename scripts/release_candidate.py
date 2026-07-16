@@ -9,18 +9,12 @@ import json
 import os
 import pathlib
 import re
-import subprocess
+import release_metadata
 
 FLUTTER_FRAMEWORK_REVISION = "328b829d35a3a5d7a00e0c2f0e97eb8cc0d97188"
 FLUTTER_ENGINE_REVISION = "fc1ad955f16467c959e3cd8079b760d5af0984aa"
 FLUTTER_ENGINE_CONTENT_HASH = "469f2b34de41cab5f677ba84d6e9099c0e682d1e"
 DART_SDK_VERSION = "3.14.0 (build 3.14.0-28.0.dev)"
-CLI_TARGETS = (
-    "aarch64-apple-darwin",
-    "aarch64-unknown-linux-gnu",
-    "x86_64-apple-darwin",
-    "x86_64-unknown-linux-gnu",
-)
 
 
 def sha256(path: pathlib.Path) -> str:
@@ -31,38 +25,15 @@ def sha256(path: pathlib.Path) -> str:
     return digest.hexdigest()
 
 
-def source_version(root: pathlib.Path) -> str:
-    result = subprocess.run(
-        [str(root / "scripts/version.sh")],
-        check=True,
-        cwd=root,
-        text=True,
-        stdout=subprocess.PIPE,
-    )
-    version = result.stdout.strip()
-    if not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", version):
-        raise SystemExit(f"invalid source version: {version}")
-    return version
+def source_metadata(root: pathlib.Path) -> release_metadata.ReleaseMetadata:
+    try:
+        return release_metadata.load(root)
+    except (KeyError, OSError, TypeError, ValueError) as error:
+        raise SystemExit(f"invalid source release metadata: {error}") from error
 
 
 def expected_names(version: str) -> set[str]:
-    tag = f"v{version}"
-    names = {
-        f"zuko-linux-{tag}-x86_64.tar.gz",
-        f"zuko-linux-{tag}-x86_64.tar.gz.sha256",
-        f"zuko-android-{tag}-unsigned.apk",
-        f"zuko-android-{tag}-unsigned.aab",
-        f"zuko-windows-{tag}-x86_64.zip",
-        f"zuko-windows-{tag}-x86_64.zip.sha256",
-        "Zuko-Flutter-ios-simulator.zip",
-        "Zuko-Flutter-ios-simulator.zip.sha256",
-        "Zuko-Flutter-macOS.zip",
-        "Zuko-Flutter-macOS.zip.sha256",
-    }
-    for target in CLI_TARGETS:
-        names.add(f"zuko-{target}.tar.gz")
-        names.add(f"zuko-{target}.tar.gz.sha256")
-    return names
+    return release_metadata.candidate_asset_names(release_metadata.for_version(version))
 
 
 def verify_sidecars(directory: pathlib.Path) -> None:
@@ -102,11 +73,13 @@ def artifact_records(directory: pathlib.Path, version: str) -> dict[str, dict[st
 def build_manifest(root: pathlib.Path, directory: pathlib.Path, sha: str) -> dict[str, object]:
     if not re.fullmatch(r"[0-9a-f]{40}", sha):
         raise SystemExit(f"invalid candidate commit: {sha}")
-    version = source_version(root)
+    metadata = source_metadata(root)
     return {
-        "schema": 1,
-        "version": version,
-        "tag": f"v{version}",
+        "schema": 2,
+        "version": metadata.version,
+        "tag": metadata.tag,
+        "build_number": metadata.build_number,
+        "package": metadata.package,
         "commit": sha,
         "github_run_id": os.environ.get("GITHUB_RUN_ID"),
         "flutter": {
@@ -115,7 +88,7 @@ def build_manifest(root: pathlib.Path, directory: pathlib.Path, sha: str) -> dic
             "engine_content_hash": FLUTTER_ENGINE_CONTENT_HASH,
             "dart_sdk_version": DART_SDK_VERSION,
         },
-        "artifacts": artifact_records(directory, version),
+        "artifacts": artifact_records(directory, metadata.version),
     }
 
 
@@ -132,6 +105,9 @@ def verify(root: pathlib.Path, directory: pathlib.Path, sha: str) -> None:
     if not path.is_file():
         raise SystemExit("release candidate manifest is missing")
     actual = json.loads(path.read_text())
+    expected_run_id = os.environ.get("GITHUB_CANDIDATE_RUN_ID")
+    if expected_run_id is not None and actual.get("github_run_id") != expected_run_id:
+        raise SystemExit("release candidate manifest has the wrong GitHub run ID")
     expected = build_manifest(root, directory, sha)
     expected["github_run_id"] = actual.get("github_run_id")
     if actual != expected:

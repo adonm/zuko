@@ -1,0 +1,87 @@
+name: ci
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+env:
+  MISE_AUTO_INSTALL: "0"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  rust:
+    name: Rust checks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - uses: jdx/mise-action@e6a8b3978addb5a52f2b4cd9d91eafa7f0ab959d # v4.2.0
+        with:
+          cache: true
+          install_args: rust just lychee actionlint
+
+      - uses: ./.github/actions/cache-rust
+        with:
+          partition: pr-ubuntu
+
+      - name: Clippy and tests
+        run: mise exec -- just test
+
+      - name: Test release automation
+        run: mise exec -- just check-release-metadata test-release-automation
+
+      - name: End-to-end pairing and revocation
+        run: mise exec -- just test-e2e
+
+      - name: Lint documentation and workflows
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          mise exec -- just lint-md
+          mise exec -- just lint-ci
+
+  rust-macos:
+    name: Rust checks (macOS)
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - uses: jdx/mise-action@e6a8b3978addb5a52f2b4cd9d91eafa7f0ab959d # v4.2.0
+        with:
+          cache: true
+          install_args: rust just
+
+      - uses: ./.github/actions/cache-rust
+        with:
+          partition: pr-macos
+
+      - name: Compile and test macOS code
+        run: mise exec -- just test
+
+  flutter:
+    name: Flutter checks and web compile
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - name: Install web native-assets dependency
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends clang
+
+      - uses: jdx/mise-action@e6a8b3978addb5a52f2b4cd9d91eafa7f0ab959d # v4.2.0
+        with:
+          cache: true
+          install_args: rust zig just http:flutter
+
+      - uses: ./.github/actions/cache-flutter
+
+      - name: Analyze and test Flutter client
+        run: mise exec -- just flutter-ci-check
+
+      - name: Compile web client
+        run: mise exec -- just build-web

@@ -151,14 +151,22 @@ def validate_automation() -> None:
     require_text(".github/workflows/build.yml", "timeout 30s dbus-run-session")
     require_text(".github/workflows/build.yml", "zuko-release-candidate-${{ github.sha }}")
     require_text(".github/workflows/build.yml", "Flutter Windows candidate")
-    require_text(".github/workflows/build.yml", "Flutter Apple candidate")
+    require_text(".github/workflows/build.yml", "Flutter iOS Simulator candidate")
+    require_text(".github/workflows/build.yml", "Flutter macOS candidate")
     require_text(".github/workflows/build.yml", "mise exec -- just flutter-ci-check")
-    require_text(".github/workflows/prepare-release.yml", "prepare_ios_candidate.py")
-    require_text(".github/workflows/prepare-release.yml", "environment: release")
+    require_text(".github/workflows/ci.yml", "Compile web client")
+    require_text(".github/workflows/release.yml", "environment: release")
     require_text(".github/workflows/release.yml", "release_candidate.py verify")
     require_text(".github/workflows/release.yml", "sign-android-release.sh")
+    require_text(".github/workflows/release.yml", "publish-testflight.yml")
+    require_text(".github/workflows/release.yml", "publish-appetize.yml")
     require_text(".github/workflows/publish-flutter-android.yml", "Download and validate exact GitHub Release AAB")
-    require_text("scripts/release.sh", "gh workflow run prepare-release.yml")
+    require_text(".github/workflows/publish-flutter-windows.yml", "Verify approved draft is still current")
+    require_text("scripts/release.sh", "gh workflow run release.yml")
+    require_text("scripts/release-context.sh", "release_metadata.py build-number")
+    require_text("flutter/windows/store/Package.ps1", "Join-Path $PSScriptRoot '../../..'")
+    require_text("flutter/windows/store/Package.ps1", "$expectedFlutterBuild = 1800000000 +")
+    require_text("flutter/windows/store/Test-Package.ps1", "$flutterBuild = 1800000000 +")
     require_text("scripts/package-linux-release.sh", "debug sections remain")
     require_text("scripts/package-linux-release.sh", "release bundle contains a JIT artifact")
     require_text("scripts/package-linux-release.sh", "GTK4 engine does not match its immutable release")
@@ -182,7 +190,6 @@ def validate_automation() -> None:
 
     workflows = set(re.findall(r"^  ([a-z][a-z0-9-]+):$", content("codemagic.yaml"), re.MULTILINE))
     expected = {
-        "ios-signing-validation",
         "ios-testflight-release",
         "mobile-appetize-release",
     }
@@ -190,7 +197,7 @@ def validate_automation() -> None:
         raise SystemExit(f"Flutter config: unexpected Codemagic workflows: {workflows}")
     require_text("codemagic.yaml", "instance_type: linux_x2")
     require_text("codemagic.yaml", 'MISE_AUTO_INSTALL: "0"')
-    require_text("codemagic.yaml", "build_number=$((1800000000 + major * 1000000 + minor * 1000 + patch))")
+    require_text("codemagic.yaml", "Build signed Flutter IPA")
     require_text("codemagic.yaml", "Download exact release previews")
     require_text("codemagic.yaml", "sh scripts/upload-appetize.sh android")
     require_text("codemagic.yaml", "APPETIZE_RELEASE_SHA")
@@ -211,7 +218,9 @@ def validate_automation() -> None:
         "scripts/install-freedesktop-llvm.sh",
         "scripts/install-mise-codemagic.ps1",
         "scripts/prepare-android-store-aab.sh",
+        "scripts/prepare_ios_candidate.py",
         "scripts/package-codemagic-android-unsigned.sh",
+        "scripts/select-codemagic-ios-artifact.py",
         "scripts/sign-codemagic-android-release.sh",
     ]:
         if (ROOT / removed).exists():

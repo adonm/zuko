@@ -1,11 +1,11 @@
 workflows:
-  ios-signing-validation:
-    name: Signed iOS release candidate
+  ios-testflight-release:
+    name: Build and upload signed iOS release
     instance_type: mac_mini_m2
     max_build_duration: 120
     integrations:
       app_store_connect: zuko-app-store
-    environment: &ios_environment
+    environment:
       xcode: 26.3
       cocoapods: 1.16.2
       ios_signing:
@@ -17,41 +17,23 @@ workflows:
         MISE_TRUSTED_CONFIG_PATHS: $CM_BUILD_DIR
         MISE_YES: 1
         TEAM_ID: R8PN382RC4
-    cache: &ios_cache
+    cache:
       cache_paths:
         - $HOME/.cache/mise
         - $HOME/.local/share/mise
         - $HOME/.pub-cache
     scripts:
-      - name: Verify exact candidate identity
+      - name: Verify immutable release identity
         script: |
           set -euo pipefail
-          [[ "${RELEASE_CANDIDATE_TAG:-}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]
-          [[ "${RELEASE_CANDIDATE_SHA:-}" =~ ^[0-9a-f]{40}$ ]]
-          expected_branch="release-candidate/$RELEASE_CANDIDATE_TAG-${RELEASE_CANDIDATE_SHA:0:12}"
-          test "${RELEASE_CANDIDATE_BRANCH:-}" = "$expected_branch"
-          test "${CM_BRANCH:-}" = "$expected_branch"
-          test -z "${CM_TAG:-}"
-          test "$CM_COMMIT" = "$RELEASE_CANDIDATE_SHA"
-          test "$(git rev-parse HEAD)" = "$RELEASE_CANDIDATE_SHA"
-          scripts/release-context.sh
-          version="$(scripts/version.sh)"
-          IFS=. read -r major minor patch <<< "$version"
-          build_number=$((1800000000 + major * 1000000 + minor * 1000 + patch))
-          test "$RELEASE_CANDIDATE_TAG" = "v$version"
-          if [ -n "${IOS_BUILD_NUMBER_OVERRIDE:-}" ]; then
-            [[ "$IOS_BUILD_NUMBER_OVERRIDE" =~ ^[0-9]+$ ]]
-            test "$IOS_BUILD_NUMBER_OVERRIDE" -gt "$build_number"
-            test "$IOS_BUILD_NUMBER_OVERRIDE" -le 2100000000
-            echo "ZUKO_BUILD_NUMBER=$IOS_BUILD_NUMBER_OVERRIDE" >> "$CM_ENV"
-          fi
+          test -n "${CM_TAG:-}"
+          test "$(git rev-parse HEAD)" = "$CM_COMMIT"
+          scripts/release-context.sh "$CM_TAG"
 
-      - &install_toolchain
-        name: Install pinned repository toolchain
+      - name: Install pinned repository toolchain
         script: scripts/install-mise-codemagic.sh
 
-      - &install_codemagic_cli
-        name: Install pinned Codemagic CLI Tools
+      - name: Install pinned Codemagic CLI Tools
         script: |
           export RUNNER_TEMP="$CM_BUILD_DIR/.tmp/codemagic"
           mkdir -p "$RUNNER_TEMP"
@@ -87,72 +69,12 @@ workflows:
       - name: Validate and package signed IPA
         script: $HOME/.local/bin/mise exec -- just package-ios-store
 
-    artifacts: &ios_artifacts
+    artifacts:
       - dist/flutter-ios/Zuko-Flutter.ipa
       - dist/flutter-ios/Zuko-Flutter.ipa.sha256
       - flutter/build/ios/archive/*.xcarchive
       - /tmp/xcodebuild_logs/*.log
       - $HOME/Library/Logs/DiagnosticReports/*
-
-  ios-testflight-release:
-    name: Upload validated IPA to TestFlight
-    instance_type: mac_mini_m2
-    max_build_duration: 30
-    integrations:
-      app_store_connect: zuko-app-store
-    environment:
-      groups:
-        - codemagic_api
-      xcode: 26.3
-      vars:
-        CM_CLONE_UNSHALLOW: true
-        TEAM_ID: R8PN382RC4
-    scripts:
-      - name: Verify immutable release identity
-        script: |
-          test -n "${CM_TAG:-}"
-          test "$(git rev-parse HEAD)" = "$CM_COMMIT"
-          scripts/release-context.sh "$CM_TAG"
-
-      - *install_codemagic_cli
-
-      - name: Verify Xcode 26.3
-        script: scripts/select-xcode.sh
-
-      - name: Download validated IPA for tagged commit
-        script: |
-          [[ "${IOS_VALIDATION_BUILD_ID:-}" =~ ^[0-9a-f]{24}$ ]]
-          mkdir -p dist/flutter-ios
-          build_json="$RUNNER_TEMP/build.json"
-          curl --fail --silent --show-error \
-            --header "x-auth-token: $CODEMAGIC_API_TOKEN" \
-            "https://api.codemagic.io/builds/$IOS_VALIDATION_BUILD_ID" \
-            > "$build_json"
-          selection="$(
-            python3 scripts/select-codemagic-ios-artifact.py \
-              "$build_json" "$CM_COMMIT"
-          )"
-          source_build_id="$(sed -n 's/^source_build_id=//p' <<< "$selection")"
-          artifact_url="$(sed -n 's/^artifact_url=//p' <<< "$selection")"
-          test "$source_build_id" = "$IOS_VALIDATION_BUILD_ID"
-          test -n "$artifact_url"
-          curl --fail --silent --show-error --location \
-            --header "x-auth-token: $CODEMAGIC_API_TOKEN" \
-            "$artifact_url" \
-            -o dist/flutter-ios/Zuko-Flutter.ipa
-          ipa_sha="$(shasum -a 256 dist/flutter-ios/Zuko-Flutter.ipa | awk '{print $1}')"
-          printf '%s  %s\n' "$ipa_sha" Zuko-Flutter.ipa \
-            > dist/flutter-ios/Zuko-Flutter.ipa.sha256
-
-      - name: Revalidate tagged IPA
-        script: |
-          mkdir -p "$RUNNER_TEMP/recovered.xcarchive"
-          scripts/apple-validate-package.sh \
-            "$RUNNER_TEMP/recovered.xcarchive" \
-            "$CM_BUILD_DIR/dist/flutter-ios/Zuko-Flutter.ipa" \
-            "$ZUKO_VERSION" "$ZUKO_BUILD_NUMBER"
-
-    artifacts: *ios_artifacts
     publishing:
       app_store_connect:
         auth: integration

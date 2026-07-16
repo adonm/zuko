@@ -1,7 +1,7 @@
 # Appetize mobile previews
 
-The coordinated GitHub release workflow updates two existing Appetize apps
-from the same immutable annotated release tag used by GitHub Releases and
+The independent Appetize publication workflow updates two existing apps from
+the same immutable annotated release tag used by GitHub Releases and
 TestFlight:
 
 - Android receives the checksummed, signed APK already published in the GitHub
@@ -31,13 +31,13 @@ Appetize is a preview channel, not a source of release artifacts or credentials.
    credentials, but may also be marked secret to keep all three values scoped
    to the release workflow.
 
-After GitHub publishes all assets for a tag, its release workflow starts
-Codemagic's `mobile-appetize-release` workflow for that exact tag and waits for
-both uploads. Codemagic verifies the immutable release identity, downloads the
-published APK, checksum, and iOS Simulator ZIP, validates both archives, and
-uploads those exact bytes. It installs no Flutter SDK and performs no compile.
-The Android signing key remains only in GitHub. Pull requests and ordinary
-branch builds cannot upload to Appetize.
+After GitHub publishes all assets for a tag, it dispatches
+`publish-appetize.yml` without waiting for that channel. The channel starts
+Codemagic's `mobile-appetize-release` workflow for the exact tag and waits for
+both uploads. Codemagic verifies the immutable release identity, downloads and
+validates the published APK and iOS Simulator ZIP, and uploads those exact
+bytes. It installs no Flutter SDK and performs no compile. The Android signing
+key remains only in GitHub. The channel is independently rerunnable and reuses a successful exact-tag Codemagic build.
 
 ## Verify credentials
 
@@ -68,4 +68,4 @@ build.
 
 Implementation: `scripts/upload-appetize.sh`,
 `scripts/publish-appetize-release.py`, `codemagic.yaml`, and
-`.github/workflows/release.yml`.
+`.github/workflows/publish-appetize.yml`.

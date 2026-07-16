@@ -91,7 +91,7 @@ $minor = [int]$Matches[2]
 $patch = [int]$Matches[3]
 $semanticVersion = "$major.$minor.$patch"
 $packageVersion = "$($major + 1).$minor.$patch.0"
-$flutterBuild = $major * 1000000 + $minor * 1000 + $patch
+$flutterBuild = 1800000000 + $major * 1000000 + $minor * 1000 + $patch
 
 $inputPath = (Resolve-Path $InputDirectory).Path
 $msixes = @(Get-ChildItem $inputPath -Filter *.msix)

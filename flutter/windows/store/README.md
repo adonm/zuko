@@ -77,13 +77,17 @@ the CLI does not create the first loose-MSIX submission.
 1. Run `publish-flutter-windows` from `main` with the immutable release tag and
    `lane=draft`.
 2. Download and retain the signed workflow artifact, then review the draft and
-   certification inputs in Partner Center.
+   certification inputs in Partner Center. The workflow records the draft's
+   submission ID, package filename, local SHA-256 digest, and a canonical digest
+   of the complete remote draft.
 3. Run the workflow for the same release tag with `lane=submit`. Approve
    `microsoft-store-submit` only after reviewing the newly uploaded draft.
 
-The second run rebuilds and reuploads the same tagged source before approval;
-it never commits a draft from an unrelated run. Concurrency prevents two Store
-publishing runs from changing the app draft at the same time.
+The second run rebuilds and reuploads the same tagged source before approval.
+Immediately before commit it requires Partner Center's complete canonical draft
+to match the captured upload and rechecks the local package digest. Concurrency
+prevents two Store publishing runs from changing the app draft at the same
+time.
 Once Partner Center accepts the package version, cut a new Zuko version rather
 than trying to replace the published package.
 

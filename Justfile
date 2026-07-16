@@ -147,8 +147,12 @@ build-apple-development: flutter-get
     cd flutter && flutter build macos --release --no-pub
 
 [group('flutter')]
-package-apple-development:
-    scripts/package-apple-development.sh
+package-ios-simulator-development:
+    scripts/package-apple-development.sh ios-simulator
+
+[group('flutter')]
+package-macos-development:
+    scripts/package-apple-development.sh macos
 
 [group('flutter')]
 package-ios-preview version: flutter-get
@@ -316,6 +320,14 @@ validate-partner-center:
 [group('release')]
 upload-windows-store-draft:
     pwsh -NoProfile -Command '$bundles = @(Get-ChildItem dist/windows-store -Filter *.msixbundle); if ($bundles.Count -ne 1) { throw "Expected exactly one MSIXBundle" }; msstore publish $bundles[0].FullName --appId $env:MSSTORE_PRODUCT_ID --noCommit'
+
+[group('release')]
+capture-windows-store-draft:
+    pwsh -NoProfile -File flutter/windows/store/Test-PartnerCenterDraft.ps1 -Mode Capture -InputDirectory dist/windows-store -SnapshotPath dist/windows-store/submission-identity.json
+
+[group('release')]
+verify-windows-store-draft:
+    pwsh -NoProfile -File flutter/windows/store/Test-PartnerCenterDraft.ps1 -Mode Verify -InputDirectory dist/windows-store -SnapshotPath dist/windows-store/submission-identity.json
 
 [group('release')]
 submit-windows-store:

@@ -1,0 +1,48 @@
+name: publish-appetize
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Immutable release tag to publish (vX.Y.Z)
+        required: true
+        type: string
+      sha:
+        description: Exact release commit
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: appetize-${{ inputs.tag }}
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    name: publish immutable mobile previews
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    environment: appetize
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: ${{ inputs.sha }}
+          fetch-depth: 0
+
+      - name: Resolve immutable release identity
+        id: release
+        env:
+          EXPECTED_SHA: ${{ inputs.sha }}
+          TAG: ${{ inputs.tag }}
+        run: |
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+          scripts/release-context.sh "$TAG"
+
+      - name: Upload exact release previews through Codemagic
+        env:
+          CODEMAGIC_API_TOKEN: ${{ secrets.CODEMAGIC_API_TOKEN }}
+          RELEASE_SHA: ${{ steps.release.outputs.sha }}
+          TAG: ${{ steps.release.outputs.tag }}
+        run: python3 scripts/publish-appetize-release.py "$TAG" "$RELEASE_SHA"

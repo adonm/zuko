@@ -82,6 +82,8 @@ mkdir -p \
   "$root/target"
 plugins_metadata="$root/.tmp/container-flutter-plugins-dependencies"
 : >"$plugins_metadata"
+repository_bundle="$root/.tmp/container-repository.bundle"
+git -C "$root" bundle create "$repository_bundle" HEAD
 
 run_args=(
   --rm
@@ -97,7 +99,7 @@ run_args=(
   --env GIT_OPTIONAL_LOCKS=0
   --env SOURCE_DATE_EPOCH="$(git -C "$root" show -s --format=%ct HEAD)"
   --volume "$root:/source:ro"
-  --volume "$root/.git:/workspace/.git:ro"
+  --volume "$repository_bundle:/container-state/repository.bundle:ro"
   --volume "$root/.tmp/container-home:/container-state/home"
   --volume "$root/.tmp/container-mise/cache:/container-state/mise/cache"
   --volume "$root/.tmp/container-mise/config:/container-state/mise/config"
@@ -143,4 +145,9 @@ exec podman run "${run_args[@]}" "$IMAGE" bash -lc \
     --exclude=./flutter/windows/flutter/ephemeral \
     --exclude=./target \
     -cf - . | tar -C /workspace -xf -; \
-  cd /workspace; git config --global --add safe.directory /workspace; $command"
+  cd /workspace; \
+  git init --quiet; \
+  git fetch --quiet /container-state/repository.bundle HEAD; \
+  git reset --quiet --mixed FETCH_HEAD; \
+  git config --global --add safe.directory /workspace; \
+  $command"

@@ -2,12 +2,14 @@ from __future__ import annotations
 
 import importlib.util
 import pathlib
+import sys
 import tempfile
 import unittest
 from types import ModuleType
 from unittest import mock
 
 SCRIPTS = pathlib.Path(__file__).parent
+sys.path.insert(0, str(SCRIPTS))
 
 
 def load_script(name: str, filename: str) -> ModuleType:
@@ -19,10 +21,34 @@ def load_script(name: str, filename: str) -> ModuleType:
     return module
 
 
+import codemagic_api as codemagic
+import release_metadata
+
 release_candidate = load_script("release_candidate", "release_candidate.py")
 github_candidate = load_script("find_github_candidate", "find_github_candidate.py")
-ios_candidate = load_script("prepare_ios_candidate", "prepare_ios_candidate.py")
 testflight = load_script("publish_testflight_release", "publish-testflight-release.py")
+appetize = load_script("publish_appetize_release", "publish-appetize-release.py")
+
+
+class ReleaseMetadataTests(unittest.TestCase):
+    def test_loads_one_release_contract(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = pathlib.Path(temporary)
+            (root / "flutter").mkdir()
+            (root / "Cargo.toml").write_text(
+                '[workspace]\n[workspace.package]\nversion = "1.2.3"\n'
+                '[package]\nname = "zuko"\nversion.workspace = true\n'
+            )
+            (root / "flutter/pubspec.yaml").write_text("version: 1.2.3+1801002003\n")
+            metadata = release_metadata.load(root)
+        self.assertEqual(metadata.tag, "v1.2.3")
+        self.assertEqual(metadata.build_number, 1_801_002_003)
+        self.assertEqual(len(release_metadata.candidate_asset_names(metadata)), 18)
+        self.assertEqual(len(release_metadata.release_asset_names(metadata)), 21)
+
+    def test_rejects_colliding_semver_components(self) -> None:
+        with self.assertRaisesRegex(ValueError, "below 1000"):
+            release_metadata.for_version("1.2.1000")
 
 
 class ReleaseCandidateManifestTests(unittest.TestCase):
@@ -40,9 +66,8 @@ class ReleaseCandidateManifestTests(unittest.TestCase):
                     payload = directory / name.removesuffix(".sha256")
                     digest = release_candidate.sha256(payload)
                     (directory / name).write_text(f"{digest}  {payload.name}\n")
-            with mock.patch.object(
-                release_candidate, "source_version", return_value=version
-            ):
+            metadata = release_candidate.release_metadata.for_version(version)
+            with mock.patch.object(release_candidate, "source_metadata", return_value=metadata):
                 release_candidate.create(directory, directory, sha)
                 release_candidate.verify(directory, directory, sha)
             manifest = directory / "release-candidate.json"
@@ -76,86 +101,47 @@ class GithubCandidateTests(unittest.TestCase):
         ):
             self.assertEqual(
                 github_candidate.resolve("token", repository, sha),
-                (123, 456, artifact["name"]),
+                (123, 456, artifact["name"], artifact["digest"]),
             )
 
 
-class IosCandidateTests(unittest.TestCase):
-    def test_trigger_uses_exact_temporary_branch(self) -> None:
+class CodemagicTests(unittest.TestCase):
+    def test_trigger_uses_exact_tag(self) -> None:
         tag = "v1.2.3"
-        sha = "a" * 40
-        branch = f"release-candidate/{tag}-{sha[:12]}"
         with mock.patch.object(
-            ios_candidate, "request", return_value={"buildId": "b" * 24}
+            codemagic, "request", return_value={"buildId": "b" * 24}
         ) as request:
             self.assertEqual(
-                ios_candidate.trigger("token", tag, sha, branch), "b" * 24
+                codemagic.trigger("token", "workflow", tag=tag), "b" * 24
             )
         payload = request.call_args.args[3]
-        self.assertEqual(payload["branch"], branch)
-        self.assertEqual(
-            payload["environment"]["variables"]["RELEASE_CANDIDATE_SHA"], sha
-        )
+        self.assertEqual(payload["tag"], tag)
+        self.assertNotIn("branch", payload)
 
-    def test_accepts_one_direct_ipa_artifact(self) -> None:
-        tag = "v1.2.3"
-        sha = "a" * 40
-        branch = f"release-candidate/{tag}-{sha[:12]}"
-        build = {
-            "_id": "b" * 24,
-            "fileWorkflowId": ios_candidate.WORKFLOW,
-            "branch": branch,
-            "tag": None,
-            "commit": {"hash": sha},
-            "status": "finished",
-            "buildActions": [{"status": "success"}],
-            "artefacts": [
-                {
-                    "name": "Zuko-Flutter.ipa",
-                    "type": "ipa",
-                    "url": "https://example.invalid/Zuko-Flutter.ipa",
-                },
-                {
-                    "name": "zuko_artifacts.zip",
-                    "type": "bundle",
-                    "url": "https://example.invalid/zuko_artifacts.zip",
-                },
-            ],
-        }
-        with mock.patch.object(
-            ios_candidate, "request", return_value={"build": build}
-        ):
-            self.assertEqual(
-                ios_candidate.wait_for_build(
-                    "token", "b" * 24, tag, sha, branch
-                ),
-                build,
-            )
-
-    def test_testflight_reuses_signed_branch_candidate(self) -> None:
+    def test_testflight_accepts_exact_tagged_build(self) -> None:
         tag = "v1.2.3"
         sha = "a" * 40
         build = {
             "_id": "b" * 24,
-            "fileWorkflowId": testflight.VALIDATION_WORKFLOW,
-            "branch": f"release-candidate/{tag}-{sha[:12]}",
-            "tag": None,
+            "fileWorkflowId": testflight.WORKFLOW,
+            "tag": tag,
             "commit": {"hash": sha},
             "status": "finished",
             "buildActions": [{"status": "success"}],
-            "finishedAt": "2026-01-01T00:00:00Z",
         }
-        with mock.patch.object(
-            testflight,
-            "request",
-            return_value={"builds": [build], "nextPageUrl": None},
-        ):
-            self.assertEqual(
-                testflight.reusable_build(
-                    "token", testflight.VALIDATION_WORKFLOW, tag, sha
-                ),
-                ("b" * 24, True),
-            )
+        self.assertTrue(testflight.matches_release(build, tag, sha))
+        testflight.validate(build, tag, sha)
+
+    def test_appetize_reuses_only_exact_tagged_build(self) -> None:
+        tag = "v1.2.3"
+        sha = "a" * 40
+        build = {
+            "fileWorkflowId": appetize.WORKFLOW,
+            "tag": tag,
+            "commit": {"hash": sha},
+        }
+        self.assertTrue(appetize.matches_release(build, tag, sha))
+        self.assertFalse(appetize.matches_release(build, tag, "b" * 40))
 
 
 if __name__ == "__main__":

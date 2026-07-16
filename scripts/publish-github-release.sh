@@ -9,31 +9,8 @@ fi
 : "${GITHUB_REPOSITORY:?GITHUB_REPOSITORY is required}"
 tag="$1"
 
-expected_assets=(
-  "Zuko-Flutter-ios-simulator.zip"
-  "Zuko-Flutter-ios-simulator.zip.sha256"
-  "Zuko-Flutter-macOS.zip"
-  "Zuko-Flutter-macOS.zip.sha256"
-  "release-candidate.json"
-  "zuko-aarch64-apple-darwin.tar.gz"
-  "zuko-aarch64-apple-darwin.tar.gz.sha256"
-  "zuko-aarch64-unknown-linux-gnu.tar.gz"
-  "zuko-aarch64-unknown-linux-gnu.tar.gz.sha256"
-  "zuko-android-$tag-signed.aab"
-  "zuko-android-$tag-signed.aab.sha256"
-  "zuko-android-$tag-signed.apk"
-  "zuko-android-$tag-signed.apk.sha256"
-  "zuko-linux-$tag-x86_64.tar.gz"
-  "zuko-linux-$tag-x86_64.tar.gz.sha256"
-  "zuko-windows-$tag-x86_64.zip"
-  "zuko-windows-$tag-x86_64.zip.sha256"
-  "zuko-x86_64-apple-darwin.tar.gz"
-  "zuko-x86_64-apple-darwin.tar.gz.sha256"
-  "zuko-x86_64-unknown-linux-gnu.tar.gz"
-  "zuko-x86_64-unknown-linux-gnu.tar.gz.sha256"
-)
+mapfile -t expected_assets < <(python3 scripts/release_metadata.py release-assets)
 mapfile -t actual_assets < <(find assets -maxdepth 1 -type f -printf '%f\n' | sort)
-mapfile -t expected_assets < <(printf '%s\n' "${expected_assets[@]}" | sort)
 if [[ ${actual_assets[*]} != "${expected_assets[*]}" ]]; then
   printf 'expected release assets:\n%s\n' "${expected_assets[*]}" >&2
   printf 'actual release assets:\n%s\n' "${actual_assets[*]}" >&2
@@ -49,8 +26,18 @@ if gh release view "$tag" >/dev/null 2>&1; then
   release_json="$(gh release view "$tag" --json databaseId,isDraft)"
   release_id="$(jq -r .databaseId <<< "$release_json")"
   if [ "$(jq -r .isDraft <<< "$release_json")" != true ]; then
-    echo "refusing to modify published immutable release: $tag" >&2
-    exit 1
+    endpoint="repos/$GITHUB_REPOSITORY/releases/$release_id"
+    remote_count="$(gh api "$endpoint" --jq '.assets | length')"
+    [ "$remote_count" -eq "${#expected_assets[@]}" ]
+    for asset in assets/*; do
+      name="$(basename "$asset")"
+      expected="sha256:$(sha256sum "$asset" | cut -d' ' -f1)"
+      actual="$(gh api "$endpoint" --jq \
+        ".assets | map(select(.name == \"$name\")) | if length == 1 then .[0].digest else error(\"asset missing or duplicated\") end")"
+      [ "$actual" = "$expected" ]
+    done
+    echo "Verified existing immutable release: $tag"
+    exit 0
   fi
 else
   gh release create "$tag" --draft --title "$tag" --generate-notes --verify-tag

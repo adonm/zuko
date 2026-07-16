@@ -4,6 +4,17 @@ on:
   push:
     branches: [main]
   pull_request:
+    paths:
+      - ".cargo/**"
+      - "Cargo.lock"
+      - "Cargo.toml"
+      - "flutter/**"
+      - "src/**"
+      - "scripts/**"
+      - "Justfile"
+      - "mise.toml"
+      - ".github/actions/cache-flutter/**"
+      - ".github/workflows/build.yml"
   workflow_dispatch:
 
 permissions:
@@ -33,6 +44,10 @@ jobs:
           cache: true
           install_args: rust just lychee actionlint
 
+      - uses: ./.github/actions/cache-rust
+        with:
+          partition: test-${{ matrix.os }}
+
       - name: Clippy + tests
         run: mise exec -- just test
 
@@ -49,6 +64,10 @@ jobs:
       - name: Lint GitHub Actions workflows
         if: ${{ matrix.os == 'ubuntu-latest' }}
         run: mise exec -- just lint-ci
+
+      - name: Test release automation
+        if: ${{ matrix.os == 'ubuntu-latest' }}
+        run: mise exec -- just check-release-metadata test-release-automation
 
   cli:
     name: CLI candidate ${{ matrix.target }}
@@ -71,6 +90,10 @@ jobs:
         with:
           cache: true
           install_args: rust just
+
+      - uses: ./.github/actions/cache-rust
+        with:
+          partition: cli-${{ matrix.target }}
 
       - name: Install cross toolchain
         if: ${{ matrix.cross }}
@@ -122,6 +145,8 @@ jobs:
         with:
           cache: true
           install_args: rust zig just http:flutter
+
+      - uses: ./.github/actions/cache-flutter
 
       - name: Analyze and test shared Flutter client
         run: mise exec -- just flutter-ci-check
@@ -175,8 +200,8 @@ jobs:
           retention-days: 30
           compression-level: 0
 
-  flutter-android-web:
-    name: Flutter Android and web candidate
+  flutter-android:
+    name: Flutter Android candidate
     runs-on: ubuntu-24.04
     timeout-minutes: 75
     steps:
@@ -186,6 +211,10 @@ jobs:
         with:
           distribution: temurin
           java-version: '17'
+          cache: gradle
+          cache-dependency-path: |
+            flutter/android/**/*.gradle*
+            flutter/android/gradle/wrapper/gradle-wrapper.properties
 
       - uses: android-actions/setup-android@40fd30fb8d7440372e1316f5d1809ec01dcd3699 # v4.0.1
         with:
@@ -203,13 +232,14 @@ jobs:
           cache: true
           install_args: rust zig just http:flutter
 
+      - uses: ./.github/actions/cache-flutter
+
       - name: Install pinned Android platform tools
         run: scripts/install-android-platform-tools.sh "$ANDROID_SDK_ROOT"
 
-      - name: Build web and unsigned Android release packages
+      - name: Build unsigned Android release packages
         run: |
           export ANDROID_HOME="${ANDROID_HOME:-$ANDROID_SDK_ROOT}"
-          mise exec -- just build-web
           mise exec -- just build-flutter-android
           mise exec -- just package-android-unsigned "v$(scripts/version.sh)"
 
@@ -239,6 +269,8 @@ jobs:
           cache: true
           install_args: rust zig just http:flutter
 
+      - uses: ./.github/actions/cache-flutter
+
       - name: Build and package Windows candidate
         shell: pwsh
         run: |
@@ -256,8 +288,8 @@ jobs:
           retention-days: 30
           compression-level: 0
 
-  flutter-apple:
-    name: Flutter Apple candidate
+  flutter-ios-simulator:
+    name: Flutter iOS Simulator candidate
     runs-on: macos-15
     timeout-minutes: 60
     steps:
@@ -269,19 +301,54 @@ jobs:
           cache: true
           install_args: rust zig just http:flutter
 
+      - uses: ./.github/actions/cache-flutter
+
       - name: Select Xcode 26.3
         run: mise exec -- just select-xcode
 
-      - name: Build and package Apple development clients
+      - name: Build and package iOS Simulator client
         run: |
-          mise exec -- just build-apple-development
-          mise exec -- just package-apple-development
+          mise exec -- just build-flutter-ios
+          mise exec -- just package-ios-simulator-development
 
-      - name: Upload Apple candidate
+      - name: Upload iOS Simulator candidate
         if: ${{ github.event_name != 'pull_request' }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: zuko-candidate-flutter-apple-${{ github.sha }}
+          name: zuko-candidate-flutter-ios-simulator-${{ github.sha }}
+          path: flutter/build/apple-artifacts/*
+          if-no-files-found: error
+          retention-days: 30
+          compression-level: 0
+
+  flutter-macos:
+    name: Flutter macOS candidate
+    runs-on: macos-15
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - name: Install pinned tools and Flutter SDK
+        uses: jdx/mise-action@e6a8b3978addb5a52f2b4cd9d91eafa7f0ab959d # v4.2.0
+        with:
+          cache: true
+          install_args: rust zig just http:flutter
+
+      - uses: ./.github/actions/cache-flutter
+
+      - name: Select Xcode 26.3
+        run: mise exec -- just select-xcode
+
+      - name: Build and package macOS client
+        run: |
+          mise exec -- just build-flutter-macos
+          mise exec -- just package-macos-development
+
+      - name: Upload macOS candidate
+        if: ${{ github.event_name != 'pull_request' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: zuko-candidate-flutter-macos-${{ github.sha }}
           path: flutter/build/apple-artifacts/*
           if-no-files-found: error
           retention-days: 30
@@ -289,8 +356,8 @@ jobs:
 
   candidate:
     name: Assemble build-once release candidate
-    if: ${{ github.event_name != 'pull_request' }}
-    needs: [test, cli, flutter-linux, flutter-android-web, flutter-windows, flutter-apple]
+    if: ${{ github.event_name == 'push' }}
+    needs: [test, cli, flutter-linux, flutter-android, flutter-windows, flutter-ios-simulator, flutter-macos]
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:

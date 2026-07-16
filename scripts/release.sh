@@ -1,5 +1,5 @@
 #!/bin/sh
-# Dispatch exact-commit candidate validation and protected release tagging.
+# Dispatch exact-commit candidate promotion and protected release tagging.
 #
 # Usage:
 #   just release
@@ -51,12 +51,12 @@ command -v gh >/dev/null 2>&1 || {
 gh auth status >/dev/null
 
 SHORT_SHA="$(git rev-parse --short=12 HEAD)"
-echo "==> dispatching protected release preparation for $TAG at $SHORT_SHA"
-gh workflow run prepare-release.yml \
+echo "==> dispatching protected release for $TAG at $SHORT_SHA"
+gh workflow run release.yml \
     --repo adonm/zuko \
     --ref main \
     -f "sha=$HEAD_SHA"
 
 echo
-echo "release preparation dispatched. No local process needs to remain running:"
-echo "  https://github.com/adonm/zuko/actions/workflows/prepare-release.yml"
+echo "release dispatched. No local process needs to remain running:"
+echo "  https://github.com/adonm/zuko/actions/workflows/release.yml"

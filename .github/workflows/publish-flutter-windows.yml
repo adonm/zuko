@@ -149,6 +149,17 @@ jobs:
       - name: Upload package without committing submission
         run: mise exec -- just upload-windows-store-draft
 
+      - name: Capture exact Partner Center draft identity
+        run: mise exec -- just capture-windows-store-draft
+
+      - name: Upload draft identity for approval
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: zuko-windows-store-draft-${{ needs.prepare.outputs.tag }}-${{ needs.prepare.outputs.sha }}
+          path: dist/windows-store/submission-identity.json
+          if-no-files-found: error
+          retention-days: 7
+
   submit:
     name: approve and commit Store submission
     if: ${{ inputs.lane == 'submit' }}
@@ -178,6 +189,11 @@ jobs:
           name: zuko-windows-store-${{ needs.prepare.outputs.tag }}-${{ needs.prepare.outputs.sha }}
           path: dist/windows-store
 
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: zuko-windows-store-draft-${{ needs.prepare.outputs.tag }}-${{ needs.prepare.outputs.sha }}
+          path: dist/windows-store
+
       - uses: jdx/mise-action@e6a8b3978addb5a52f2b4cd9d91eafa7f0ab959d # v4.2.0
         with:
           cache: true
@@ -196,6 +212,9 @@ jobs:
 
       - name: Revalidate protected Partner Center identity
         run: mise exec -- just validate-partner-center
+
+      - name: Verify approved draft is still current
+        run: mise exec -- just verify-windows-store-draft
 
       - name: Commit existing draft submission
         run: mise exec -- just submit-windows-store

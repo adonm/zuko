@@ -25,6 +25,8 @@ inputs.
 |-------|------|-----------------|
 | Repository secrets | coordinated Flutter release | `CODEMAGIC_API_TOKEN` with access to Codemagic app `6a52dc14add8531e99f88b8a`; `ANDROID_KEYSTORE_BASE64`, `ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS`, and `ANDROID_KEY_PASSWORD` for signing the exact GitHub Android candidate |
 | `release` environment | immutable tag | approval policy for the final exact-candidate tag job; no secret required |
+| `testflight` environment | signed iOS publication | approval policy; `CODEMAGIC_API_TOKEN` remains a repository secret |
+| `appetize` environment | preview publication | approval policy; `CODEMAGIC_API_TOKEN` remains a repository secret while Appetize credentials stay in Codemagic |
 | `google-play` environment | Play publication | `GOOGLE_PLAY_SERVICE_ACCOUNT_JSON` |
 | `microsoft-store-package` environment | package/sign | variables `MSSTORE_PRODUCT_ID`, `MSSTORE_PACKAGE_IDENTITY_NAME`, `MSSTORE_PACKAGE_PUBLISHER`, `MSSTORE_PACKAGE_FAMILY_NAME`, `MSSTORE_PACKAGE_DISPLAY_NAME`, `MSSTORE_PUBLISHER_DISPLAY_NAME`; secrets `MSSTORE_SIGNING_PFX_BASE64`, `MSSTORE_SIGNING_PFX_PASSWORD` |
 | `microsoft-store-draft` environment | draft upload | the six package variables above plus `MSSTORE_TENANT_ID`, `MSSTORE_SELLER_ID`, `MSSTORE_CLIENT_ID`; secret `MSSTORE_CLIENT_SECRET` |
@@ -41,11 +43,10 @@ repeat `MSSTORE_CLIENT_SECRET` in both draft and submit.
 |-------|------|-----------------|
 | Developer Portal integration | `zuko-app-store` | App Store Connect App Manager issuer ID, key ID, and `.p8` key |
 | iOS signing identity | `dev.adonm.zuko` | matching Apple Distribution certificate and App Store provisioning profile |
-| Variable group | `codemagic_api` | secret `CODEMAGIC_API_TOKEN` used by the existing iOS artifact handoff |
 | Variable group | `appetize_credentials` | `APPETIZE_API_TOKEN`, `APPETIZE_ANDROID_PUBLIC_KEY`, `APPETIZE_IOS_PUBLIC_KEY` |
 
-Codemagic's YAML contains only signed-iOS construction, TestFlight upload, and
-upload-only Appetize publication. All ordinary compile gates and portable
+Codemagic's YAML contains one signed-iOS/TestFlight workflow and one
+upload-only Appetize workflow. All ordinary compile gates and portable
 artifacts run in GitHub. The coordinated release passes no GitHub credential
 into Codemagic; Apple signing material remains there, and Appetize downloads
 public checksummed release assets without a signing identity.
@@ -72,9 +73,8 @@ Details: [Android store publishing](android-publishing.md).
   profile.
 - [ ] Create a dedicated App Store Connect App Manager API key and retain its
   issuer ID, key ID, and one-time `.p8` securely.
-- [ ] Run `prepare-release.yml` for a reviewed candidate to check new signing
-  configuration. It creates an exact temporary branch, validates signing, and
-  only then creates the tag. GitHub requires no Apple signing secrets.
+- [ ] Dispatch `publish-testflight.yml` for an immutable test tag when changing
+  signing configuration. GitHub requires no Apple signing secrets.
 
 Details: [Apple store publishing](apple-publishing.md).
 
@@ -131,9 +131,9 @@ FlatPark](flatpark.md).
    GitHub environments.
 2. Publish the `crossterm-zuko` bootstrap dependency and verify Zuko packaging.
 3. Run `just release`. GitHub verifies the existing build-once candidate,
-   creates one signed iOS candidate, pushes the protected tag, and promotes the
-   exact bytes. The Linux archive then becomes FlatPark's immutable input.
-4. Confirm the automatic TestFlight build, then publish Google Play internal,
+   pushes the protected tag, signs Android, and promotes the exact bytes. The
+   Linux archive then becomes FlatPark's immutable input.
+4. Confirm the independently dispatched TestFlight and Appetize channels, then publish Google Play internal,
    Mac App Store, and Microsoft draft builds through their protected workflows.
 5. Review each portal's retained artifact, metadata, policy answers, and human approval before production submission.
 

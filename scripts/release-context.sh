@@ -43,12 +43,7 @@ if [ "$#" -eq 1 ]; then
   fi
 fi
 
-IFS=. read -r major minor patch <<< "$version"
-version_code=$((1800000000 + major * 1000000 + minor * 1000 + patch))
-if [ "$version_code" -gt 2100000000 ]; then
-  echo "release version no longer fits the Google Play build-number range" >&2
-  exit 1
-fi
+version_code="$(python3 scripts/release_metadata.py build-number)"
 
 if [ -n "${GITHUB_OUTPUT:-}" ]; then
   {

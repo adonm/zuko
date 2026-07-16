@@ -70,8 +70,7 @@ rm -f "$unsigned_apk" "$unsigned_aab"
   sha256sum --check "$(basename "$signed_aab").sha256"
 )
 
-IFS=. read -r major minor patch <<< "$version"
-build_number=$((1800000000 + major * 1000000 + minor * 1000 + patch))
+build_number="$(python3 scripts/release_metadata.py build-number)"
 scripts/android-validate-aab.sh \
   "$signed_aab" "$signed_aab.sha256" \
   dev.adonm.zuko "$version" "$build_number"

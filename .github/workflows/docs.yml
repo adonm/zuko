@@ -48,6 +48,8 @@ jobs:
         with:
           cache: true
 
+      - uses: ./.github/actions/cache-flutter
+
 
       - name: Lint markdown links
         # Gate the deploy on link health (config in .lychee.toml). GITHUB_TOKEN

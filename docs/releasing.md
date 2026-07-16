@@ -11,7 +11,7 @@ Flutter/Dart contract, file sizes, and SHA-256 digests for:
 - iOS Simulator and macOS development archives.
 
 GitHub Actions performs all ordinary tests and platform builds. Codemagic is
-reserved for a signed iOS candidate, TestFlight upload, and upload-only
+reserved for signed iOS construction, TestFlight upload, and upload-only
 Appetize publication. Flutter web remains deployed by the Pages workflow after
 changes reach `main`.
 
@@ -42,32 +42,32 @@ just release
 
 `just release` is intentionally non-blocking. It requires a clean `main`
 exactly matching `origin/main`, validates the committed package versions, and
-dispatches `prepare-release.yml` for that exact commit. No local polling
-process needs to remain running.
+dispatches `release.yml` for that exact commit. No local polling process needs
+to remain running.
 
 The protected workflow then:
 
 1. resolves the one successful exact-commit GitHub candidate and its aggregate
-   artifact;
-2. creates a temporary branch pinned to that commit;
-3. asks Codemagic to build and retain one signed IPA from that exact branch;
-4. rechecks that `origin/main` did not move;
-5. creates and pushes the annotated `vX.Y.Z` tag; and
-6. removes the temporary branch even when a prior step fails.
+   artifact ID and digest;
+2. enters the protected `release` environment, rechecks `origin/main`, and
+   creates the annotated `vX.Y.Z` tag;
+3. downloads the aggregate candidate, verifies `release-candidate.json`, signs
+   Android once, and publishes the immutable GitHub Release; and
+4. dispatches independent idempotent crate, TestFlight, and Appetize channels.
 
-No tag is created if candidate validation, signing, or source identity fails.
-The tag-triggered release downloads the existing aggregate candidate, verifies
-`release-candidate.json`, signs Android once, and promotes those same bytes.
-The prevalidated IPA is recovered by build ID, revalidated against the tag, and
-uploaded to TestFlight without rebuilding it.
+No tag is created if candidate or source identity validation fails. External
+channels do not gate the core GitHub Release and can be rerun independently.
+TestFlight builds and validates one signed IPA from the immutable tag before
+uploading it; the Appetize channel only promotes published release bytes.
 
 A release tag is permanent. Retry only transient runner, network, upload, or
 approval failures. If source, packaging, or workflow code changes, increment
 the patch version and produce a new candidate. Never rebuild an old version
 from current `main`.
 
-Cargo `workspace.package.version` is canonical. Flutter uses the same semantic
-version plus:
+Cargo `workspace.package.version` is canonical. `scripts/release_metadata.py`
+validates the complete release contract. Flutter uses the same semantic version
+plus:
 
 ```text
 1,800,000,000 + major * 1,000,000 + minor * 1,000 + patch
@@ -110,11 +110,10 @@ release tag.
 ## Apple distribution
 
 GitHub's macOS job owns the unsigned iOS Simulator and macOS compile gate.
-Codemagic retains only Apple-specific trust boundaries:
-
-- `ios-signing-validation` builds one signed candidate before tagging;
-- `ios-testflight-release` downloads, revalidates, and uploads that IPA;
-- Apple signing and App Store Connect credentials never enter GitHub.
+Codemagic's `ios-testflight-release` workflow builds, validates, and uploads one
+signed IPA from the immutable tag. Apple signing and App Store Connect
+credentials never enter GitHub. A TestFlight outage can leave a valid tag and
+GitHub Release awaiting an independently rerunnable store upload.
 
 The Apple bundle ID is `dev.adonm.zuko`; Android and Apple share the deterministic
 build number above. Mac App Store publication is not currently automated.
@@ -124,9 +123,9 @@ build number above. Mac App Store publication is not currently automated.
 GitHub Actions owns tests, Flutter compile gates, all unsigned/portable release
 artifacts, candidate provenance, Android signing, immutable tags and Releases,
 crates.io, Google Play, and Microsoft Store orchestration. Codemagic owns only
-signed iOS construction, TestFlight upload, and Appetize credentials. This is a
-build-once/promote-many boundary: each publisher validates source identity and
-artifact hashes rather than recompiling.
+signed iOS construction, TestFlight upload, and the temporarily isolated
+Appetize credentials. Each publication channel validates source identity and
+artifact hashes and can be retried without changing the core release.
 
 ## Linux `zuko app` support
 

@@ -1,0 +1,13 @@
+name: Cache Flutter dependencies
+description: Restore immutable Pub packages for the pinned Flutter SDK
+
+runs:
+  using: composite
+  steps:
+    - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: |
+          ~/.pub-cache/hosted
+          ~/.pub-cache/git/cache
+        key: zuko-pub-${{ runner.os }}-${{ hashFiles('flutter/pubspec.lock', 'mise.toml') }}
+        restore-keys: zuko-pub-${{ runner.os }}-

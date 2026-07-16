@@ -233,22 +233,23 @@ flutter/build/ios/iphonesimulator/Runner.app
 flutter/build/macos/Build/Products/Release/Zuko.app
 ```
 
-GitHub's macOS candidate job compiles and packages both targets for pull
-requests and `main`. The successful `main` candidate becomes the GitHub Release
-asset without rebuilding. Before tagging, `prepare-release.yml` creates an
-exact temporary branch and triggers `ios-signing-validation`; after tagging,
-`ios-testflight-release` uploads that retained IPA. Apple builds use bundle ID
-`dev.adonm.zuko` and all signing credentials remain in Codemagic.
+GitHub runs fast shared Flutter checks on pull requests. Two parallel macOS
+jobs compile and package the iOS Simulator and macOS targets for each `main`
+candidate, which becomes the GitHub Release asset without rebuilding. After
+tagging, `ios-testflight-release` builds and uploads the signed device IPA.
+Apple builds use bundle ID `dev.adonm.zuko` and all signing credentials remain
+in Codemagic.
 
 ## Matching CI
 
 The source of truth for build environments is:
 
-- `.github/workflows/build.yml` for native platform checks and the aggregate
+- `.github/workflows/ci.yml` for fast pull-request checks;
+- `.github/workflows/build.yml` for native `main` builds and the aggregate
   build-once candidate;
 - `codemagic.yaml` for signed iOS and upload-only mobile publication;
-- `.github/workflows/prepare-release.yml` and `release.yml` for protected
-  tagging, artifact verification, and coordinated publication;
+- `.github/workflows/release.yml` for protected tagging and core publication;
+- `.github/workflows/publish-*.yml` for independently rerunnable channels;
 - `Justfile` for supported local recipes.
 
 `just container-ci` invokes the same `flutter-linux-ci` recipe as GitHub's
@@ -268,7 +269,7 @@ Current automation coverage is:
 | Android | GitHub unsigned APK/AAB candidate | Same candidate signed once, published, and promoted to Appetize/Google Play |
 | Linux | GitHub GTK4 release bundle and smoke | Same checksummed archive consumed by FlatPark |
 | Windows | GitHub x86_64 portable candidate | Same ZIP published; protected Store package remains manual |
-| iOS/iPadOS | GitHub Simulator candidate | Same Simulator ZIP to Appetize; pre-tag signed IPA to TestFlight |
+| iOS/iPadOS | GitHub Simulator candidate | Same Simulator ZIP to Appetize; exact-tag signed IPA to TestFlight |
 | macOS | GitHub release application candidate | Same development ZIP published; Mac App Store is not automated |
 
 Compilation in this matrix does not imply store publication or the

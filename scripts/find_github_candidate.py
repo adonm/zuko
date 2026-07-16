@@ -36,7 +36,7 @@ def request_json(token: str, path: str) -> dict[str, object]:
     return value
 
 
-def resolve(token: str, repository: str, sha: str) -> tuple[int, int, str]:
+def resolve(token: str, repository: str, sha: str) -> tuple[int, int, str, str]:
     query = urllib.parse.urlencode(
         {
             "branch": "main",
@@ -96,7 +96,7 @@ def resolve(token: str, repository: str, sha: str) -> tuple[int, int, str]:
             and re.fullmatch(r"sha256:[0-9a-f]{64}", artifact["digest"])
         ]
         if len(candidates) == 1:
-            return run_id, candidates[0]["id"], name
+            return run_id, candidates[0]["id"], name, candidates[0]["digest"]
     raise SystemExit("no successful exact-commit run has one valid candidate artifact")
 
 
@@ -109,11 +109,14 @@ def main() -> None:
         raise SystemExit("GITHUB_TOKEN is required")
     if not re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", repository):
         raise SystemExit(f"invalid GitHub repository: {repository}")
-    run_id, artifact_id, name = resolve(token, repository, sys.argv[1])
+    run_id, artifact_id, name, digest = resolve(token, repository, sys.argv[1])
     output = os.environ.get("GITHUB_OUTPUT")
     if output:
         with open(output, "a") as stream:
-            stream.write(f"run_id={run_id}\nartifact_id={artifact_id}\nartifact_name={name}\n")
+            stream.write(
+                f"run_id={run_id}\nartifact_id={artifact_id}\n"
+                f"artifact_name={name}\nartifact_digest={digest}\n"
+            )
     print(f"GitHub release candidate: run {run_id}, artifact {artifact_id} ({name})")
 
 

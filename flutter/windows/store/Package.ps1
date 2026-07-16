@@ -16,7 +16,7 @@ param(
 
 $ErrorActionPreference = 'Stop'
 $PSNativeCommandUseErrorActionPreference = $true
-$root = (Resolve-Path (Join-Path $PSScriptRoot '../..')).Path
+$root = (Resolve-Path (Join-Path $PSScriptRoot '../../..')).Path
 
 function Get-RequiredEnvironmentValue([string] $Name) {
     $value = [Environment]::GetEnvironmentVariable($Name)
@@ -93,7 +93,7 @@ $cargo = Get-Content (Join-Path $root 'Cargo.toml') -Raw
 $cargoVersion = [regex]::Match($cargo, '(?m)^version = "([0-9]+\.[0-9]+\.[0-9]+)"$').Groups[1].Value
 $pubspec = Get-Content (Join-Path $root 'flutter/pubspec.yaml') -Raw
 $flutterMatch = [regex]::Match($pubspec, '(?m)^version:\s*([0-9]+\.[0-9]+\.[0-9]+)\+([0-9]+)\s*$')
-$expectedFlutterBuild = $major * 1000000 + $minor * 1000 + $patch
+$expectedFlutterBuild = 1800000000 + $major * 1000000 + $minor * 1000 + $patch
 if ($cargoVersion -cne $semanticVersion -or
     -not $flutterMatch.Success -or
     $flutterMatch.Groups[1].Value -cne $semanticVersion -or
