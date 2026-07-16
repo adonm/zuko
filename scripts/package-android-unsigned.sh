@@ -21,11 +21,11 @@ test -f "$aab"
 unzip -t "$apk" >/dev/null
 unzip -t "$aab" >/dev/null
 if "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify "$apk" >/dev/null 2>&1; then
-  echo "Android package: Codemagic APK must be unsigned" >&2
+  echo "Android package: candidate APK must be unsigned" >&2
   exit 1
 fi
 if jarsigner -verify "$aab" 2>&1 | grep -q "jar verified"; then
-  echo "Android package: Codemagic AAB must be unsigned" >&2
+  echo "Android package: candidate AAB must be unsigned" >&2
   exit 1
 fi
 

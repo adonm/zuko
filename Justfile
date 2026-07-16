@@ -2,7 +2,7 @@
 # Tool versions and bootstrap dependencies live in mise.toml.
 # Run through an activated Mise shell or `mise exec -- just <recipe>`.
 # On x86_64 Linux, prefer the `container-*` Flutter recipes: they include the
-# pinned JDK, Android SDK/NDK, Linux SDK, Flutter, Rust, and web toolchain.
+# pinned JDK, Android SDK/NDK, GTK4 dependencies, Flutter, Rust, and web toolchain.
 set shell := ["bash", "-euo", "pipefail", "-c"]
 
 default:
@@ -158,16 +158,12 @@ package-ios-preview version: flutter-get
 package-linux-release tag sha:
     bash scripts/package-linux-release.sh "{{ tag }}" "{{ sha }}"
 
-[group('flutter')]
-install-freedesktop-llvm destination='/opt/llvm':
-    bash scripts/install-freedesktop-llvm.sh "{{ destination }}"
-
 # Run any supported mode in the pinned Flutter CI image.
 [group('containers')]
 container-flutter mode='ci':
     bash scripts/container-flutter.sh "{{ mode }}"
 
-# Mirror Codemagic's Linux-hosted Dart, web, Android, and Linux gate.
+# Mirror GitHub's Linux-hosted Dart, web, Android, and Linux gate.
 [group('containers')]
 container-ci:
     bash scripts/container-flutter.sh ci
@@ -222,7 +218,7 @@ container-android-release:
 container-linux mode='check':
     bash scripts/container-linux.sh "{{ mode }}"
 
-# Build the Linux desktop client in the pinned Freedesktop SDK.
+# Build the Linux desktop client in the pinned Ubuntu/GTK4 image.
 [group('containers')]
 container-linux-build:
     bash scripts/container-flutter.sh linux
