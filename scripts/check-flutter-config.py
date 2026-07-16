@@ -147,6 +147,7 @@ def validate_automation() -> None:
     require_text("scripts/install-mise-codemagic.sh", "install rust zig just 'http:flutter'")
     require_text(".github/workflows/build.yml", "Assemble build-once release candidate")
     require_text(".github/workflows/build.yml", 'MISE_AUTO_INSTALL: "0"')
+    require_text(".github/workflows/build.yml", "libc6-dev-arm64-cross")
     require_text(".github/workflows/build.yml", "zuko-release-candidate-${{ github.sha }}")
     require_text(".github/workflows/build.yml", "Flutter Windows candidate")
     require_text(".github/workflows/build.yml", "Flutter Apple candidate")
