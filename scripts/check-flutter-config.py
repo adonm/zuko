@@ -173,6 +173,31 @@ def main() -> None:
     require_text("codemagic.yaml", "mise exec -- just flutter-linux-ci")
     require_text("codemagic.yaml", "scripts/prepare-web-plugins.py")
     require_text(".github/workflows/docs.yml", '"scripts/prepare-web-plugins.py"')
+    require_text(".github/workflows/build.yml", "Flutter Linux GTK4 release")
+    require_text(
+        ".github/workflows/build.yml", "scripts/install_flutter_gtk4_sdk.py"
+    )
+    require_text(
+        "scripts/install_flutter_gtk4_sdk.py",
+        "00fee9824a795ee9b5794e0a0e2bc5975e54dba8",
+    )
+    require_text(
+        "scripts/install_flutter_gtk4_sdk.py",
+        "libflutter_linux_gtk4.so",
+    )
+    require_text(
+        "scripts/install_flutter_gtk4_sdk.py",
+        "github.com/adonm/flutter-dev/releases/download",
+    )
+    require_text(
+        "scripts/install_flutter_gtk4_sdk.py",
+        "bd80913e83fa9fac66bca3c90a020bc624827c610f3fcff7971455b4f858f701",
+    )
+    forbid_text("scripts/install_flutter_gtk4_sdk.py", "__CI_LIBRARY_SHA256__")
+    require_text("scripts/package-linux-release.sh", "debug sections remain")
+    require_text(
+        "scripts/package-linux-release.sh", "release bundle contains a JIT artifact"
+    )
     forbid_text("scripts/container-flutter.sh", "--privileged")
     for obsolete in [
         "containers/flutter-linux.Containerfile",

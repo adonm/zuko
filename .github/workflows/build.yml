@@ -56,3 +56,87 @@ jobs:
         # actionlint validates workflow syntax, action versions/SHAs,
         # permissions, expression contexts. Ubuntu leg only.
         run: mise exec -- just lint-ci
+
+  flutter-linux:
+    name: Flutter Linux GTK4 release
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - name: Install Linux build and smoke dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential \
+            cage \
+            clang \
+            cmake \
+            curl \
+            libegl-dev \
+            libgl-dev \
+            libgtk-4-dev \
+            libsecret-1-dev \
+            mesa-vulkan-drivers \
+            ninja-build \
+            pkg-config
+
+      - name: Install pinned native toolchains
+        uses: jdx/mise-action@e6a8b3978addb5a52f2b4cd9d91eafa7f0ab959d # v4.2.0
+        with:
+          cache: true
+          install_args: rust zig
+
+      - name: Install pinned Flutter GTK4 SDK
+        run: |
+          sdk="$RUNNER_TEMP/flutter-gtk4-sdk"
+          python3 scripts/install_flutter_gtk4_sdk.py "$sdk"
+          printf '%s\n' "$sdk/bin" >> "$GITHUB_PATH"
+
+      - name: Build GTK4 release bundle
+        run: |
+          flutter pub get --directory flutter --enforce-lockfile
+          python3 scripts/patch-flutter-plugins.py flutter
+          (cd flutter && flutter build linux --release --no-pub)
+
+      - name: Package deterministic GTK4 archive
+        run: |
+          tag="v$(scripts/version.sh)"
+          sha=$(git rev-parse HEAD)
+          SOURCE_DATE_EPOCH=$(git show -s --format=%ct "$sha") \
+            bash scripts/package-linux-release.sh "$tag" "$sha"
+          archive="dist/linux/zuko-linux-$tag-x86_64.tar.gz"
+          first="$RUNNER_TEMP/$(basename "$archive").first"
+          cp "$archive" "$first"
+          SOURCE_DATE_EPOCH=$(git show -s --format=%ct "$sha") \
+            bash scripts/package-linux-release.sh "$tag" "$sha"
+          cmp "$first" "$archive"
+          rm "$first"
+
+      - name: Smoke extracted archive with Impeller
+        run: |
+          install -d -m 700 .tmp/gtk4-wayland
+          set +e
+          XDG_RUNTIME_DIR="$GITHUB_WORKSPACE/.tmp/gtk4-wayland" \
+          GDK_BACKEND=wayland GDK_DISABLE=gl,vulkan GSK_RENDERER=cairo \
+          WLR_BACKENDS=headless WLR_LIBINPUT_NO_DEVICES=1 \
+          WLR_RENDERER=pixman LIBGL_ALWAYS_SOFTWARE=1 \
+          timeout 15s cage -- build/linux-release/extracted/bundle/zuko \
+            > gtk4-release-smoke.log 2>&1
+          status=$?
+          set -e
+          cat gtk4-release-smoke.log
+          test "$status" -eq 124
+          grep -Eq 'Using the Impeller rendering backend \((Vulkan|OpenGLES|VulkanSDF|OpenGLESSDF)\)\.' \
+            gtk4-release-smoke.log
+
+      - name: Upload GTK4 release archive
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: zuko-flutter-linux-gtk4
+          path: |
+            dist/linux/*.tar.gz
+            dist/linux/*.tar.gz.sha256
+          if-no-files-found: error
+          retention-days: 30

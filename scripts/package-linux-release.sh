@@ -15,7 +15,7 @@ readonly WORK=$ROOT/build/linux-release
 readonly OUTPUT_DIR=$ROOT/dist/linux
 readonly OUTPUT=$OUTPUT_DIR/zuko-linux-$TAG-x86_64.tar.gz
 
-for command in find git gzip ldd readelf sha256sum tar; do
+for command in find git gzip ldd readelf sha256sum strip tar; do
   command -v "$command" >/dev/null 2>&1 || {
     echo "Linux package: required command not found: $command" >&2
     exit 1
@@ -86,6 +86,26 @@ check_linkage() {
 }
 check_linkage "$BUNDLE"
 
+validate_release_payload() {
+  local root=$1 binary sections
+  if find "$root" -type f \( \
+    -name kernel_blob.bin -o \
+    -name vm_snapshot_data -o \
+    -name isolate_snapshot_data -o \
+    -name '*.dill' \
+  \) -print -quit | grep -q .; then
+    echo "Linux package: release bundle contains a JIT artifact" >&2
+    exit 1
+  fi
+  while IFS= read -r -d '' binary; do
+    sections=$(readelf --sections --wide "$binary" 2>/dev/null || true)
+    if grep -Eq '\.debug_(info|line)\b' <<<"$sections"; then
+      echo "Linux package: debug sections remain in $binary" >&2
+      exit 1
+    fi
+  done < <(find "$root" -type f \( -name zuko -o -name '*.so' -o -name '*.so.*' \) -print0)
+}
+
 if [[ -z ${SOURCE_DATE_EPOCH:-} ]]; then
   SOURCE_DATE_EPOCH=$(git -C "$ROOT" show -s --format=%ct "$commit")
 fi
@@ -98,6 +118,12 @@ export SOURCE_DATE_EPOCH TZ=UTC LC_ALL=C.UTF-8
 rm -rf "$WORK" "$OUTPUT_DIR"
 mkdir -p "$WORK/staging/bundle" "$WORK/extracted" "$OUTPUT_DIR"
 cp -a "$BUNDLE/." "$WORK/staging/bundle/"
+while IFS= read -r -d '' binary; do
+  strip --strip-unneeded "$binary"
+done < <(find "$WORK/staging/bundle" -type f \( \
+  -name zuko -o -name '*.so' -o -name '*.so.*' \
+\) -print0)
+validate_release_payload "$WORK/staging/bundle"
 find "$WORK/staging" -exec touch --no-dereference --date="@$SOURCE_DATE_EPOCH" {} +
 
 (
@@ -130,6 +156,7 @@ done
   exit 1
 }
 check_linkage "$WORK/extracted/bundle"
+validate_release_payload "$WORK/extracted/bundle"
 
 (
   cd "$OUTPUT_DIR"
