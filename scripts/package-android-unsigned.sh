@@ -2,7 +2,7 @@
 set -euo pipefail
 
 if [ "$#" -ne 1 ]; then
-  echo "usage: package-codemagic-android-unsigned.sh <vX.Y.Z>" >&2
+  echo "usage: package-android-unsigned.sh <vX.Y.Z>" >&2
   exit 2
 fi
 : "${ANDROID_HOME:?ANDROID_HOME is required}"

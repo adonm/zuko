@@ -54,32 +54,23 @@ def request(
 
 
 def main() -> None:
-    usage = "publish-appetize-release.py <vX.Y.Z> <git-sha> [config-branch]"
-    if len(sys.argv) not in {3, 4}:
+    usage = "publish-appetize-release.py <vX.Y.Z> <git-sha>"
+    if len(sys.argv) != 3:
         raise SystemExit(f"usage: {usage}")
     tag, sha = sys.argv[1:3]
-    branch = sys.argv[3] if len(sys.argv) == 4 else None
     if not re.fullmatch(r"v[0-9]+\.[0-9]+\.[0-9]+", tag):
         raise SystemExit(f"invalid release tag: {tag}")
     if not re.fullmatch(r"[0-9a-f]{40}", sha):
         raise SystemExit(f"invalid release commit: {sha}")
-    if branch is not None and branch != "main":
-        raise SystemExit("the Appetize recovery config branch must be main")
     token = os.environ.get("CODEMAGIC_API_TOKEN")
     if not token:
         raise SystemExit("CODEMAGIC_API_TOKEN is required")
 
-    payload: dict[str, object] = {"appId": APP_ID, "workflowId": WORKFLOW}
-    if branch is None:
-        payload["tag"] = tag
-    else:
-        payload["branch"] = branch
-        payload["environment"] = {
-            "variables": {
-                "APPETIZE_RELEASE_TAG": tag,
-                "APPETIZE_RELEASE_SHA": sha,
-            }
-        }
+    payload: dict[str, object] = {
+        "appId": APP_ID,
+        "workflowId": WORKFLOW,
+        "tag": tag,
+    }
     result = request(token, "POST", "/builds", payload)
     build_id = result.get("buildId")
     if not isinstance(build_id, str) or not re.fullmatch(r"[0-9a-f]{24}", build_id):
@@ -111,11 +102,8 @@ def main() -> None:
     commit = build.get("commit")
     if not isinstance(commit, dict):
         raise SystemExit(f"Codemagic build {build_id} has no commit identity")
-    if branch is None:
-        if build.get("tag") != tag or commit.get("hash") != sha:
-            raise SystemExit(f"Codemagic build {build_id} did not use {tag} at {sha}")
-    elif build.get("branch") != branch:
-        raise SystemExit(f"Codemagic recovery build {build_id} used the wrong branch")
+    if build.get("tag") != tag or commit.get("hash") != sha:
+        raise SystemExit(f"Codemagic build {build_id} did not use {tag} at {sha}")
     actions = build.get("buildActions")
     if not isinstance(actions, list) or not actions:
         raise SystemExit(f"Codemagic build {build_id} has no action results")

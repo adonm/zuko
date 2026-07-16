@@ -1,15 +1,14 @@
 # Android store publishing
 
-Android compilation remains a native Flutter/Gradle build. The manual
-`publish-flutter-android.yml` workflow uses pinned Codemagic CLI Tools only at
-the signing, bundle validation, Google Play API validation, and upload boundary.
+Android compilation and upload-key signing happen once in the coordinated
+GitHub Release. The manual `publish-flutter-android.yml` workflow uses pinned
+Codemagic CLI Tools only for bundle validation and the Google Play API boundary.
 Dispatch the workflow definition from `main` and supply an existing immutable
 `vX.Y.Z` release tag.
 
-The workflow checks out the selected immutable release tag, runs a normal unsigned
-`flutter build appbundle`, and signs that output with Codemagic inside the
-protected publishing job. It validates and uploads the exact AAB retained as
-the final workflow artifact.
+The workflow checks out the selected immutable tag, downloads its signed AAB
+and SHA-256 sidecar, validates those exact bytes, and uploads them. It does not
+install Flutter, run Gradle, or sign a second package.
 
 The workflow verifies all of the following before upload:
 
@@ -53,17 +52,12 @@ External setup cannot be created safely by this repository:
 
 | Environment secret | Value |
 |--------------------|-------|
-| `ANDROID_KEYSTORE_BASE64` | Base64-encoded upload keystore bytes |
-| `ANDROID_KEYSTORE_PASSWORD` | Upload keystore password |
-| `ANDROID_KEY_ALIAS` | Upload key alias |
-| `ANDROID_KEY_PASSWORD` | Upload key password |
 | `GOOGLE_PLAY_SERVICE_ACCOUNT_JSON` | Complete service-account JSON key |
 
-Do not enable shell tracing or print these values. The workflow writes decoded
-credentials only under the ephemeral runner directory with restrictive
-permissions and deletes them after use. Codemagic receives passwords through
-`@env:` and the Google credential through `@file:` rather than command-line
-plaintext.
+The Android upload-key secrets remain repository-scoped to the coordinated
+release signing job. The `google-play` environment needs only the service
+account JSON. Do not enable shell tracing or print it; the uploader passes the
+credential through an ephemeral file rather than command-line plaintext.
 
 ## Dispatch and release
 

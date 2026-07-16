@@ -6,7 +6,7 @@ and invokes the same Justfile recipes through `mise exec -- just <recipe>`.
 
 ```sh
 mise bootstrap          # OS packages + shell activation + pinned tools
-just setup-flutter      # exact cross-platform Flutter/Dart SDK
+mise install            # includes exact host Flutter/Dart SDK archive
 hk install --mise       # local format and full pre-push gates
 just                     # grouped recipe list
 just check           # Rust + Flutter + release metadata
@@ -112,5 +112,5 @@ configuration checks, formatting, application analysis, and application tests
 but does not repeat all vendored `flterm` tests. Cross-platform client builds
 still compile the pinned package. Release readiness continues to require the
 full local preflight rather than treating the lean hosted check as sufficient.
-The local container's `ci` mode and Codemagic both call `just flutter-linux-ci`
+The local container's `ci` mode and GitHub both call `just flutter-linux-ci`
 for the Linux-hostable compile matrix.

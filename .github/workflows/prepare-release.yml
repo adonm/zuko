@@ -1,0 +1,173 @@
+name: prepare release
+
+on:
+  workflow_dispatch:
+    inputs:
+      sha:
+        description: Exact pushed main commit to release
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: prepare-release
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    name: verify exact release candidate
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      actions: read
+      contents: read
+    outputs:
+      artifact_name: ${{ steps.candidate.outputs.artifact_name }}
+      candidate_branch: ${{ steps.identity.outputs.candidate_branch }}
+      sha: ${{ steps.identity.outputs.sha }}
+      tag: ${{ steps.identity.outputs.tag }}
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: ${{ inputs.sha }}
+          fetch-depth: 0
+
+      - name: Verify source and release identity
+        id: identity
+        env:
+          REQUESTED_SHA: ${{ inputs.sha }}
+        run: |
+          set -euo pipefail
+          [[ $REQUESTED_SHA =~ ^[0-9a-f]{40}$ ]]
+          test "$(git rev-parse HEAD)" = "$REQUESTED_SHA"
+          git fetch --quiet origin main --tags
+          test "$(git rev-parse origin/main)" = "$REQUESTED_SHA"
+          scripts/release-context.sh
+          version=$(scripts/version.sh)
+          tag="v$version"
+          if git rev-parse -q --verify "refs/tags/$tag" >/dev/null; then exit 1; fi
+          if git ls-remote --exit-code --tags origin "refs/tags/$tag" >/dev/null 2>&1; then exit 1; fi
+          {
+            echo "candidate_branch=release-candidate/$tag-${REQUESTED_SHA:0:12}"
+            echo "sha=$REQUESTED_SHA"
+            echo "tag=$tag"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Resolve successful build-once candidate
+        id: candidate
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: python3 scripts/find_github_candidate.py "${{ inputs.sha }}"
+
+  reference:
+    name: create immutable candidate reference
+    needs: verify
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: ${{ needs.verify.outputs.sha }}
+          fetch-depth: 0
+
+      - name: Push exact candidate branch
+        env:
+          BRANCH: ${{ needs.verify.outputs.candidate_branch }}
+          SHA: ${{ needs.verify.outputs.sha }}
+        run: |
+          set -euo pipefail
+          git push origin "$SHA:refs/heads/$BRANCH"
+          test "$(git ls-remote origin "refs/heads/$BRANCH" | cut -f1)" = "$SHA"
+
+  ios:
+    name: build signed iOS candidate
+    needs: [verify, reference]
+    runs-on: ubuntu-latest
+    timeout-minutes: 130
+    outputs:
+      build_id: ${{ steps.build.outputs.build_id }}
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: ${{ needs.verify.outputs.sha }}
+
+      - name: Build exact signed candidate through Codemagic
+        id: build
+        env:
+          CODEMAGIC_API_TOKEN: ${{ secrets.CODEMAGIC_API_TOKEN }}
+        run: >-
+          python3 scripts/prepare_ios_candidate.py
+          "${{ needs.verify.outputs.tag }}"
+          "${{ needs.verify.outputs.sha }}"
+          "${{ needs.verify.outputs.candidate_branch }}"
+
+  tag:
+    name: publish immutable release tag
+    needs: [verify, ios]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: release
+    permissions:
+      actions: write
+      contents: write
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: ${{ needs.verify.outputs.sha }}
+          fetch-depth: 0
+
+      - name: Revalidate main and push annotated tag
+        env:
+          SHA: ${{ needs.verify.outputs.sha }}
+          TAG: ${{ needs.verify.outputs.tag }}
+        run: |
+          set -euo pipefail
+          git fetch --quiet origin main --tags
+          test "$(git rev-parse HEAD)" = "$SHA"
+          test "$(git rev-parse origin/main)" = "$SHA"
+          if git rev-parse -q --verify "refs/tags/$TAG" >/dev/null; then exit 1; fi
+          git config user.name github-actions
+          git config user.email github-actions@github.com
+          git tag -a "$TAG" -m "zuko $TAG
+
+          Cut from ${SHA:0:12} after exact-commit GitHub candidate and signed iOS validation."
+          test "$(git rev-parse "$TAG^{commit}")" = "$SHA"
+          git push origin "$TAG"
+
+      - name: Dispatch tag-scoped publication workflows
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.verify.outputs.tag }}
+        run: |
+          set -euo pipefail
+          gh workflow run release.yml --repo "$GITHUB_REPOSITORY" --ref "$TAG"
+          gh workflow run publish-crate.yml --repo "$GITHUB_REPOSITORY" --ref "$TAG"
+
+  cleanup:
+    name: remove temporary candidate reference
+    if: ${{ always() }}
+    needs: [verify, reference, ios, tag]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - name: Delete candidate branch
+        env:
+          BRANCH: ${{ needs.verify.outputs.candidate_branch }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          if test -z "$BRANCH"; then exit 0; fi
+          encoded=$(jq -rn --arg value "heads/$BRANCH" '$value|@uri')
+          status=$(curl --silent --show-error --output "$RUNNER_TEMP/delete.json" \
+            --write-out '%{http_code}' --request DELETE \
+            --header "Authorization: Bearer $GH_TOKEN" \
+            --header 'Accept: application/vnd.github+json' \
+            --header 'X-GitHub-Api-Version: 2022-11-28' \
+            "https://api.github.com/repos/$GITHUB_REPOSITORY/git/refs/$encoded")
+          test "$status" = 204 -o "$status" = 404 -o "$status" = 422

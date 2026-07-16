@@ -2,7 +2,8 @@
 set -euo pipefail
 
 readonly APP_ID=dev.adonm.zuko
-readonly IMAGE=localhost/zuko-flutter-ci:2026.07
+readonly IMAGE=localhost/zuko-flatpak-test:2026.07
+readonly CONTAINERFILE=containers/flatpak-test.Containerfile
 readonly FLATPARK_URL=https://github.com/flatpark/flatpark.git
 readonly FLATPARK_COMMIT=0ec1341c6c52ab75f9c0929654f3e530f8745422
 readonly RUNTIME_REPO=https://dl.flathub.org/repo/flathub.flatpakrepo
@@ -120,6 +121,7 @@ if release not in metainfo:
 PY
 
 mkdir -p .tmp/flatpak-builder-state
+podman build --file "$CONTAINERFILE" --ignorefile containers/flutter-ci.ignore --tag "$IMAGE" .
 podman run --rm --privileged \
   --security-opt label=disable \
   --volume "$root:/workspace" \

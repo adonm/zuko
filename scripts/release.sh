@@ -1,6 +1,5 @@
 #!/bin/sh
-# Create an immutable release tag from the clean, already-pushed main branch.
-# The tag triggers the coordinated GitHub Release, crate, and TestFlight jobs.
+# Dispatch exact-commit candidate validation and protected release tagging.
 #
 # Usage:
 #   just release
@@ -45,20 +44,19 @@ if git rev-parse -q --verify "refs/tags/$TAG" >/dev/null || \
     exit 1
 fi
 
-echo "==> verifying exact-commit Codemagic release candidate"
-python3 scripts/check-codemagic-release-candidate.py "$HEAD_SHA"
+command -v gh >/dev/null 2>&1 || {
+    echo "error: GitHub CLI is required to dispatch the release" >&2
+    exit 1
+}
+gh auth status >/dev/null
 
-SHA="$(git rev-parse --short HEAD)"
-echo "==> creating annotated tag $TAG at $SHA"
-git tag -a "$TAG" -m "zuko $TAG
-
-Cut from $SHA. This immutable tag triggers the coordinated GitHub Release,
-crates.io publication, and signed iOS TestFlight build."
-
-echo "==> pushing immutable tag $TAG to origin"
-git push origin "$TAG"
+SHORT_SHA="$(git rev-parse --short=12 HEAD)"
+echo "==> dispatching protected release preparation for $TAG at $SHORT_SHA"
+gh workflow run prepare-release.yml \
+    --repo adonm/zuko \
+    --ref main \
+    -f "sha=$HEAD_SHA"
 
 echo
-echo "done. watch the release at:"
-echo "  https://github.com/adonm/zuko/actions/workflows/release.yml"
-echo "  https://codemagic.io/app/6a52dc14add8531e99f88b8a"
+echo "release preparation dispatched. No local process needs to remain running:"
+echo "  https://github.com/adonm/zuko/actions/workflows/prepare-release.yml"

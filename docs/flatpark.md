@@ -16,8 +16,8 @@ zuko-linux-vX.Y.Z-x86_64.tar.gz.sha256
 ```
 
 The archive contains one top-level `bundle/` directory with the executable,
-Flutter data, and adjacent libraries. Codemagic builds it against the pinned
-Freedesktop 25.08 SDK. `scripts/package-linux-release.sh` normalizes the archive,
+Flutter data, and adjacent libraries. GitHub builds it on Ubuntu 24.04 with the
+immutable Mise Flutter/GTK4 SDK. `scripts/package-linux-release.sh` normalizes the archive,
 rejects links, privileged files, and non-relocatable runtime paths, checks
 native linkage before and after extraction, and emits its checksum.
 
@@ -60,9 +60,9 @@ unprotected fallback.
 
 The Zuko release workflow publishes the raw archive and checksum. It does not
 publish a `.flatpak`, `.flatpakref`, OSTree repository, or repository signing
-key. `scripts/collect-codemagic-release.py` and
-`scripts/publish-github-release.sh` fail closed unless the expected archive and
-checksum are present exactly once.
+key. `scripts/release_candidate.py` binds the archive bytes to the source
+commit, and `scripts/publish-github-release.sh` fails closed unless the expected
+archive and checksum are present exactly once.
 
 The package's `resolve-update.sh` selects the exact versioned Linux archive from
 the latest GitHub Release. FlatPark's update automation computes a new size and
@@ -71,7 +71,7 @@ the FlatPark wrapper, permissions, or metadata belong in that registry rather
 than this repository.
 
 For pre-publication testing, `just build-flatpark-test-bundle` builds the
-versioned Linux payload in the pinned Freedesktop container, applies an
+versioned Linux payload in the pinned Ubuntu container, applies an
 immutable revision of the registry's Zuko wrapper and permissions, and emits an
 unsigned local test branch under `dist/flatpak/`. It embeds the payload only to
 make local install testing self-contained; official FlatPark builds continue to

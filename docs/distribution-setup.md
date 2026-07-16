@@ -23,8 +23,9 @@ inputs.
 
 | Scope | Name | Required values |
 |-------|------|-----------------|
-| Repository secrets | coordinated Flutter release | `CODEMAGIC_API_TOKEN` with access to Codemagic app `6a52dc14add8531e99f88b8a`; `ANDROID_KEYSTORE_BASE64`, `ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS`, and `ANDROID_KEY_PASSWORD` for signing exact Codemagic Android outputs |
-| `google-play` environment | Play publication | `ANDROID_KEYSTORE_BASE64`, `ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS`, `ANDROID_KEY_PASSWORD`, and `GOOGLE_PLAY_SERVICE_ACCOUNT_JSON` |
+| Repository secrets | coordinated Flutter release | `CODEMAGIC_API_TOKEN` with access to Codemagic app `6a52dc14add8531e99f88b8a`; `ANDROID_KEYSTORE_BASE64`, `ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS`, and `ANDROID_KEY_PASSWORD` for signing the exact GitHub Android candidate |
+| `release` environment | immutable tag | approval policy for the final exact-candidate tag job; no secret required |
+| `google-play` environment | Play publication | `GOOGLE_PLAY_SERVICE_ACCOUNT_JSON` |
 | `microsoft-store-package` environment | package/sign | variables `MSSTORE_PRODUCT_ID`, `MSSTORE_PACKAGE_IDENTITY_NAME`, `MSSTORE_PACKAGE_PUBLISHER`, `MSSTORE_PACKAGE_FAMILY_NAME`, `MSSTORE_PACKAGE_DISPLAY_NAME`, `MSSTORE_PUBLISHER_DISPLAY_NAME`; secrets `MSSTORE_SIGNING_PFX_BASE64`, `MSSTORE_SIGNING_PFX_PASSWORD` |
 | `microsoft-store-draft` environment | draft upload | the six package variables above plus `MSSTORE_TENANT_ID`, `MSSTORE_SELLER_ID`, `MSSTORE_CLIENT_ID`; secret `MSSTORE_CLIENT_SECRET` |
 | `microsoft-store-submit` environment | final submission | the same values as `microsoft-store-draft`, with a separate final approval |
@@ -43,12 +44,11 @@ repeat `MSSTORE_CLIENT_SECRET` in both draft and submit.
 | Variable group | `codemagic_api` | secret `CODEMAGIC_API_TOKEN` used by the existing iOS artifact handoff |
 | Variable group | `appetize_credentials` | `APPETIZE_API_TOKEN`, `APPETIZE_ANDROID_PUBLIC_KEY`, `APPETIZE_IOS_PUBLIC_KEY` |
 
-Codemagic's YAML workflows expose signing identities only to the workflows that
-need them. Compile gates have no store or Appetize credentials. The coordinated
-release passes no GitHub credential into Codemagic: GitHub retrieves unsigned
-Android outputs and signs them locally, while Apple signing material remains in
-Codemagic. Appetize reuses the public, checksummed release APK after publication
-and therefore needs no Android signing identity in Codemagic.
+Codemagic's YAML contains only signed-iOS construction, TestFlight upload, and
+upload-only Appetize publication. All ordinary compile gates and portable
+artifacts run in GitHub. The coordinated release passes no GitHub credential
+into Codemagic; Apple signing material remains there, and Appetize downloads
+public checksummed release assets without a signing identity.
 
 ## First-time portal work
 
@@ -72,10 +72,9 @@ Details: [Android store publishing](android-publishing.md).
   profile.
 - [ ] Create a dedicated App Store Connect App Manager API key and retain its
   issuer ID, key ID, and one-time `.p8` securely.
-- [ ] Run Codemagic's manual `ios-signing-validation` to check new signing
-  configuration. Each annotated release tag then makes GitHub API-trigger an
-  exact-commit validation and TestFlight upload. GitHub requires no Apple
-  signing secrets.
+- [ ] Run `prepare-release.yml` for a reviewed candidate to check new signing
+  configuration. It creates an exact temporary branch, validates signing, and
+  only then creates the tag. GitHub requires no Apple signing secrets.
 
 Details: [Apple store publishing](apple-publishing.md).
 
@@ -131,9 +130,9 @@ FlatPark](flatpark.md).
 1. Complete the portal records, Codemagic identities/groups, and protected
    GitHub environments.
 2. Publish the `crossterm-zuko` bootstrap dependency and verify Zuko packaging.
-3. Cut the tag and let GitHub trigger exact Codemagic release builds, verify
-   their checksummed handoff, and publish the coordinated GitHub Release. The
-   Linux archive then becomes the immutable input to FlatPark.
+3. Run `just release`. GitHub verifies the existing build-once candidate,
+   creates one signed iOS candidate, pushes the protected tag, and promotes the
+   exact bytes. The Linux archive then becomes FlatPark's immutable input.
 4. Confirm the automatic TestFlight build, then publish Google Play internal,
    Mac App Store, and Microsoft draft builds through their protected workflows.
 5. Review each portal's retained artifact, metadata, policy answers, and human approval before production submission.

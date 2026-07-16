@@ -41,6 +41,7 @@ jobs:
       - uses: jdx/mise-action@e6a8b3978addb5a52f2b4cd9d91eafa7f0ab959d # v4.2.0
         with:
           cache: true
+          install_args: just
 
       - name: Resolve release context
         id: release
@@ -72,6 +73,7 @@ jobs:
       - uses: jdx/mise-action@e6a8b3978addb5a52f2b4cd9d91eafa7f0ab959d # v4.2.0
         with:
           cache: true
+          install_args: rust zig just http:flutter
 
 
       - name: Build locked Flutter Windows release
@@ -128,6 +130,7 @@ jobs:
       - uses: jdx/mise-action@e6a8b3978addb5a52f2b4cd9d91eafa7f0ab959d # v4.2.0
         with:
           cache: true
+          install_args: just
 
       - name: Revalidate source and signed artifact
         env:
@@ -178,6 +181,7 @@ jobs:
       - uses: jdx/mise-action@e6a8b3978addb5a52f2b4cd9d91eafa7f0ab959d # v4.2.0
         with:
           cache: true
+          install_args: just
 
       - name: Revalidate source and signed artifact
         env:

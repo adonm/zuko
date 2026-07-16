@@ -33,11 +33,11 @@ Appetize is a preview channel, not a source of release artifacts or credentials.
 
 After GitHub publishes all assets for a tag, its release workflow starts
 Codemagic's `mobile-appetize-release` workflow for that exact tag and waits for
-both uploads. Codemagic verifies the immutable release identity, downloads and
-checks the release APK checksum, and builds the iOS Simulator package from the
-same source commit. The Android signing key remains only in GitHub; Codemagic
-does not need a duplicate signing identity. Pull requests and ordinary branch
-builds cannot upload to Appetize.
+both uploads. Codemagic verifies the immutable release identity, downloads the
+published APK, checksum, and iOS Simulator ZIP, validates both archives, and
+uploads those exact bytes. It installs no Flutter SDK and performs no compile.
+The Android signing key remains only in GitHub. Pull requests and ordinary
+branch builds cannot upload to Appetize.
 
 ## Verify credentials
 

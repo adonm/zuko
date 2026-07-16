@@ -126,7 +126,14 @@ def matching_builds(
         for build in builds
         if isinstance(build, dict)
         and build.get("fileWorkflowId") == workflow
-        and build.get("tag") == tag
+        and (
+            (
+                workflow == VALIDATION_WORKFLOW
+                and build.get("tag") is None
+                and build.get("branch") == f"release-candidate/{tag}-{sha[:12]}"
+            )
+            or (workflow == RELEASE_WORKFLOW and build.get("tag") == tag)
+        )
         and isinstance(build.get("commit"), dict)
         and build["commit"].get("hash") == sha
     ]
@@ -198,9 +205,15 @@ def wait_for_build(
         raise SystemExit(f"Codemagic {workflow} build {build_id} timed out")
 
     commit = build.get("commit")
+    expected_source = (
+        build.get("tag") == tag
+        if workflow == RELEASE_WORKFLOW
+        else build.get("tag") is None
+        and build.get("branch") == f"release-candidate/{tag}-{sha[:12]}"
+    )
     if (
         build.get("fileWorkflowId") != workflow
-        or build.get("tag") != tag
+        or not expected_source
         or not isinstance(commit, dict)
         or commit.get("hash") != sha
     ):
@@ -264,7 +277,9 @@ def main() -> None:
     else:
         validation = reusable_build(token, VALIDATION_WORKFLOW, tag, sha)
         if validation is None:
-            validation_id = trigger(token, VALIDATION_WORKFLOW, tag)
+            raise SystemExit(
+                "no successful signed iOS candidate exists for this release commit"
+            )
         else:
             validation_id, completed = validation
             state = "reusing" if completed else "resuming"

@@ -2,7 +2,7 @@
 set -euo pipefail
 
 if [ "$#" -ne 2 ]; then
-  echo "usage: sign-codemagic-android-release.sh <vX.Y.Z> <artifact-directory>" >&2
+  echo "usage: sign-android-release.sh <vX.Y.Z> <artifact-directory>" >&2
   exit 2
 fi
 : "${ANDROID_HOME:?ANDROID_HOME is required}"

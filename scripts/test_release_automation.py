@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import importlib.util
-import json
 import pathlib
 import tempfile
 import unittest
@@ -20,129 +19,143 @@ def load_script(name: str, filename: str) -> ModuleType:
     return module
 
 
-candidate = load_script(
-    "check_codemagic_release_candidate",
-    "check-codemagic-release-candidate.py",
-)
-collector = load_script("collect_codemagic_release", "collect-codemagic-release.py")
-sdk_installer = load_script("install_flutter_sdk", "install_flutter_sdk.py")
+release_candidate = load_script("release_candidate", "release_candidate.py")
+github_candidate = load_script("find_github_candidate", "find_github_candidate.py")
+ios_candidate = load_script("prepare_ios_candidate", "prepare_ios_candidate.py")
+testflight = load_script("publish_testflight_release", "publish-testflight-release.py")
 
 
-class ReleaseCandidateTests(unittest.TestCase):
-    def test_reuses_successful_exact_build(self) -> None:
-        builds = [
-            {"_id": "a" * 24, "status": "building", "buildActions": []},
-            {
-                "_id": "b" * 24,
-                "status": "finished",
-                "buildActions": [{"status": "success"}],
-            },
-        ]
-        with mock.patch.object(candidate, "matching_builds", return_value=builds):
+class ReleaseCandidateManifestTests(unittest.TestCase):
+    def test_manifest_binds_every_expected_artifact(self) -> None:
+        version = "1.2.3"
+        sha = "a" * 40
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = pathlib.Path(temporary)
+            names = release_candidate.expected_names(version)
+            for name in names:
+                if not name.endswith(".sha256"):
+                    (directory / name).write_bytes(name.encode())
+            for name in names:
+                if name.endswith(".sha256"):
+                    payload = directory / name.removesuffix(".sha256")
+                    digest = release_candidate.sha256(payload)
+                    (directory / name).write_text(f"{digest}  {payload.name}\n")
+            with mock.patch.object(
+                release_candidate, "source_version", return_value=version
+            ):
+                release_candidate.create(directory, directory, sha)
+                release_candidate.verify(directory, directory, sha)
+            manifest = directory / "release-candidate.json"
+            self.assertTrue(manifest.is_file())
+
+
+class GithubCandidateTests(unittest.TestCase):
+    def test_resolves_one_exact_successful_run_and_artifact(self) -> None:
+        sha = "a" * 40
+        repository = "adonm/zuko"
+        run = {
+            "id": 123,
+            "conclusion": "success",
+            "event": "push",
+            "head_branch": "main",
+            "head_repository": {"full_name": repository},
+            "head_sha": sha,
+            "path": ".github/workflows/build.yml",
+            "status": "completed",
+        }
+        artifact = {
+            "id": 456,
+            "name": f"zuko-release-candidate-{sha}",
+            "expired": False,
+            "digest": "sha256:" + "b" * 64,
+        }
+        with mock.patch.object(
+            github_candidate,
+            "request_json",
+            side_effect=[{"workflow_runs": [run]}, {"artifacts": [artifact]}],
+        ):
             self.assertEqual(
-                candidate.reusable_build("token", "flutter-windows-ci", "c" * 40),
+                github_candidate.resolve("token", repository, sha),
+                (123, 456, artifact["name"]),
+            )
+
+
+class IosCandidateTests(unittest.TestCase):
+    def test_trigger_uses_exact_temporary_branch(self) -> None:
+        tag = "v1.2.3"
+        sha = "a" * 40
+        branch = f"release-candidate/{tag}-{sha[:12]}"
+        with mock.patch.object(
+            ios_candidate, "request", return_value={"buildId": "b" * 24}
+        ) as request:
+            self.assertEqual(
+                ios_candidate.trigger("token", tag, sha, branch), "b" * 24
+            )
+        payload = request.call_args.args[3]
+        self.assertEqual(payload["branch"], branch)
+        self.assertEqual(
+            payload["environment"]["variables"]["RELEASE_CANDIDATE_SHA"], sha
+        )
+
+    def test_accepts_one_direct_ipa_artifact(self) -> None:
+        tag = "v1.2.3"
+        sha = "a" * 40
+        branch = f"release-candidate/{tag}-{sha[:12]}"
+        build = {
+            "_id": "b" * 24,
+            "fileWorkflowId": ios_candidate.WORKFLOW,
+            "branch": branch,
+            "tag": None,
+            "commit": {"hash": sha},
+            "status": "finished",
+            "buildActions": [{"status": "success"}],
+            "artefacts": [
+                {
+                    "name": "Zuko-Flutter.ipa",
+                    "type": "ipa",
+                    "url": "https://example.invalid/Zuko-Flutter.ipa",
+                },
+                {
+                    "name": "zuko_artifacts.zip",
+                    "type": "bundle",
+                    "url": "https://example.invalid/zuko_artifacts.zip",
+                },
+            ],
+        }
+        with mock.patch.object(
+            ios_candidate, "request", return_value={"build": build}
+        ):
+            self.assertEqual(
+                ios_candidate.wait_for_build(
+                    "token", "b" * 24, tag, sha, branch
+                ),
+                build,
+            )
+
+    def test_testflight_reuses_signed_branch_candidate(self) -> None:
+        tag = "v1.2.3"
+        sha = "a" * 40
+        build = {
+            "_id": "b" * 24,
+            "fileWorkflowId": testflight.VALIDATION_WORKFLOW,
+            "branch": f"release-candidate/{tag}-{sha[:12]}",
+            "tag": None,
+            "commit": {"hash": sha},
+            "status": "finished",
+            "buildActions": [{"status": "success"}],
+            "finishedAt": "2026-01-01T00:00:00Z",
+        }
+        with mock.patch.object(
+            testflight,
+            "request",
+            return_value={"builds": [build], "nextPageUrl": None},
+        ):
+            self.assertEqual(
+                testflight.reusable_build(
+                    "token", testflight.VALIDATION_WORKFLOW, tag, sha
+                ),
                 ("b" * 24, True),
             )
-
-    def test_retriggers_after_failed_build(self) -> None:
-        builds = [
-            {
-                "_id": "a" * 24,
-                "status": "failed",
-                "buildActions": [{"status": "failed"}],
-            }
-        ]
-        with mock.patch.object(candidate, "matching_builds", return_value=builds):
-            self.assertIsNone(
-                candidate.reusable_build("token", "flutter-windows-ci", "c" * 40)
-            )
-
-    def test_trigger_targets_main(self) -> None:
-        with mock.patch.object(
-            candidate, "request", return_value={"buildId": "a" * 24}
-        ) as request:
-            candidate.trigger("token", "flutter-windows-ci")
-        self.assertEqual(
-            request.call_args.args[3],
-            {
-                "appId": candidate.APP_ID,
-                "workflowId": "flutter-windows-ci",
-                "branch": "main",
-            },
-        )
-
-
-class ArtifactCollectorTests(unittest.TestCase):
-    def test_reuses_successful_exact_release_build(self) -> None:
-        builds = [
-            {
-                "_id": "a" * 24,
-                "status": "finished",
-                "buildActions": [{"status": "success"}],
-            }
-        ]
-        with mock.patch.object(collector, "matching_builds", return_value=builds):
-            self.assertEqual(
-                collector.reusable_build(
-                    "token", "flutter-windows-release", "v1.2.3", "c" * 40
-                ),
-                ("a" * 24, True),
-            )
-
-    def test_does_not_reuse_unsuccessful_actions(self) -> None:
-        builds = [
-            {
-                "_id": "a" * 24,
-                "status": "finished",
-                "buildActions": [{"status": "failed"}],
-            }
-        ]
-        with mock.patch.object(collector, "matching_builds", return_value=builds):
-            self.assertIsNone(
-                collector.reusable_build(
-                    "token", "flutter-windows-release", "v1.2.3", "c" * 40
-                )
-            )
-
-
-class FlutterSdkInstallerTests(unittest.TestCase):
-    def test_precaches_each_hosts_supported_platforms(self) -> None:
-        expected_flags = {
-            "linux": ("--android", "--linux", "--web"),
-            "macos": ("--ios", "--macos"),
-            "windows": ("--windows",),
-        }
-        version = json.dumps(
-            {
-                "frameworkVersion": sdk_installer.FLUTTER_FRAMEWORK_VERSION,
-                "frameworkRevision": sdk_installer.FLUTTER_SDK_REVISION,
-                "engineRevision": sdk_installer.FLUTTER_ENGINE_REVISION,
-                "dartSdkVersion": sdk_installer.DART_SDK_VERSION,
-            }
-        )
-        for host, flags in expected_flags.items():
-            with self.subTest(host=host), tempfile.TemporaryDirectory() as temporary:
-                sdk = pathlib.Path(temporary)
-                stamp = sdk / "bin/cache/engine.stamp"
-                stamp.parent.mkdir(parents=True)
-                stamp.write_text(sdk_installer.PRECACHE_ENGINE_CONTENT_HASH)
-                calls: list[tuple[str, ...]] = []
-
-                def fake_run(*args: str, **kwargs: object) -> str:
-                    calls.append(args)
-                    environment = kwargs.get("environment")
-                    self.assertIsInstance(environment, dict)
-                    self.assertEqual(
-                        environment.get("FLUTTER_PREBUILT_ENGINE_VERSION"),
-                        sdk_installer.PRECACHE_ENGINE_CONTENT_HASH,
-                    )
-                    return version if "--version" in args else ""
-
-                with mock.patch.object(sdk_installer, "run", side_effect=fake_run):
-                    sdk_installer.prepare_sdk(sdk, host)
-
-                precache = next(call for call in calls if "precache" in call)
-                self.assertEqual(precache[-len(flags) :], flags)
 
 
 if __name__ == "__main__":

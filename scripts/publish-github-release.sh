@@ -10,6 +10,11 @@ fi
 tag="$1"
 
 expected_assets=(
+  "Zuko-Flutter-ios-simulator.zip"
+  "Zuko-Flutter-ios-simulator.zip.sha256"
+  "Zuko-Flutter-macOS.zip"
+  "Zuko-Flutter-macOS.zip.sha256"
+  "release-candidate.json"
   "zuko-aarch64-apple-darwin.tar.gz"
   "zuko-aarch64-apple-darwin.tar.gz.sha256"
   "zuko-aarch64-unknown-linux-gnu.tar.gz"

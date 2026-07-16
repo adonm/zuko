@@ -28,40 +28,81 @@ jobs:
         uses: jdx/mise-action@e6a8b3978addb5a52f2b4cd9d91eafa7f0ab959d # v4.2.0
         with:
           cache: true
-
+          install_args: rust just lychee actionlint
 
       - name: Clippy + tests
         run: mise exec -- just test
 
       - name: End-to-end (connect, pairing, revocation)
         if: ${{ matrix.os == 'ubuntu-latest' }}
-        # Runs the #[ignore] e2e integration test in tests/e2e.rs: spawns
-        # `zuko host`, drives `zuko connect` under a PTY, exercises
-        # `zuko share`/`zuko claim`, then proves a revoked client gets one fatal
-        # authorization error rather than a reconnect loop. Needs access to
-        # Iroh's public relays.
         run: mise exec -- just test-e2e
 
       - name: Lint markdown links
         if: ${{ matrix.os == 'ubuntu-latest' }}
-        # lychee checks every link in all repo markdown (config in
-        # .lychee.toml). GITHUB_TOKEN lifts GitHub rate limits so CI is
-        # stable. Runs only on the ubuntu leg to avoid duplicating on macos.
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: mise exec -- just lint-md
 
       - name: Lint GitHub Actions workflows
         if: ${{ matrix.os == 'ubuntu-latest' }}
-        # actionlint validates workflow syntax, action versions/SHAs,
-        # permissions, expression contexts. Ubuntu leg only.
         run: mise exec -- just lint-ci
 
+  cli:
+    name: CLI candidate ${{ matrix.target }}
+    if: ${{ github.event_name != 'pull_request' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { runner: ubuntu-latest, target: x86_64-unknown-linux-gnu, cross: false }
+          - { runner: ubuntu-latest, target: aarch64-unknown-linux-gnu, cross: true }
+          - { runner: macos-latest, target: x86_64-apple-darwin, cross: false }
+          - { runner: macos-latest, target: aarch64-apple-darwin, cross: false }
+    runs-on: ${{ matrix.runner }}
+    env:
+      ZUKO_TARGET: ${{ matrix.target }}
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - uses: jdx/mise-action@e6a8b3978addb5a52f2b4cd9d91eafa7f0ab959d # v4.2.0
+        with:
+          cache: true
+          install_args: rust just
+
+      - name: Install cross toolchain
+        if: ${{ matrix.cross }}
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends gcc-aarch64-linux-gnu
+          echo "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc" >> "$GITHUB_ENV"
+
+      - name: Select Xcode 26.3
+        if: ${{ endsWith(matrix.target, '-apple-darwin') }}
+        run: mise exec -- just select-xcode
+
+      - name: Build and package CLI candidate
+        run: |
+          mise exec -- just build-cli-release "$ZUKO_TARGET"
+          if test "$ZUKO_TARGET" = x86_64-unknown-linux-gnu; then
+            mise exec -- just bundle-cage
+          fi
+          mise exec -- just package-cli-release "$ZUKO_TARGET"
+
+      - name: Upload CLI candidate
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: zuko-candidate-cli-${{ matrix.target }}-${{ github.sha }}
+          path: |
+            zuko-${{ matrix.target }}.tar.gz
+            zuko-${{ matrix.target }}.tar.gz.sha256
+          if-no-files-found: error
+          retention-days: 30
+          compression-level: 0
+
   flutter-linux:
-    name: Flutter Linux GTK4 release
+    name: Flutter Linux GTK4 candidate
     runs-on: ubuntu-24.04
     timeout-minutes: 60
-
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
 
@@ -69,61 +110,38 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            build-essential \
-            cage \
-            clang \
-            cmake \
-            curl \
-            libegl-dev \
-            libgl-dev \
-            libgtk-4-dev \
-            libsecret-1-dev \
-            mesa-vulkan-drivers \
-            ninja-build \
-            pkg-config
+            build-essential cage clang cmake libegl-dev libgl-dev libgtk-4-dev \
+            libsecret-1-dev mesa-vulkan-drivers ninja-build pkg-config
 
-      - name: Install pinned native toolchains
+      - name: Install pinned tools and Flutter SDK
         uses: jdx/mise-action@e6a8b3978addb5a52f2b4cd9d91eafa7f0ab959d # v4.2.0
         with:
           cache: true
-          install_args: rust zig
+          install_args: rust zig just http:flutter
 
-      - name: Trust reviewed tool configuration
-        run: mise trust --yes "$GITHUB_WORKSPACE/mise.toml"
-
-      - name: Install pinned Flutter GTK4 SDK
-        run: |
-          sdk="$RUNNER_TEMP/flutter-gtk4-sdk"
-          python3 scripts/install_flutter_sdk.py "$sdk"
-          printf '%s\n' "$sdk/bin" >> "$GITHUB_PATH"
+      - name: Analyze and test shared Flutter client
+        run: mise exec -- just flutter-ci-check
 
       - name: Build GTK4 release bundle
         run: |
-          flutter pub get --directory flutter --enforce-lockfile
-          python3 scripts/patch-flutter-plugins.py flutter
           for attempt in 1 2; do
-            if (cd flutter && flutter build linux --release --no-pub --verbose); then
-              break
-            fi
-            if test "$attempt" -eq 2; then
-              exit 1
-            fi
+            if mise exec -- just build-flutter-linux; then break; fi
+            if test "$attempt" -eq 2; then exit 1; fi
             echo 'Native-assets build failed; retrying once with its populated cache' >&2
           done
 
       - name: Package deterministic GTK4 archive
+        env:
+          SHA: ${{ github.sha }}
         run: |
           tag="v$(scripts/version.sh)"
-          sha=$(git rev-parse HEAD)
-          SOURCE_DATE_EPOCH=$(git show -s --format=%ct "$sha") \
-            bash scripts/package-linux-release.sh "$tag" "$sha"
+          SOURCE_DATE_EPOCH=$(git show -s --format=%ct "$SHA") \
+            mise exec -- just package-linux-release "$tag" "$SHA"
           archive="dist/linux/zuko-linux-$tag-x86_64.tar.gz"
-          first="$RUNNER_TEMP/$(basename "$archive").first"
-          cp "$archive" "$first"
-          SOURCE_DATE_EPOCH=$(git show -s --format=%ct "$sha") \
-            bash scripts/package-linux-release.sh "$tag" "$sha"
-          cmp "$first" "$archive"
-          rm "$first"
+          cp "$archive" "$RUNNER_TEMP/$(basename "$archive")"
+          SOURCE_DATE_EPOCH=$(git show -s --format=%ct "$SHA") \
+            mise exec -- just package-linux-release "$tag" "$SHA"
+          cmp "$RUNNER_TEMP/$(basename "$archive")" "$archive"
 
       - name: Smoke extracted archive with Impeller
         run: |
@@ -142,12 +160,152 @@ jobs:
           grep -Eq 'Using the Impeller rendering backend \((Vulkan|OpenGLES|VulkanSDF|OpenGLESSDF)\)\.' \
             gtk4-release-smoke.log
 
-      - name: Upload GTK4 release archive
+      - name: Upload Linux candidate
+        if: ${{ github.event_name != 'pull_request' }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: zuko-flutter-linux-gtk4
-          path: |
-            dist/linux/*.tar.gz
-            dist/linux/*.tar.gz.sha256
+          name: zuko-candidate-flutter-linux-${{ github.sha }}
+          path: dist/linux/*
           if-no-files-found: error
           retention-days: 30
+          compression-level: 0
+
+  flutter-android-web:
+    name: Flutter Android and web candidate
+    runs-on: ubuntu-24.04
+    timeout-minutes: 75
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - uses: actions/setup-java@0f481fcb613427c0f801b606911222b5b6f3083a # v5.5.0
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: android-actions/setup-android@40fd30fb8d7440372e1316f5d1809ec01dcd3699 # v4.0.1
+        with:
+          packages: >-
+            platforms;android-34
+            platforms;android-35
+            platforms;android-36
+            build-tools;36.0.0
+            cmake;3.22.1
+            ndk;29.0.14206865
+
+      - name: Install pinned tools and Flutter SDK
+        uses: jdx/mise-action@e6a8b3978addb5a52f2b4cd9d91eafa7f0ab959d # v4.2.0
+        with:
+          cache: true
+          install_args: rust zig just http:flutter
+
+      - name: Install pinned Android platform tools
+        run: scripts/install-android-platform-tools.sh "$ANDROID_SDK_ROOT"
+
+      - name: Build web and unsigned Android release packages
+        run: |
+          export ANDROID_HOME="${ANDROID_HOME:-$ANDROID_SDK_ROOT}"
+          mise exec -- just build-web
+          mise exec -- just build-flutter-android
+          mise exec -- just package-android-unsigned "v$(scripts/version.sh)"
+
+      - name: Upload Android candidate
+        if: ${{ github.event_name != 'pull_request' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: zuko-candidate-flutter-android-${{ github.sha }}
+          path: dist/android/*
+          if-no-files-found: error
+          retention-days: 30
+          compression-level: 0
+
+  flutter-windows:
+    name: Flutter Windows candidate
+    runs-on: windows-2025
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - name: Enable long paths
+        run: git config --global core.longpaths true
+
+      - name: Install pinned tools and Flutter SDK
+        uses: jdx/mise-action@e6a8b3978addb5a52f2b4cd9d91eafa7f0ab959d # v4.2.0
+        with:
+          cache: true
+          install_args: rust zig just http:flutter
+
+      - name: Build and package Windows candidate
+        shell: pwsh
+        run: |
+          $version = (& bash scripts/version.sh).Trim()
+          $tag = "v$version"
+          mise exec -- just --shell pwsh --shell-arg=-NoProfile --shell-arg=-Command build-flutter-windows-release $tag
+
+      - name: Upload Windows candidate
+        if: ${{ github.event_name != 'pull_request' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: zuko-candidate-flutter-windows-${{ github.sha }}
+          path: dist/windows/*
+          if-no-files-found: error
+          retention-days: 30
+          compression-level: 0
+
+  flutter-apple:
+    name: Flutter Apple candidate
+    runs-on: macos-15
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - name: Install pinned tools and Flutter SDK
+        uses: jdx/mise-action@e6a8b3978addb5a52f2b4cd9d91eafa7f0ab959d # v4.2.0
+        with:
+          cache: true
+          install_args: rust zig just http:flutter
+
+      - name: Select Xcode 26.3
+        run: mise exec -- just select-xcode
+
+      - name: Build and package Apple development clients
+        run: |
+          mise exec -- just build-apple-development
+          mise exec -- just package-apple-development
+
+      - name: Upload Apple candidate
+        if: ${{ github.event_name != 'pull_request' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: zuko-candidate-flutter-apple-${{ github.sha }}
+          path: flutter/build/apple-artifacts/*
+          if-no-files-found: error
+          retention-days: 30
+          compression-level: 0
+
+  candidate:
+    name: Assemble build-once release candidate
+    if: ${{ github.event_name != 'pull_request' }}
+    needs: [test, cli, flutter-linux, flutter-android-web, flutter-windows, flutter-apple]
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - name: Download candidate components
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: zuko-candidate-*-${{ github.sha }}
+          path: candidate
+          merge-multiple: true
+
+      - name: Create exact-byte candidate manifest
+        run: python3 scripts/release_candidate.py create "$GITHUB_SHA" candidate
+
+      - name: Upload complete release candidate
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: zuko-release-candidate-${{ github.sha }}
+          path: candidate/*
+          if-no-files-found: error
+          retention-days: 30
+          compression-level: 0

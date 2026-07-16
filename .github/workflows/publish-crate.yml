@@ -1,6 +1,7 @@
 name: publish crate
 
 on:
+  workflow_dispatch:
   push:
     tags:
       - 'v*'
@@ -27,6 +28,7 @@ jobs:
         uses: jdx/mise-action@e6a8b3978addb5a52f2b4cd9d91eafa7f0ab959d # v4.2.0
         with:
           cache: true
+          install_args: rust just
 
       - name: Resolve crate version and source
         id: identity
@@ -54,6 +56,7 @@ jobs:
         uses: jdx/mise-action@e6a8b3978addb5a52f2b4cd9d91eafa7f0ab959d # v4.2.0
         with:
           cache: true
+          install_args: rust just
 
       - name: Check registry version status
         id: version

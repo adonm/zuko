@@ -10,15 +10,15 @@ On x86_64 Linux, use the repository's rootless Podman recipes for every build
 that does not require Apple or Windows host APIs. Install Podman and
 [mise](https://mise.jdx.dev/getting-started.html) on the host first; an
 activated mise shell supplies `just`, or use the explicit
-`mise exec -- just ...` form. The image contains the pinned Flutter and Rust
-toolchains, JDK 17, Android platforms/build-tools/NDK/CMake, the Freedesktop
-Linux SDK, the pinned GNOME GTK4 SDK overlay, LLVM, and the web Wasm tools. The source checkout is mounted
+`mise exec -- just ...` form. The Ubuntu 24.04 image contains the same
+checksum-pinned Mise Flutter SDK used by hosted builds, Rust, JDK 17, Android
+platforms/build-tools/NDK/CMake, GTK4, and the web Wasm tools. The source checkout is mounted
 read-only and copied into an ephemeral `/workspace`; only artifact and cache
 directories are mounted back into their normal host paths.
 
 ```sh
 mise install just
-mise exec -- just container-ci  # Codemagic: Dart + web + Android + Linux
+mise exec -- just container-ci  # Dart + web + Android + Linux
 mise exec -- just container-all # preflight + quality + all Linux builds
 ```
 
@@ -45,8 +45,8 @@ Flatpak assembly remains the explicit exception because `flatpak-builder` needs
 additional sandbox privileges.
 
 Linux containers cannot faithfully build Windows, iOS, or macOS runners.
-Those targets remain native Windows/macOS builds in Codemagic and the protected
-release workflows.
+GitHub Actions builds those targets on native Windows and macOS hosts;
+Codemagic is used only for signed iOS candidates and uploads.
 
 ## Host toolchain setup
 
@@ -55,7 +55,7 @@ repository-managed tools, Linux OS packages, and shell activation:
 
 ```sh
 mise bootstrap
-just setup-flutter
+mise install
 just flutter-check
 ```
 
@@ -67,11 +67,12 @@ The shared client pins flterm and libghostty to the same immutable commit of
 the `adonm/libghostty` monorepo. `flutter pub get` resolves both package paths
 from one Git checkout.
 
-Every platform uses the repository-installed Flutter SDK at framework revision
+Every platform installs the immutable `flutter-dev` host archive through
+Mise's `http:flutter` backend at framework revision
 `328b829d35a3a5d7a00e0c2f0e97eb8cc0d97188`, with Dart
 `3.14.0-28.0.dev` and precache content hash `469f2b34de41cab5f677ba84d6e9099c0e682d1e`.
-Linux additionally installs the checksummed GTK4 engine from the matching
-immutable `flutter-dev` release.
+The Linux archive already contains the checksummed GTK4 engine; no build job
+clones, deepens, patches, or precaches Flutter.
 
 ## Android
 
@@ -143,7 +144,7 @@ failures can be symbolized during the active null-exception investigation.
 
 ## Linux desktop
 
-The pinned Freedesktop container is the release-compatible default:
+The pinned Ubuntu 24.04 container is the release-compatible default:
 
 ```sh
 just container-linux-build
@@ -193,8 +194,7 @@ with C++** workload. Confirm `flutter doctor -v` passes. The repository Justfile
 uses Bash, so native Windows CI uses this PowerShell sequence instead:
 
 ```powershell
-mise install rust just
-just setup-flutter
+mise install
 flutter --version
 $rustBin = Join-Path (mise where rust) "bin"
 $env:Path = "$rustBin;$env:Path"
@@ -220,7 +220,7 @@ selected Apple platform. The generated runners target iOS 18 and macOS 15.
 
 ```sh
 mise bootstrap
-just setup-flutter
+mise install
 flutter --version
 just build-flutter-ios
 just build-flutter-macos
@@ -233,26 +233,26 @@ flutter/build/ios/iphonesimulator/Runner.app
 flutter/build/macos/Build/Products/Release/Zuko.app
 ```
 
-Codemagic's `flutter-apple-ci` compiles and packages both targets for relevant
-pull requests and `main` changes. Those development artifacts are not GitHub
-Release assets. For every annotated release tag, GitHub explicitly triggers an
-exact-commit `ios-signing-validation` build and then the artifact-only
-`ios-testflight-release` upload. Maintainers can also run signing validation
-against a branch without publishing. Apple builds use bundle ID
+GitHub's macOS candidate job compiles and packages both targets for pull
+requests and `main`. The successful `main` candidate becomes the GitHub Release
+asset without rebuilding. Before tagging, `prepare-release.yml` creates an
+exact temporary branch and triggers `ios-signing-validation`; after tagging,
+`ios-testflight-release` uploads that retained IPA. Apple builds use bundle ID
 `dev.adonm.zuko` and all signing credentials remain in Codemagic.
 
 ## Matching CI
 
 The source of truth for build environments is:
 
-- `codemagic.yaml` for Flutter tests and platform builds on Linux, Windows,
-  Android, and Apple runners;
-- `.github/workflows/release.yml` for exact-tag Codemagic orchestration,
-  artifact verification, and the coordinated GitHub Release;
+- `.github/workflows/build.yml` for native platform checks and the aggregate
+  build-once candidate;
+- `codemagic.yaml` for signed iOS and upload-only mobile publication;
+- `.github/workflows/prepare-release.yml` and `release.yml` for protected
+  tagging, artifact verification, and coordinated publication;
 - `Justfile` for supported local recipes.
 
-`just container-ci` invokes the same `flutter-linux-ci` recipe as Codemagic's
-Linux compile gate. It covers every target that can be built faithfully on a
+`just container-ci` invokes the same `flutter-linux-ci` recipe as GitHub's
+Linux jobs. It covers every target that can be built faithfully on a
 Linux host: shared Dart, web, Android, and Linux desktop. `just container-all`
 adds the exhaustive local preflight, workflow lint, and documentation build
 without rerunning the lean app tests. Network-dependent link and end-to-end
@@ -264,12 +264,12 @@ Current automation coverage is:
 
 | Target | Pull request / `main` build | Release-tag delivery |
 |--------|-----------------------------|----------------------|
-| Shared Dart + web | Codemagic analyze, unit/widget tests, relay-only web build | Pages deploys after `main`; no release asset |
-| Android | Codemagic ARM64 debug APK | Codemagic unsigned APK/AAB signed, verified, and published by GitHub; the signed APK is then sent to Appetize |
-| Linux | Codemagic x86_64 release bundle | Checksummed x86_64 bundle archive published by GitHub and consumed by FlatPark |
-| Windows | Codemagic x86_64 release bundle | Codemagic x86_64 ZIP verified and published by GitHub |
-| iOS/iPadOS | debug ARM64 Simulator app | signed IPA to internal TestFlight; matching-tag Simulator build to Appetize |
-| macOS | release application bundle | no automatic release asset; protected store package workflow is manual |
+| Shared Dart + web | GitHub analyze, tests, and relay-only web build | Pages deploys after `main`; no release asset |
+| Android | GitHub unsigned APK/AAB candidate | Same candidate signed once, published, and promoted to Appetize/Google Play |
+| Linux | GitHub GTK4 release bundle and smoke | Same checksummed archive consumed by FlatPark |
+| Windows | GitHub x86_64 portable candidate | Same ZIP published; protected Store package remains manual |
+| iOS/iPadOS | GitHub Simulator candidate | Same Simulator ZIP to Appetize; pre-tag signed IPA to TestFlight |
+| macOS | GitHub release application candidate | Same development ZIP published; Mac App Store is not automated |
 
 Compilation in this matrix does not imply store publication or the
 physical-device/browser coverage listed in [Flutter platform support](platform-support.md)

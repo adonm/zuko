@@ -1,6 +1,6 @@
 workflows:
   ios-signing-validation:
-    name: iOS signing validation
+    name: Signed iOS release candidate
     instance_type: mac_mini_m2
     max_build_duration: 120
     integrations:
@@ -12,8 +12,6 @@ workflows:
         distribution_type: app_store
         bundle_identifier: dev.adonm.zuko
       vars:
-        CM_CLONE_UNSHALLOW: true
-        CM_RECURSIVE_SUBMODULE_INIT: true
         MISE_LOG_LEVEL: info
         MISE_TRUSTED_CONFIG_PATHS: $CM_BUILD_DIR
         MISE_YES: 1
@@ -24,6 +22,26 @@ workflows:
         - $HOME/.local/share/mise
         - $HOME/.pub-cache
     scripts:
+      - name: Verify exact candidate identity
+        script: |
+          set -euo pipefail
+          [[ "${RELEASE_CANDIDATE_TAG:-}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          [[ "${RELEASE_CANDIDATE_SHA:-}" =~ ^[0-9a-f]{40}$ ]]
+          expected_branch="release-candidate/$RELEASE_CANDIDATE_TAG-${RELEASE_CANDIDATE_SHA:0:12}"
+          test "${RELEASE_CANDIDATE_BRANCH:-}" = "$expected_branch"
+          test "${CM_BRANCH:-}" = "$expected_branch"
+          test -z "${CM_TAG:-}"
+          test "$CM_COMMIT" = "$RELEASE_CANDIDATE_SHA"
+          test "$(git rev-parse HEAD)" = "$RELEASE_CANDIDATE_SHA"
+          scripts/release-context.sh
+          test "$RELEASE_CANDIDATE_TAG" = "v$ZUKO_VERSION"
+          if [ -n "${IOS_BUILD_NUMBER_OVERRIDE:-}" ]; then
+            [[ "$IOS_BUILD_NUMBER_OVERRIDE" =~ ^[0-9]+$ ]]
+            test "$IOS_BUILD_NUMBER_OVERRIDE" -gt "$ZUKO_BUILD_NUMBER"
+            test "$IOS_BUILD_NUMBER_OVERRIDE" -le 2100000000
+            echo "ZUKO_BUILD_NUMBER=$IOS_BUILD_NUMBER_OVERRIDE" >> "$CM_ENV"
+          fi
+
       - &install_toolchain
         name: Install pinned repository toolchain
         script: scripts/install-mise-codemagic.sh
@@ -37,33 +55,13 @@ workflows:
           "$RUNNER_TEMP/zuko-codemagic-cli/bin/codemagic-cli-tools" --version
           echo "RUNNER_TEMP=$RUNNER_TEMP" >> "$CM_ENV"
 
-      - name: Resolve validation metadata
-        script: |
-          $HOME/.local/bin/mise exec -- just build-context
-          if [ -n "${IOS_BUILD_NUMBER_OVERRIDE:-}" ]; then
-            [[ "$IOS_BUILD_NUMBER_OVERRIDE" =~ ^[0-9]+$ ]]
-            version="$(scripts/version.sh)"
-            IFS=. read -r major minor patch <<< "$version"
-            base_build=$((1800000000 + major * 1000000 + minor * 1000 + patch))
-            test "$IOS_BUILD_NUMBER_OVERRIDE" -gt "$base_build"
-            test "$IOS_BUILD_NUMBER_OVERRIDE" -le 2100000000
-            echo "ZUKO_BUILD_NUMBER=$IOS_BUILD_NUMBER_OVERRIDE" >> "$CM_ENV"
-          fi
-
-      - &select_xcode
-        name: Verify Xcode 26.3
+      - name: Verify Xcode 26.3
         script: $HOME/.local/bin/mise exec -- just select-xcode
 
-      - &flutter_check
-        name: Analyze and test shared client
-        script: $HOME/.local/bin/mise exec -- just flutter-ci-check
-
-      - &prepare_ghostty
-        name: Prepare App Store-compatible Ghostty library
+      - name: Prepare App Store-compatible Ghostty library
         script: $HOME/.local/bin/mise exec -- just prepare-ios-ghostty
 
-      - &configure_signing
-        name: Configure App Store signing
+      - name: Configure App Store signing
         script: |
           export RUNNER_TEMP="$CM_BUILD_DIR/.tmp/codemagic"
           mkdir -p "$RUNNER_TEMP"
@@ -79,12 +77,10 @@ workflows:
             echo "APPLE_EXPORT_OPTIONS=$APPLE_EXPORT_OPTIONS"
           } >> "$CM_ENV"
 
-      - &build_ipa
-        name: Build signed Flutter IPA
+      - name: Build signed Flutter IPA
         script: $HOME/.local/bin/mise exec -- just build-ios-store
 
-      - &package_ipa
-        name: Validate and package signed IPA
+      - name: Validate and package signed IPA
         script: $HOME/.local/bin/mise exec -- just package-ios-store
 
     artifacts: &ios_artifacts
@@ -95,7 +91,7 @@ workflows:
       - $HOME/Library/Logs/DiagnosticReports/*
 
   ios-testflight-release:
-    name: iOS TestFlight release
+    name: Upload validated IPA to TestFlight
     instance_type: mac_mini_m2
     max_build_duration: 30
     integrations:
@@ -136,7 +132,6 @@ workflows:
           artifact_url="$(sed -n 's/^artifact_url=//p' <<< "$selection")"
           test "$source_build_id" = "$IOS_VALIDATION_BUILD_ID"
           test -n "$artifact_url"
-          echo "Recovering signed IPA from validation build $source_build_id"
           curl --fail --silent --show-error --location \
             --header "x-auth-token: $CODEMAGIC_API_TOKEN" \
             "$artifact_url" \
@@ -153,190 +148,28 @@ workflows:
             "$CM_BUILD_DIR/dist/flutter-ios/Zuko-Flutter.ipa" \
             "$ZUKO_VERSION" "$ZUKO_BUILD_NUMBER"
 
-    artifacts:
-      - dist/flutter-ios/Zuko-Flutter.ipa
-      - dist/flutter-ios/Zuko-Flutter.ipa.sha256
-      - /tmp/xcodebuild_logs/*.log
-      - $HOME/Library/Logs/DiagnosticReports/*
-    publishing:
-      app_store_connect:
-        auth: integration
-        # Upload for TestFlight processing. Beta-review submission remains a
-        # deliberate App Store Connect operation.
-        submit_to_testflight: false
-
-  ios-testflight-artifact-recovery:
-    name: iOS TestFlight artifact recovery
-    instance_type: mac_mini_m2
-    max_build_duration: 30
-    integrations:
-      app_store_connect: zuko-app-store
-    environment:
-      groups:
-        - codemagic_api
-      xcode: 26.3
-      vars:
-        CM_CLONE_UNSHALLOW: true
-        TEAM_ID: R8PN382RC4
-    scripts:
-      - name: Verify recovery identity
-        script: |
-          [[ "${RECOVERY_TAG:-}" =~ ^v([0-9]+)\.([0-9]+)\.([0-9]+)$ ]]
-          [[ "${RECOVERY_BUILD_ID:-}" =~ ^[0-9a-f]{24}$ ]]
-          [[ "${RECOVERY_IPA_SHA256:-}" =~ ^[0-9a-f]{64}$ ]]
-          [[ "${RECOVERY_SOURCE_COMMIT:-}" =~ ^[0-9a-f]{40}$ ]]
-          git fetch --force origin "refs/tags/$RECOVERY_TAG:refs/tags/$RECOVERY_TAG"
-          test "$(git cat-file -t "$RECOVERY_TAG")" = tag
-          test "$CM_COMMIT" = "$RECOVERY_SOURCE_COMMIT"
-          git merge-base --is-ancestor \
-            "$(git rev-parse "$RECOVERY_TAG^{commit}")" \
-            "$RECOVERY_SOURCE_COMMIT"
-          version="${RECOVERY_TAG#v}"
-          IFS=. read -r major minor patch <<< "$version"
-          release_build=$((1800000000 + major * 1000000 + minor * 1000 + patch))
-          [[ "${RECOVERY_BUILD_NUMBER:-}" =~ ^[0-9]+$ ]]
-          test "$RECOVERY_BUILD_NUMBER" -ge "$release_build"
-          test "$RECOVERY_BUILD_NUMBER" -le 2100000000
-          {
-            echo "RECOVERY_COMMIT=$RECOVERY_SOURCE_COMMIT"
-            echo "ZUKO_VERSION=$version"
-            echo "ZUKO_BUILD_NUMBER=$RECOVERY_BUILD_NUMBER"
-          } >> "$CM_ENV"
-
-      - *install_codemagic_cli
-
-      - name: Verify Xcode 26.3
-        script: scripts/select-xcode.sh
-
-      - name: Download verified Codemagic IPA
-        script: |
-          mkdir -p dist/flutter-ios
-          build_json="$RUNNER_TEMP/source-build.json"
-          curl --fail --silent --show-error \
-            --header "x-auth-token: $CODEMAGIC_API_TOKEN" \
-            "https://api.codemagic.io/builds/$RECOVERY_BUILD_ID" \
-            > "$build_json"
-          selection="$(
-            python3 scripts/select-codemagic-ios-artifact.py \
-              "$build_json" "$RECOVERY_COMMIT"
-          )"
-          source_build_id="$(sed -n 's/^source_build_id=//p' <<< "$selection")"
-          artifact_url="$(sed -n 's/^artifact_url=//p' <<< "$selection")"
-          test "$source_build_id" = "$RECOVERY_BUILD_ID"
-          test -n "$artifact_url"
-          curl --fail --silent --show-error --location \
-            --header "x-auth-token: $CODEMAGIC_API_TOKEN" \
-            "$artifact_url" \
-            -o dist/flutter-ios/Zuko-Flutter.ipa
-          actual_sha="$(shasum -a 256 dist/flutter-ios/Zuko-Flutter.ipa | awk '{print $1}')"
-          test "$actual_sha" = "$RECOVERY_IPA_SHA256"
-          printf '%s  %s\n' "$actual_sha" Zuko-Flutter.ipa \
-            > dist/flutter-ios/Zuko-Flutter.ipa.sha256
-
-      - name: Revalidate recovered IPA
-        script: |
-          mkdir -p "$RUNNER_TEMP/recovered.xcarchive"
-          scripts/apple-validate-package.sh \
-            "$RUNNER_TEMP/recovered.xcarchive" \
-            "$CM_BUILD_DIR/dist/flutter-ios/Zuko-Flutter.ipa" \
-            "$ZUKO_VERSION" "$ZUKO_BUILD_NUMBER"
-
-    artifacts:
-      - dist/flutter-ios/Zuko-Flutter.ipa
-      - dist/flutter-ios/Zuko-Flutter.ipa.sha256
-      - /tmp/xcodebuild_logs/*.log
-      - $HOME/Library/Logs/DiagnosticReports/*
+    artifacts: *ios_artifacts
     publishing:
       app_store_connect:
         auth: integration
         submit_to_testflight: false
-
-  flutter-apple-ci:
-    name: Flutter Apple compile gate
-    instance_type: mac_mini_m2
-    max_build_duration: 90
-    environment:
-      xcode: 26.3
-      cocoapods: 1.16.2
-      vars:
-        CM_CLONE_UNSHALLOW: true
-        CM_RECURSIVE_SUBMODULE_INIT: true
-        MISE_LOG_LEVEL: info
-        MISE_TRUSTED_CONFIG_PATHS: $CM_BUILD_DIR
-        MISE_YES: 1
-    cache: *ios_cache
-    triggering:
-      events:
-        - push
-        - pull_request
-      branch_patterns:
-        - pattern: main
-          include: true
-          source: false
-      cancel_previous_builds: true
-    when:
-      changeset:
-        includes:
-          - flutter/**
-          - codemagic.yaml
-          - Justfile
-          - mise.toml
-          - scripts/install-mise-codemagic.sh
-          - scripts/install_flutter_sdk.py
-          - scripts/package-apple-development.sh
-          - scripts/patch-flutter-plugins.py
-          - scripts/select-xcode.sh
-    scripts:
-      - *install_toolchain
-      - *select_xcode
-
-      - name: Build iOS Simulator and macOS clients
-        script: $HOME/.local/bin/mise exec -- just build-apple-development
-
-      - name: Package Apple development clients
-        script: $HOME/.local/bin/mise exec -- just package-apple-development
-
-    artifacts:
-      - flutter/build/apple-artifacts/*.zip
-      - /tmp/xcodebuild_logs/*.log
-      - $HOME/Library/Logs/DiagnosticReports/*
 
   mobile-appetize-release:
-    name: Mobile Appetize previews
-    instance_type: mac_mini_m2
-    max_build_duration: 120
+    name: Upload immutable mobile previews
+    instance_type: linux_x2
+    max_build_duration: 30
     environment:
       groups:
         - appetize_credentials
-      xcode: 26.3
-      cocoapods: 1.16.2
       vars:
         CM_CLONE_UNSHALLOW: true
-        CM_RECURSIVE_SUBMODULE_INIT: true
-        MISE_LOG_LEVEL: info
-        MISE_TRUSTED_CONFIG_PATHS: $CM_BUILD_DIR
-        MISE_YES: 1
-    cache: *ios_cache
     scripts:
-      - name: Check out and verify immutable release identity
+      - name: Verify immutable release identity
         script: |
-          if [ -n "${APPETIZE_RELEASE_TAG:-}" ]; then
-            test -z "${CM_TAG:-}"
-            test "${CM_BRANCH:-}" = main
-            [[ "$APPETIZE_RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]
-            [[ "${APPETIZE_RELEASE_SHA:-}" =~ ^[0-9a-f]{40}$ ]]
-            git fetch origin "refs/tags/$APPETIZE_RELEASE_TAG:refs/tags/$APPETIZE_RELEASE_TAG"
-            test "$(git cat-file -t "$APPETIZE_RELEASE_TAG")" = tag
-            test "$(git rev-parse "$APPETIZE_RELEASE_TAG^{commit}")" = "$APPETIZE_RELEASE_SHA"
-            git checkout --detach "$APPETIZE_RELEASE_SHA"
-            release_tag="$APPETIZE_RELEASE_TAG"
-          else
-            test -n "${CM_TAG:-}"
-            test "$(git rev-parse HEAD)" = "$CM_COMMIT"
-            release_tag="$CM_TAG"
-          fi
-          scripts/release-context.sh "$release_tag"
-          echo "APPETIZE_TAG=$release_tag" >> "$CM_ENV"
+          test -n "${CM_TAG:-}"
+          test "$(git rev-parse HEAD)" = "$CM_COMMIT"
+          scripts/release-context.sh "$CM_TAG"
+          echo "APPETIZE_TAG=$CM_TAG" >> "$CM_ENV"
 
       - name: Verify Appetize configuration
         script: |
@@ -344,288 +177,36 @@ workflows:
           [[ "${APPETIZE_ANDROID_PUBLIC_KEY:-}" =~ ^[A-Za-z0-9_-]+$ ]]
           [[ "${APPETIZE_IOS_PUBLIC_KEY:-}" =~ ^[A-Za-z0-9_-]+$ ]]
 
-      - *install_toolchain
-      - *select_xcode
-
-      - name: Download signed Android release package
+      - name: Download exact release previews
         script: |
-          apk="zuko-android-${APPETIZE_TAG}-signed.apk"
+          set -euo pipefail
           base="https://github.com/adonm/zuko/releases/download/$APPETIZE_TAG"
-          mkdir -p dist/android
-          curl --fail --silent --show-error --location \
-            --proto '=https' --tlsv1.2 "$base/$apk" \
-            -o "dist/android/$apk"
-          curl --fail --silent --show-error --location \
-            --proto '=https' --tlsv1.2 "$base/$apk.sha256" \
-            -o "dist/android/$apk.sha256"
-          (cd dist/android && shasum -a 256 --check "$apk.sha256")
+          mkdir -p dist/appetize
+          for asset in \
+            "zuko-android-$APPETIZE_TAG-signed.apk" \
+            "zuko-android-$APPETIZE_TAG-signed.apk.sha256" \
+            Zuko-Flutter-ios-simulator.zip \
+            Zuko-Flutter-ios-simulator.zip.sha256; do
+            curl --fail --silent --show-error --location \
+              --proto '=https' --tlsv1.2 "$base/$asset" \
+              -o "dist/appetize/$asset"
+          done
+          (cd dist/appetize && sha256sum --check \
+            "zuko-android-$APPETIZE_TAG-signed.apk.sha256")
+          (cd dist/appetize && sha256sum --check \
+            Zuko-Flutter-ios-simulator.zip.sha256)
+          unzip -t dist/appetize/Zuko-Flutter-ios-simulator.zip >/dev/null
 
-      - name: Build ARM iOS Simulator package
+      - name: Upload Android preview
         script: |
-          $HOME/.local/bin/mise exec -- just package-ios-preview "${APPETIZE_TAG#v}"
-
-      - name: Upload signed Android APK to Appetize
-        script: |
-          test -n "${APPETIZE_API_TOKEN:-}"
-          test -n "${APPETIZE_ANDROID_PUBLIC_KEY:-}"
-          $HOME/.local/bin/mise exec -- just upload-appetize android \
-            "dist/android/zuko-android-${APPETIZE_TAG}-signed.apk" \
+          scripts/upload-appetize.sh android \
+            "dist/appetize/zuko-android-$APPETIZE_TAG-signed.apk" \
             "$APPETIZE_ANDROID_PUBLIC_KEY" \
-            "Zuko ${APPETIZE_TAG} release"
+            "Zuko $APPETIZE_TAG release"
 
-      - name: Upload iOS Simulator package to Appetize
+      - name: Upload iOS Simulator preview
         script: |
-          test -n "${APPETIZE_API_TOKEN:-}"
-          test -n "${APPETIZE_IOS_PUBLIC_KEY:-}"
-          $HOME/.local/bin/mise exec -- just upload-appetize ios \
-            "dist/ios-preview/Zuko-Flutter-ios-simulator.zip" \
+          scripts/upload-appetize.sh ios \
+            dist/appetize/Zuko-Flutter-ios-simulator.zip \
             "$APPETIZE_IOS_PUBLIC_KEY" \
-            "Zuko ${APPETIZE_TAG} iOS Simulator release"
-
-    artifacts:
-      - dist/android/*
-      - dist/ios-preview/Zuko-Flutter-ios-simulator.zip
-      - /tmp/xcodebuild_logs/*.log
-      - $HOME/Library/Logs/DiagnosticReports/*
-
-  flutter-linux-ci:
-    name: Flutter Linux, Android, and web compile gate
-    instance_type: linux_x2
-    max_build_duration: 120
-    environment:
-      vars:
-        CM_CLONE_UNSHALLOW: true
-        CM_RECURSIVE_SUBMODULE_INIT: true
-        MISE_LOG_LEVEL: info
-        MISE_TRUSTED_CONFIG_PATHS: $CM_BUILD_DIR
-        MISE_YES: 1
-      java: 17
-    cache: *ios_cache
-    triggering:
-      events:
-        - push
-        - pull_request
-      branch_patterns:
-        - pattern: main
-          include: true
-          source: false
-      cancel_previous_builds: true
-    when:
-      changeset:
-        includes:
-          - flutter/**
-          - containers/**
-          - codemagic.yaml
-          - Justfile
-          - mise.toml
-          - scripts/build-web.sh
-          - scripts/prepare-web-plugins.py
-          - scripts/check-dart-format.py
-          - scripts/check-flutter-config.py
-          - scripts/finalize-web-build.py
-          - scripts/install-mise-codemagic.sh
-          - scripts/install_flutter_sdk.py
-          - scripts/install-android-platform-tools.sh
-          - scripts/container-flutter.sh
-          - scripts/patch-flutter-plugins.py
-    scripts:
-      - name: Install Linux desktop dependencies
-        script: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            clang cmake libgtk-4-dev libsecret-1-dev ninja-build pkg-config
-
-      - *install_toolchain
-
-      - name: Ensure pinned Android SDK components
-        script: |
-          export ANDROID_HOME="${ANDROID_HOME:-$ANDROID_SDK_ROOT}"
-          scripts/install-android-platform-tools.sh "$ANDROID_SDK_ROOT"
-          "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager" \
-            'platforms;android-34' \
-            'platforms;android-35' \
-            'platforms;android-36' \
-            'build-tools;36.0.0' \
-            'cmake;3.22.1' \
-            'ndk;29.0.14206865'
-
-      - name: Run Linux-hosted Flutter compile gate
-        script: |
-          set -euo pipefail
-          export ANDROID_HOME="${ANDROID_HOME:-$ANDROID_SDK_ROOT}"
-          $HOME/.local/bin/mise exec -- just flutter-linux-ci
-          tar -czf flutter-linux-x86_64.tar.gz \
-            -C flutter/build/linux-gtk4/x64/release bundle
-
-    artifacts:
-      - flutter/build/app/outputs/flutter-apk/app-debug.apk
-      - flutter-linux-x86_64.tar.gz
-
-  flutter-linux-android-release:
-    name: Flutter Linux and Android release artifacts
-    instance_type: linux_x2
-    max_build_duration: 120
-    environment:
-      vars:
-        CM_CLONE_UNSHALLOW: true
-        CM_RECURSIVE_SUBMODULE_INIT: true
-        MISE_LOG_LEVEL: info
-        MISE_TRUSTED_CONFIG_PATHS: $CM_BUILD_DIR
-        MISE_YES: 1
-      java: 17
-    cache: *ios_cache
-    scripts:
-      - name: Verify immutable release identity
-        script: |
-          test -n "${CM_TAG:-}"
-          test "$(git rev-parse HEAD)" = "$CM_COMMIT"
-          scripts/release-context.sh "$CM_TAG"
-
-      - name: Install Linux desktop dependencies
-        script: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            clang cmake libgtk-4-dev libsecret-1-dev ninja-build pkg-config
-
-      - *install_toolchain
-
-      - name: Ensure pinned Android SDK components
-        script: |
-          export ANDROID_HOME="${ANDROID_HOME:-$ANDROID_SDK_ROOT}"
-          scripts/install-android-platform-tools.sh "$ANDROID_SDK_ROOT"
-          "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager" \
-            'platforms;android-34' \
-            'platforms;android-35' \
-            'platforms;android-36' \
-            'build-tools;36.0.0' \
-            'cmake;3.22.1' \
-            'ndk;29.0.14206865'
-
-      - name: Build unsigned Android packages
-        script: |
-          export ANDROID_HOME="${ANDROID_HOME:-$ANDROID_SDK_ROOT}"
-          $HOME/.local/bin/mise exec -- just build-flutter-android
-          $HOME/.local/bin/mise exec -- just package-codemagic-android-unsigned "$CM_TAG"
-
-      - name: Build and package x86_64 Linux client with pinned GTK4 SDK
-        script: |
-          set -euo pipefail
-          $HOME/.local/bin/mise exec -- bash -c '
-              set -euo pipefail
-              just build-flutter-linux-release "$1"
-              just package-linux-release "$2" "$1"
-              archive="dist/linux/zuko-linux-$2-x86_64.tar.gz"
-              first="$3/$(basename "$archive").first"
-              cp "$archive" "$first"
-              just package-linux-release "$2" "$1"
-              cmp "$first" "$archive"
-            ' _ "$CM_COMMIT" "$CM_TAG" "$CM_BUILD_DIR/.tmp"
-
-      - name: Package Codemagic artifact handoff
-        script: |
-          mkdir -p dist/codemagic
-          zip -j "dist/codemagic/zuko-flutter-linux-android-${CM_TAG}.zip" \
-            dist/android/* \
-            dist/linux/*
-
-    artifacts:
-      - dist/codemagic/zuko-flutter-linux-android-*.zip
-
-  flutter-windows-ci:
-    name: Flutter Windows compile gate
-    instance_type: windows_x2
-    max_build_duration: 90
-    environment:
-      vars:
-        CM_CLONE_UNSHALLOW: true
-        CM_RECURSIVE_SUBMODULE_INIT: true
-        PYTHON: python
-    triggering:
-      events:
-        - push
-        - pull_request
-      branch_patterns:
-        - pattern: main
-          include: true
-          source: false
-      cancel_previous_builds: true
-    when:
-      changeset:
-        includes:
-          - flutter/**
-          - codemagic.yaml
-          - Justfile
-          - mise.toml
-          - scripts/install-mise-codemagic.ps1
-          - scripts/install_flutter_sdk.py
-          - scripts/package-windows-release.ps1
-          - scripts/patch-flutter-plugins.py
-    scripts:
-      - name: Install pinned repository toolchain
-        script: pwsh -NoProfile -File scripts/install-mise-codemagic.ps1
-
-      - name: Build Windows client
-        script: |
-          $ErrorActionPreference = "Stop"
-          $PSNativeCommandUseErrorActionPreference = $true
-          $mise = Join-Path $HOME ".local/bin/mise.exe"
-          & $mise exec -- just --shell pwsh --shell-arg=-NoProfile --shell-arg=-Command build-flutter-windows-release v0.0.0
-
-    artifacts:
-      - dist/windows/*
-
-  flutter-windows-release:
-    name: Flutter Windows release artifacts
-    instance_type: windows_x2
-    max_build_duration: 90
-    environment:
-      vars:
-        CM_CLONE_UNSHALLOW: true
-        CM_RECURSIVE_SUBMODULE_INIT: true
-        PYTHON: python
-    scripts:
-      - name: Install pinned repository toolchain
-        script: pwsh -NoProfile -File scripts/install-mise-codemagic.ps1
-
-      - name: Verify immutable release identity
-        script: |
-          $ErrorActionPreference = "Stop"
-          $PSNativeCommandUseErrorActionPreference = $true
-          if ([string]::IsNullOrWhiteSpace($env:CM_TAG)) {
-            throw "CM_TAG is required"
-          }
-          if ($env:CM_TAG -notmatch '^v[0-9]+\.[0-9]+\.[0-9]+$') {
-            throw "release tag must match vX.Y.Z"
-          }
-          $mise = Join-Path $HOME ".local/bin/mise.exe"
-          $metadata = (& $mise exec -- cargo metadata --no-deps --format-version 1 | ConvertFrom-Json)
-          $version = ($metadata.packages | Where-Object name -eq "zuko").version
-          if ($env:CM_TAG -ne "v$version") {
-            throw "release tag does not match source version"
-          }
-          $pubspecVersion = (Select-String -Path flutter/pubspec.yaml -Pattern '^version:\s*(\S+)$').Matches.Groups[1].Value
-          $parts = $version.Split('.')
-          $expectedBuild = 1800000000 + [int]$parts[0] * 1000000 + [int]$parts[1] * 1000 + [int]$parts[2]
-          if ($pubspecVersion -ne "$version+$expectedBuild") {
-            throw "Flutter version does not match Cargo metadata"
-          }
-          if ((git cat-file -t $env:CM_TAG) -ne "tag") {
-            throw "release tag must be annotated"
-          }
-          $head = (git rev-parse HEAD).Trim()
-          $tagCommit = (git rev-parse "$env:CM_TAG^{commit}").Trim()
-          if ($head -ne $env:CM_COMMIT -or $tagCommit -ne $env:CM_COMMIT) {
-            throw "checkout does not match CM_COMMIT"
-          }
-
-      - name: Build and package Windows client
-        script: |
-          $ErrorActionPreference = "Stop"
-          $PSNativeCommandUseErrorActionPreference = $true
-          $mise = Join-Path $HOME ".local/bin/mise.exe"
-          & $mise exec -- just --shell pwsh --shell-arg=-NoProfile --shell-arg=-Command build-flutter-windows-release $env:CM_TAG
-          New-Item -ItemType Directory -Force dist/codemagic | Out-Null
-          Compress-Archive -Path dist/windows/* -DestinationPath "dist/codemagic/zuko-flutter-windows-$env:CM_TAG-artifacts.zip"
-
-    artifacts:
-      - dist/codemagic/zuko-flutter-windows-*-artifacts.zip
+            "Zuko $APPETIZE_TAG iOS Simulator release"

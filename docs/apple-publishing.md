@@ -1,76 +1,52 @@
 # Apple publishing with Codemagic
 
-Codemagic is the only Apple signing and TestFlight provider. GitHub stores no
-Apple certificates, provisioning profiles, or App Store Connect credentials.
-The repository-root `codemagic.yaml` defines:
+GitHub Actions builds unsigned iOS Simulator and macOS candidates. Codemagic is
+used only where Apple trust material is required; GitHub stores no Apple
+certificate, provisioning profile, or App Store Connect key.
 
-- `flutter-apple-ci`: unsigned iOS Simulator and macOS compile gate;
-- `ios-signing-validation`: signed IPA build without publishing, run manually
-  for ad hoc checks and API-triggered for releases;
-- `ios-testflight-release`: artifact-only signed IPA validation and TestFlight
-  upload, API-triggered after release validation succeeds;
-- `ios-testflight-artifact-recovery`: revalidates and uploads an exact IPA from
-  a successful Codemagic signing-validation build when a rebuild is flaky.
+`codemagic.yaml` defines:
 
-The workflows use Apple Silicon M2 runners, Xcode 26.3, CocoaPods 1.16.2, the
-checksum-pinned mise bootstrap, and the exact Flutter, Rust, Zig, and `just`
-versions in `mise.toml`. Codemagic CLI Tools 0.68.0 are installed from the
-hash-locked `scripts/codemagic-requirements.txt` closure.
+- `ios-signing-validation`: builds and retains one signed IPA from an exact
+  temporary release-candidate branch before the tag exists;
+- `ios-testflight-release`: downloads that retained IPA, revalidates it against
+  the annotated tag, and uploads it without rebuilding.
 
-## One-time Codemagic setup
+Both workflows use M2 runners, Xcode 26.3, CocoaPods 1.16.2, and the same
+checksum-pinned Mise Flutter SDK used by GitHub. Codemagic CLI Tools 0.68.0 come
+from the hash-locked `scripts/codemagic-requirements.txt` closure.
 
-1. Add `adonm/zuko` as a Flutter application with project path `flutter`; keep
-   `codemagic.yaml` at the repository root.
-2. Add the App Store Connect App Manager key under **Team integrations >
-   Developer Portal** with the exact name `zuko-app-store`.
-3. Under **Code signing identities**, add a valid Apple Distribution
-   certificate and matching App Store profile for `dev.adonm.zuko`, team
-   `R8PN382RC4`.
-4. Rescan `main` and run `ios-signing-validation`. The profile must show a
-   matching certificate, and the workflow must produce a validated IPA.
-5. Store a Codemagic API token as secret `CODEMAGIC_API_TOKEN` in the
-   app-scoped `codemagic_api` group. Only TestFlight artifact selection imports
-   it.
+## One-time setup
 
-The signing validation completed successfully in Codemagic build
-`6a52e7354b78f62f917e3ffc`.
+1. Add `adonm/zuko` with `codemagic.yaml` at the repository root.
+2. Add App Store Connect App Manager integration `zuko-app-store`.
+3. Add an Apple Distribution certificate and matching App Store profile for
+   `dev.adonm.zuko`, team `R8PN382RC4`.
+4. Store a Codemagic API token as GitHub secret `CODEMAGIC_API_TOKEN` and in the
+   Codemagic `codemagic_api` group used by artifact recovery.
 
 ## Release behavior
 
-`scripts/release-context.sh` rejects lightweight tags, mismatched versions, and
-checkouts that do not equal the tagged commit. For an accepted annotated tag,
-Codemagic:
+`prepare-release.yml` verifies an exact successful GitHub candidate, pushes a
+temporary branch named `release-candidate/vX.Y.Z-<sha>`, and triggers
+`ios-signing-validation` with that branch, tag, and full commit. Codemagic
+requires its checkout and built-in commit identity to equal the requested
+commit before reading signing material.
 
-1. validates the immutable release identity;
-2. selects the latest successful `ios-signing-validation` IPA built from the
-   exact tagged commit;
-3. downloads that retained Codemagic artifact without rebuilding it;
-4. verifies the bundle ID, version, build, team, signature, profile, ARM64
-   architecture, Ghostty framework, and iOS 18.0 deployment floor;
-5. retains the IPA and SHA-256 sidecar;
-6. uploads the validated IPA through `zuko-app-store` for TestFlight
-   processing.
+After the signed candidate succeeds, GitHub rechecks `origin/main`, pushes the
+annotated tag, and deletes the temporary branch. The tag workflow locates the
+successful candidate by workflow, branch, and commit, then asks
+`ios-testflight-release` to:
 
-GitHub's release workflow triggers `ios-signing-validation` on the exact tag,
-waits for its signed IPA, then triggers the artifact-only
-`ios-testflight-release` workflow. This explicit API handoff does not depend on
-Codemagic's repository tag webhook. The validation workflow remains available
-manually for signing checks before release.
+1. download the exact retained IPA by build ID;
+2. verify bundle ID, version, build, team, signature, profile, ARM64
+   architecture, Ghostty framework, and iOS 18 deployment floor;
+3. retain a SHA-256 sidecar; and
+4. upload through `zuko-app-store` for TestFlight processing.
 
-An upload does not submit the app for review. Tester groups, screenshots,
-privacy declarations, export compliance, pricing, and final review submission
-remain App Store Connect operations.
+Rerunning the GitHub release resumes successful Codemagic builds and uploads;
+it does not rebuild an accepted IPA. A corrected App Store build requires a new
+source version or an explicitly reviewed `IOS_BUILD_NUMBER_OVERRIDE` candidate.
 
-Artifact recovery is API-triggered with `RECOVERY_TAG`, `RECOVERY_BUILD_ID`,
-`RECOVERY_SOURCE_COMMIT`, `RECOVERY_BUILD_NUMBER`, and
-`RECOVERY_IPA_SHA256`. It verifies that the source is an exact successful
-signing-validation build from the specified commit, that the commit contains
-the release tag, and that the checksum, version, build, signature, profile,
-architecture, and deployment floor match before upload. It never rebuilds the
-IPA. For an App Store correction of an existing version, trigger signing
-validation with `IOS_BUILD_NUMBER_OVERRIDE` set to a new build number, then
-recover that exact artifact.
-
-The automated macOS workflow currently provides development compile artifacts,
-not a Mac App Store package. Add a Codemagic-native macOS Store workflow before
-attempting Mac App Store publication; do not restore GitHub signing secrets.
+TestFlight upload does not submit for review. Tester groups, screenshots,
+privacy declarations, export compliance, pricing, and review remain App Store
+Connect operations. Mac App Store packaging is not automated.

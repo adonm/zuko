@@ -5,7 +5,6 @@
 <h1 align="center">zuko</h1>
 
 [![build](https://github.com/adonm/zuko/actions/workflows/build.yml/badge.svg)](https://github.com/adonm/zuko/actions/workflows/build.yml)
-[![flutter](https://api.codemagic.io/apps/6a52dc14add8531e99f88b8a/flutter-linux-ci/status_badge.svg)](https://codemagic.io/app/6a52dc14add8531e99f88b8a)
 [![docs](https://github.com/adonm/zuko/actions/workflows/docs.yml/badge.svg)](https://zuko.adonm.dev/)
 [![release](https://github.com/adonm/zuko/actions/workflows/release.yml/badge.svg)](https://github.com/adonm/zuko/releases/latest)
 [![FlatPark](https://img.shields.io/badge/FlatPark-zuko-4A90D9?logo=flatpak)](https://flatpark.org/apps/dev.adonm.zuko/)
@@ -149,7 +148,6 @@ See [`docs/app.md`](docs/app.md).
 
 ```sh
 mise install
-just setup-flutter
 hk install --mise # local format and full pre-push checks
 just check
 just test-e2e      # live Iroh network + PTY

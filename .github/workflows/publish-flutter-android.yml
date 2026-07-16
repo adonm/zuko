@@ -4,27 +4,21 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: "Immutable release tag to publish (vX.Y.Z)"
+        description: Immutable release tag to publish (vX.Y.Z)
         required: true
         type: string
       track:
-        description: "Google Play track"
+        description: Google Play track
         required: true
         default: internal
         type: choice
-        options:
-          - internal
-          - alpha
-          - beta
-          - production
+        options: [internal, alpha, beta, production]
       publish_mode:
-        description: "Create a draft or release it to the selected track"
+        description: Create a draft or release it to the selected track
         required: true
         default: draft
         type: choice
-        options:
-          - draft
-          - release
+        options: [draft, release]
 
 permissions:
   contents: read
@@ -35,102 +29,38 @@ concurrency:
 
 jobs:
   prepare:
-    name: resolve release version and source
+    name: resolve immutable release
     runs-on: ubuntu-latest
     timeout-minutes: 10
     outputs:
-      tag: ${{ steps.identity.outputs.tag }}
+      asset: ${{ steps.identity.outputs.asset }}
+      package: ${{ steps.identity.outputs.package }}
       sha: ${{ steps.identity.outputs.sha }}
+      tag: ${{ steps.identity.outputs.tag }}
       version: ${{ steps.identity.outputs.version }}
       version_code: ${{ steps.identity.outputs.version_code }}
-      package: ${{ steps.identity.outputs.package }}
-      asset: ${{ steps.identity.outputs.asset }}
     steps:
-      - name: Check out current release source
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           ref: ${{ inputs.tag }}
           fetch-depth: 0
-
-      - uses: jdx/mise-action@e6a8b3978addb5a52f2b4cd9d91eafa7f0ab959d # v4.2.0
-        with:
-          cache: true
 
       - name: Resolve release context
         id: identity
         env:
           TAG: ${{ inputs.tag }}
-        run: mise exec -- just release-context "$TAG"
-
-  package:
-    name: rebuild Android bundle
-    needs: prepare
-    runs-on: ubuntu-latest
-    timeout-minutes: 75
-    steps:
-      - name: Check out release source
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
-        with:
-          ref: ${{ needs.prepare.outputs.sha }}
-          fetch-depth: 0
-
-      - name: Set up repository tools
-        uses: jdx/mise-action@e6a8b3978addb5a52f2b4cd9d91eafa7f0ab959d # v4.2.0
-        with:
-          cache: true
-
-      - name: Set up Java 17
-        uses: actions/setup-java@0f481fcb613427c0f801b606911222b5b6f3083a # v5.5.0
-        with:
-          distribution: temurin
-          java-version: '17'
-
-      - name: Set up Android SDK
-        uses: android-actions/setup-android@40fd30fb8d7440372e1316f5d1809ec01dcd3699 # v4.0.1
-        with:
-          packages: >-
-            platforms;android-34
-            platforms;android-35
-            platforms;android-36
-            build-tools;36.0.0
-            cmake;3.22.1
-            ndk;29.0.14206865
-
-      - name: Install pinned Android platform tools
-        run: scripts/install-android-platform-tools.sh "$ANDROID_SDK_ROOT"
-
-      - name: Natively rebuild unsigned AAB from release tag
-        env:
-          VERSION: ${{ needs.prepare.outputs.version }}
-          VERSION_CODE: ${{ needs.prepare.outputs.version_code }}
-          TAG: ${{ needs.prepare.outputs.tag }}
-        run: mise exec -- just build-flutter-android-store "$TAG" "$VERSION" "$VERSION_CODE"
-
-      - name: Upload package for protected publishing
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: zuko-android-publish-${{ needs.prepare.outputs.tag }}-${{ github.run_id }}
-          path: dist/android/*
-          if-no-files-found: error
-          retention-days: 7
+        run: scripts/release-context.sh "$TAG"
 
   publish:
-    name: publish to Google Play ${{ inputs.track }}
-    needs: [prepare, package]
+    name: publish existing AAB to Google Play ${{ inputs.track }}
+    needs: prepare
     runs-on: ubuntu-latest
     timeout-minutes: 30
     environment: google-play
     steps:
-      - name: Check out release source
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           ref: ${{ needs.prepare.outputs.sha }}
-
-      - name: Download package selected for publishing
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
-        with:
-          name: zuko-android-publish-${{ needs.prepare.outputs.tag }}-${{ github.run_id }}
-          path: staging
 
       - name: Set up Java 17
         uses: actions/setup-java@0f481fcb613427c0f801b606911222b5b6f3083a # v5.5.0
@@ -138,41 +68,36 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      - uses: jdx/mise-action@e6a8b3978addb5a52f2b4cd9d91eafa7f0ab959d # v4.2.0
-        with:
-          cache: true
-
       - uses: ./.github/actions/setup-codemagic
 
-      - name: Prepare and validate exact signed AAB
+      - name: Download and validate exact GitHub Release AAB
         env:
-          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
-          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
-          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
-          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
-          TAG: ${{ needs.prepare.outputs.tag }}
           ASSET: ${{ needs.prepare.outputs.asset }}
-        run: >-
-          mise exec -- just prepare-android-store-aab "$TAG" "$ASSET"
-          "${{ needs.prepare.outputs.package }}"
-          "${{ needs.prepare.outputs.version }}"
-          "${{ needs.prepare.outputs.version_code }}"
+          PACKAGE: ${{ needs.prepare.outputs.package }}
+          TAG: ${{ needs.prepare.outputs.tag }}
+          VERSION: ${{ needs.prepare.outputs.version }}
+          VERSION_CODE: ${{ needs.prepare.outputs.version_code }}
+        run: |
+          set -euo pipefail
+          base="https://github.com/$GITHUB_REPOSITORY/releases/download/$TAG"
+          mkdir -p dist/android
+          curl --fail --location --proto '=https' --tlsv1.2 \
+            "$base/$ASSET" -o "dist/android/$ASSET"
+          curl --fail --location --proto '=https' --tlsv1.2 \
+            "$base/$ASSET.sha256" -o "dist/android/$ASSET.sha256"
+          scripts/android-validate-aab.sh \
+            "dist/android/$ASSET" "dist/android/$ASSET.sha256" \
+            "$PACKAGE" "$VERSION" "$VERSION_CODE"
+          echo "AAB_SHA256=$(sha256sum "dist/android/$ASSET" | cut -d' ' -f1)" \
+            >> "$GITHUB_ENV"
 
-      - name: Retain the validated signed AAB
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: zuko-android-google-play-${{ needs.prepare.outputs.tag }}-${{ github.run_id }}
-          path: dist/android/*
-          if-no-files-found: error
-          retention-days: 30
-
-      - name: Validate Google Play access and publish exact AAB
+      - name: Publish validated AAB
         env:
+          ASSET: ${{ needs.prepare.outputs.asset }}
           GOOGLE_PLAY_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_PLAY_SERVICE_ACCOUNT_JSON }}
+          PACKAGE: ${{ needs.prepare.outputs.package }}
           TAG: ${{ needs.prepare.outputs.tag }}
-          ASSET: ${{ needs.prepare.outputs.asset }}
         run: >-
-          mise exec -- just publish-android-store
-          "dist/android/$ASSET" "$AAB_SHA256"
-          "${{ needs.prepare.outputs.package }}"
+          scripts/android-upload-google-play.sh
+          "dist/android/$ASSET" "$AAB_SHA256" "$PACKAGE"
           "${{ inputs.track }}" "${{ inputs.publish_mode }}" "Zuko $TAG"

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-readonly IMAGE=localhost/zuko-flutter-ci:2026.07
+readonly IMAGE=localhost/zuko-flutter-ci:2026.07-mise-sdk
 readonly CONTAINERFILE=containers/flutter-ci.Containerfile
 readonly IGNORE_FILE=containers/flutter-ci.ignore
 
@@ -143,7 +143,4 @@ exec podman run "${run_args[@]}" "$IMAGE" bash -lc \
     --exclude=./flutter/windows/flutter/ephemeral \
     --exclude=./target \
     -cf - . | tar -C /workspace -xf -; \
-  cd /workspace; git config --global --add safe.directory /workspace; \
-  git config --global --add safe.directory /opt/flutter-sdk; \
-  mkdir -p .tmp; rm -rf .tmp/flutter-sdk; \
-  ln -s /opt/flutter-sdk .tmp/flutter-sdk; $command"
+  cd /workspace; git config --global --add safe.directory /workspace; $command"
