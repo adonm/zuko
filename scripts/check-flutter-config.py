@@ -186,6 +186,10 @@ def main() -> None:
     forbid_text("scripts/install_flutter_sdk.py", "__CI_LIBRARY_SHA256__")
     require_text("scripts/install-mise-codemagic.sh", "install_flutter_sdk.py")
     require_text("scripts/install-mise-codemagic.ps1", "install_flutter_sdk.py")
+    require_text(
+        "scripts/install-mise-codemagic.ps1",
+        "git config --global core.longpaths true",
+    )
     forbid_text("scripts/install-mise-codemagic.sh", "http:flutter")
     forbid_text("scripts/install-mise-codemagic.ps1", "http:flutter")
     require_text(

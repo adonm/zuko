@@ -30,6 +30,7 @@ try {
 
 & $bin --version | Select-String -SimpleMatch $version
 & $bin trust (Join-Path $PWD "mise.toml")
+& git config --global core.longpaths true
 & $bin install rust zig just
 $sdk = Join-Path $PWD ".tmp/flutter-sdk"
 & $env:PYTHON scripts/install_flutter_sdk.py $sdk
