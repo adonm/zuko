@@ -217,11 +217,6 @@ container-android:
 container-android-release:
     bash scripts/container-flutter.sh android-release
 
-# Compatibility entry point; defaults to the historical Flutter check mode.
-[group('containers')]
-container-linux mode='check':
-    bash scripts/container-linux.sh "{{ mode }}"
-
 # Build the Linux desktop client in the pinned Ubuntu/GTK4 image.
 [group('containers')]
 container-linux-build:

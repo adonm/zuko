@@ -10,8 +10,10 @@ readonly RUNTIME_REPO=https://dl.flathub.org/repo/flathub.flatpakrepo
 
 root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 cd "$root"
+container_engine=$("$root/scripts/container-engine.sh")
+export CONTAINER_ENGINE=$container_engine
 
-for command in git podman python3 sha256sum strings tar; do
+for command in git python3 sha256sum strings tar; do
   command -v "$command" >/dev/null 2>&1 || {
     echo "FlatPark test bundle: required command not found: $command" >&2
     exit 1
@@ -121,8 +123,12 @@ if release not in metainfo:
 PY
 
 mkdir -p .tmp/flatpak-builder-state
-podman build --file "$CONTAINERFILE" --ignorefile containers/flutter-ci.ignore --tag "$IMAGE" .
-podman run --rm --privileged \
+build_args=(--file "$CONTAINERFILE" --tag "$IMAGE")
+if [[ $(basename "$container_engine") == docker ]]; then
+  build_args+=(--load)
+fi
+"$container_engine" build "${build_args[@]}" .
+"$container_engine" run --rm --privileged \
   --security-opt label=disable \
   --volume "$root:/workspace" \
   --volume zuko-flatpak-builder:/root/.local/share/flatpak \

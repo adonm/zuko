@@ -3,15 +3,11 @@ set -euo pipefail
 
 readonly IMAGE=localhost/zuko-flutter-ci:2026.07-mise-sdk
 readonly CONTAINERFILE=containers/flutter-ci.Containerfile
-readonly IGNORE_FILE=containers/flutter-ci.ignore
 
 root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 mode=${1:-ci}
+container_engine=$("$root/scripts/container-engine.sh")
 
-command -v podman >/dev/null 2>&1 || {
-  echo "container Flutter build: podman is required" >&2
-  exit 1
-}
 if [[ $(uname -m) != x86_64 ]]; then
   echo "container Flutter build: the pinned Flutter/Android image requires x86_64" >&2
   exit 1
@@ -55,22 +51,20 @@ case "$mode" in
   all)
     command='mise exec -- just preflight && mise exec -- just lint-ci && mise exec -- just build-docs && mise exec -- just flutter-linux-builds'
     ;;
-  legacy-all)
-    # Compatibility for container-linux.sh all, which historically packaged Linux.
-    # shellcheck disable=SC2016 # Expanded by the container's bash.
-    command='mise exec -- just flutter-check && rm -rf flutter/build/linux-gtk4 && mise exec -- just build-flutter-linux && mise exec -- just package-linux-release "v$(scripts/version.sh)" HEAD'
-    ;;
   *)
     echo "usage: container-flutter.sh <check|preflight|quality|links|e2e|web|android|android-release|linux|linux-bundle|ci|all>" >&2
     exit 2
     ;;
 esac
 
-podman build \
-  --file "$root/$CONTAINERFILE" \
-  --ignorefile "$root/$IGNORE_FILE" \
-  --tag "$IMAGE" \
-  "$root"
+build_args=(
+  --file "$root/$CONTAINERFILE"
+  --tag "$IMAGE"
+)
+if [[ $(basename "$container_engine") == docker ]]; then
+  build_args+=(--load)
+fi
+"$container_engine" build "${build_args[@]}" "$root"
 
 mkdir -p \
   "$root/.tmp/container-home" \
@@ -118,7 +112,7 @@ if [[ $mode == links && -n ${GITHUB_TOKEN:-} ]]; then
   run_args+=(--env GITHUB_TOKEN)
 fi
 
-exec podman run "${run_args[@]}" "$IMAGE" bash -lc \
+exec "$container_engine" run "${run_args[@]}" "$IMAGE" bash -lc \
   "set -euo pipefail; tar -C /source \
     --exclude=./.git \
     --exclude=./.oy \

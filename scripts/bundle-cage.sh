@@ -1,8 +1,13 @@
 #!/bin/bash
 set -euo pipefail
 
+root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+cd "$root"
+container_engine=$("$root/scripts/container-engine.sh")
+
 mkdir -p dist/cage
-docker run --rm -v "$PWD/dist/cage:/out:z" fedora:latest bash -c '
+# shellcheck disable=SC2016 # The script is expanded only inside the container.
+"$container_engine" run --rm -v "$root/dist/cage:/out:z" fedora:latest bash -c '
   set -e
   dnf install -y -q --setopt=install_weak_deps=False cage >/dev/null
   cp /usr/bin/cage /out/cage

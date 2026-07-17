@@ -6,9 +6,9 @@ from the repository root unless noted.
 
 ## Preferred Linux container setup
 
-On x86_64 Linux, use the repository's rootless Podman recipes for every build
-that does not require Apple or Windows host APIs. Install Podman and
-[mise](https://mise.jdx.dev/getting-started.html) on the host first; an
+On x86_64 Linux, use the repository's container recipes for every build that
+does not require Apple or Windows host APIs. Install a rootless Docker or Podman
+engine and [mise](https://mise.jdx.dev/getting-started.html) on the host first; an
 activated mise shell supplies `just`, or use the explicit
 `mise exec -- just ...` form. The Ubuntu 24.04 image contains the same
 checksum-pinned Mise Flutter SDK used by hosted builds, Rust, JDK 17, Android
@@ -36,8 +36,11 @@ just container-links           # network link check; honors GITHUB_TOKEN
 just container-e2e             # live relay/PTY test; requires network access
 ```
 
-The image is checksum/digest pinned in `containers/flutter-ci.Containerfile`.
-Podman layer caching plus named Cargo, Dart, Pub, and Gradle volumes make
+The scripts use a healthy Docker engine by default, fall back to Podman, and
+honor `CONTAINER_ENGINE=docker` or `CONTAINER_ENGINE=podman` when an explicit
+choice is needed. The image is checksum/digest pinned in
+`containers/flutter-ci.Containerfile`. Container layer caching plus named
+Cargo, Dart, Pub, and Gradle volumes make
 subsequent runs incremental without leaking container-generated platform files
 or package paths into the host checkout. Normal checks/builds do not use a
 privileged container;
@@ -263,14 +266,14 @@ systems.
 
 Current automation coverage is:
 
-| Target | Pull request / `main` build | Release-tag delivery |
-|--------|-----------------------------|----------------------|
-| Shared Dart + web | GitHub analyze, tests, and relay-only web build | Pages deploys after `main`; no release asset |
-| Android | GitHub unsigned APK/AAB candidate | Same candidate signed once, published, and promoted to Appetize/Google Play |
-| Linux | GitHub GTK4 release bundle and smoke | Same checksummed archive consumed by FlatPark |
-| Windows | GitHub x86_64 portable candidate | Same ZIP published; protected Store package remains manual |
-| iOS/iPadOS | GitHub Simulator candidate | Same Simulator ZIP to Appetize; exact-tag signed IPA to TestFlight |
-| macOS | GitHub release application candidate | Same development ZIP published; Mac App Store is not automated |
+| Target | Pull request | `main` candidate | Release-tag delivery |
+|--------|--------------|------------------|----------------------|
+| Shared Dart + web | Analyze, test, and compile web | Recheck shared client; Pages builds web | No release asset |
+| Android | Shared Flutter checks | Unsigned APK/AAB | Same candidate signed once, published, and promoted to Appetize/Google Play |
+| Linux | Shared Flutter checks | GTK4 release bundle and smoke | Same checksummed archive consumed by FlatPark |
+| Windows | Shared Flutter checks | x86_64 portable build | Same ZIP published; protected Store package remains manual |
+| iOS/iPadOS | Shared Flutter checks | Simulator build | Same Simulator ZIP to Appetize; exact-tag signed IPA to TestFlight |
+| macOS | Rust and shared Flutter checks | Release application build | Same development ZIP published; Mac App Store is not automated |
 
 Compilation in this matrix does not imply store publication or the
 physical-device/browser coverage listed in [Flutter platform support](platform-support.md)

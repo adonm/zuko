@@ -3,18 +3,6 @@ name: build
 on:
   push:
     branches: [main]
-  pull_request:
-    paths:
-      - ".cargo/**"
-      - "Cargo.lock"
-      - "Cargo.toml"
-      - "flutter/**"
-      - "src/**"
-      - "scripts/**"
-      - "Justfile"
-      - "mise.toml"
-      - ".github/actions/cache-flutter/**"
-      - ".github/workflows/build.yml"
   workflow_dispatch:
 
 permissions:
@@ -71,7 +59,6 @@ jobs:
 
   cli:
     name: CLI candidate ${{ matrix.target }}
-    if: ${{ github.event_name != 'pull_request' }}
     strategy:
       fail-fast: false
       matrix:
@@ -191,7 +178,6 @@ jobs:
             gtk4-release-smoke.log
 
       - name: Upload Linux candidate
-        if: ${{ github.event_name != 'pull_request' }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: zuko-candidate-flutter-linux-${{ github.sha }}
@@ -244,7 +230,6 @@ jobs:
           mise exec -- just package-android-unsigned "v$(scripts/version.sh)"
 
       - name: Upload Android candidate
-        if: ${{ github.event_name != 'pull_request' }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: zuko-candidate-flutter-android-${{ github.sha }}
@@ -279,7 +264,6 @@ jobs:
           mise exec -- just --shell pwsh --shell-arg=-NoProfile --shell-arg=-Command build-flutter-windows-release $tag
 
       - name: Upload Windows candidate
-        if: ${{ github.event_name != 'pull_request' }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: zuko-candidate-flutter-windows-${{ github.sha }}
@@ -312,7 +296,6 @@ jobs:
           mise exec -- just package-ios-simulator-development
 
       - name: Upload iOS Simulator candidate
-        if: ${{ github.event_name != 'pull_request' }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: zuko-candidate-flutter-ios-simulator-${{ github.sha }}
@@ -345,7 +328,6 @@ jobs:
           mise exec -- just package-macos-development
 
       - name: Upload macOS candidate
-        if: ${{ github.event_name != 'pull_request' }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: zuko-candidate-flutter-macos-${{ github.sha }}
