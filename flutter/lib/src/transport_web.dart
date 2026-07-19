@@ -4,6 +4,7 @@ import 'dart:js_interop';
 import 'dart:typed_data';
 
 import 'model.dart';
+import 'session_io.dart';
 import 'session_state.dart';
 import 'transport.dart';
 import 'wire.dart';
@@ -85,7 +86,8 @@ final class _WebSession implements TerminalSession {
   final _states = StreamController<SessionState>.broadcast(sync: true);
   final _tunnels = StreamController<TunnelEndpoint>.broadcast(sync: true);
   JSObject? _session;
-  bool _attached = false;
+  final _attachment = SessionAttachmentGate();
+  final _writer = BoundedSessionWriter();
   bool _closed = false;
   final _closedSignal = Completer<void>();
   Future<void>? _runner;
@@ -117,18 +119,17 @@ final class _WebSession implements TerminalSession {
           final event = jsonDecode(raw.toDart) as Map<String, Object?>;
           switch (event['type']) {
             case 'attached':
-              _attached = true;
+              final failure = _attachment.confirm();
+              if (failure != null) {
+                if (!ended.isCompleted) ended.complete(failure);
+                return;
+              }
               attempt = 0;
               _states.add(const SessionState.attached());
             case 'data':
-              if (!_attached) {
-                if (!ended.isCompleted) {
-                  ended.complete(
-                    const SessionState.failed(
-                      'Protocol error: host sent data before attachment.',
-                    ),
-                  );
-                }
+              final failure = _attachment.acceptData();
+              if (failure != null) {
+                if (!ended.isCompleted) ended.complete(failure);
                 return;
               }
               _output.add(
@@ -186,7 +187,7 @@ final class _WebSession implements TerminalSession {
       } finally {
         final session = _session;
         _session = null;
-        _attached = false;
+        _attachment.reset();
         if (session != null) _close(session);
       }
       final delay = sessionRetryDelay(attempt);
@@ -206,13 +207,19 @@ final class _WebSession implements TerminalSession {
   @override
   Future<void> send(List<int> bytes) async {
     final session = _session;
-    if (!_attached || session == null) return;
+    if (!_attachment.attached || session == null) return;
     for (var offset = 0; offset < bytes.length; offset += 0xffff) {
       final end = (offset + 0xffff).clamp(0, bytes.length);
-      await _send(
-        session,
-        Uint8List.fromList(bytes.sublist(offset, end)).toJS,
-      ).toDart;
+      final payload = Uint8List.fromList(bytes.sublist(offset, end));
+      final completed = _writer.enqueue(payload.length, () async {
+        if (!_closed && identical(_session, session) && _attachment.attached) {
+          await _send(session, payload.toJS).toDart;
+        }
+      });
+      if (completed == null || !await completed) {
+        if (identical(_session, session)) _close(session);
+        return;
+      }
     }
   }
 
@@ -220,14 +227,21 @@ final class _WebSession implements TerminalSession {
   Future<void> resize(TerminalGeometry geometry) async {
     _geometry = geometry;
     final session = _session;
-    if (session == null) return;
-    await _resize(
-      session,
-      geometry.cols.toJS,
-      geometry.rows.toJS,
-      geometry.pixelWidth.toJS,
-      geometry.pixelHeight.toJS,
-    ).toDart;
+    if (!_attachment.attached || session == null) return;
+    final completed = _writer.enqueue(8, () async {
+      if (!_closed && identical(_session, session) && _attachment.attached) {
+        await _resize(
+          session,
+          geometry.cols.toJS,
+          geometry.rows.toJS,
+          geometry.pixelWidth.toJS,
+          geometry.pixelHeight.toJS,
+        ).toDart;
+      }
+    });
+    if (completed == null || !await completed) {
+      if (identical(_session, session)) _close(session);
+    }
   }
 
   @override
@@ -235,9 +249,12 @@ final class _WebSession implements TerminalSession {
     if (_closed) return;
     _closed = true;
     _closedSignal.complete();
+    _attachment.reset();
+    _writer.close();
     final session = _session;
     _session = null;
     if (session != null) _close(session);
+    await _writer.drain();
     await _runner?.catchError((_) {});
     await _output.close();
     await _states.close();

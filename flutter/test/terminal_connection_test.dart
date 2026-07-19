@@ -74,6 +74,7 @@ void main() {
       connection.dispose();
     });
     await connection.reconnect();
+    session.emitState(const SessionState.attached());
     final zellijWrite = Uint8List.fromList(
       ascii.encode('\x1b]52;c;aGVsbG8=\x1b\\'),
     );
@@ -227,6 +228,7 @@ void main() {
       connection.dispose();
     });
     await connection.reconnect();
+    session.emitState(const SessionState.attached());
 
     connection.terminal.sendText('hello');
     connection.terminal.onResize?.call(100, 40);

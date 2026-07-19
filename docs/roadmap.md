@@ -134,8 +134,15 @@ Required before any Flutter target is promoted:
   frames, and persisted identity on native and browser transports.
 
 The shared Dart framing, pairing parser, KDF fixture, native transport, browser
-bridge, and reconnect loops now exist. Integration and long-session coverage
-remain release gates.
+bridge, and reconnect loops now exist. A shared attachment gate used by native
+and browser sessions rejects output and input before `ATTACHED` and fails closed
+on a mismatched identity. Their outbound paths use one bounded, serialized
+writer, while deterministic integration tests cover revocation/protocol failure,
+stale-session suppression, reconnect, persisted identity, 2,000 bidirectional
+terminal exchanges, and a 10,000-write queue soak. The live Rust Iroh test still
+covers pairing, PTY traffic, revocation, and tunnel teardown. Representative
+native-device and browser relay soaks remain target-promotion evidence rather
+than an unmeasured shared-client claim.
 
 ### 2. Reach terminal and lifecycle parity
 
@@ -154,9 +161,12 @@ The Flutter client must provide:
 
 `flterm` supplies the shared terminal surface. Typed recovery states, foreground
 redial, mobile shortcut controls, host management, themes, font sizing, and
-baseline terminal viewport semantics now exist. Complete screen-reader
-navigation and testing, QR scanner lifecycle tests, and representative
-physical-device coverage remain open.
+baseline terminal viewport semantics now exist. Automated keyboard and semantics
+journeys cover first pairing, host search, recovery-action focus, terminal focus,
+and explicit forget-versus-revoke guidance; changing pairing, search, and
+recovery status is exposed as a live region without turning terminal output into
+one. Representative VoiceOver, TalkBack, and desktop screen-reader runs, QR
+scanner lifecycle tests, and physical-device coverage remain open.
 
 ### 3. Ship each target through its normal channel
 

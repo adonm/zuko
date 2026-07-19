@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/semantics.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:zuko/src/model.dart';
 import 'package:zuko/src/pairing_screen.dart';
@@ -181,6 +182,36 @@ void main() {
     expect(find.text('That share code expired.'), findsOneWidget);
     expect(find.text('Scan again'), findsOneWidget);
     expect(find.text('Enter code instead'), findsOneWidget);
+  });
+
+  testWidgets('pairing failures are exposed as live-region status', (
+    tester,
+  ) async {
+    final semantics = tester.ensureSemantics();
+    await tester.pumpWidget(
+      MaterialApp(
+        home: PairingScreen(
+          startInManual: true,
+          onClaim: (_) async => throw StateError('timed out'),
+        ),
+      ),
+    );
+    await tester.enterText(find.byType(TextFormField), 'iridescent-hilton');
+    await tester.pump();
+    await tester.tap(find.widgetWithText(FilledButton, 'Pair'));
+    await tester.pump();
+    await tester.pump();
+
+    final node = tester.getSemantics(
+      find.bySemanticsLabel(
+        RegExp(
+          'Could not reach the host. Check that zuko share is still running.',
+        ),
+      ),
+    );
+    expect(node.getSemanticsData().flagsCollection.isLiveRegion, isTrue);
+    expect(node.getSemanticsData().hasAction(SemanticsAction.tap), isFalse);
+    semantics.dispose();
   });
 }
 

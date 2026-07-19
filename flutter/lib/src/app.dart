@@ -1150,67 +1150,116 @@ class _SessionOverlay extends StatelessWidget {
   final VoidCallback? onDisconnect;
 
   @override
-  Widget build(BuildContext context) => ColoredBox(
-    color: Theme.of(context).colorScheme.scrim.withValues(alpha: 0.62),
-    child: Center(
-      child: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 420),
-        child: Card(
-          margin: const EdgeInsets.all(24),
-          child: Padding(
-            padding: const EdgeInsets.all(20),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                if (state.phase == SessionPhase.connecting ||
-                    state.phase == SessionPhase.retrying)
-                  const Padding(
-                    padding: EdgeInsets.only(bottom: 16),
-                    child: CircularProgressIndicator(),
+  Widget build(BuildContext context) => FocusTraversalGroup(
+    child: ColoredBox(
+      color: Theme.of(context).colorScheme.scrim.withValues(alpha: 0.62),
+      child: Center(
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 420),
+          child: Card(
+            margin: const EdgeInsets.all(24),
+            child: Padding(
+              padding: const EdgeInsets.all(20),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  if (state.phase == SessionPhase.connecting ||
+                      state.phase == SessionPhase.retrying)
+                    const Padding(
+                      padding: EdgeInsets.only(bottom: 16),
+                      child: CircularProgressIndicator(),
+                    ),
+                  Semantics(
+                    liveRegion: true,
+                    child: Text(
+                      state.message,
+                      textAlign: TextAlign.center,
+                      style: Theme.of(context).textTheme.titleMedium,
+                    ),
                   ),
-                Text(
-                  state.message,
-                  textAlign: TextAlign.center,
-                  style: Theme.of(context).textTheme.titleMedium,
-                ),
-                const SizedBox(height: 16),
-                Wrap(
-                  spacing: 8,
-                  runSpacing: 8,
-                  alignment: WrapAlignment.center,
-                  children: [
-                    if (state.recovery == SessionRecovery.reconnect &&
-                        onReconnect != null)
-                      FilledButton.icon(
-                        onPressed: onReconnect,
-                        icon: const Icon(Icons.refresh),
-                        label: Text(
-                          state.phase == SessionPhase.retrying
-                              ? 'Retry now'
-                              : 'Reconnect',
+                  const SizedBox(height: 16),
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
+                    alignment: WrapAlignment.center,
+                    children: [
+                      if (state.recovery == SessionRecovery.reconnect &&
+                          onReconnect != null)
+                        _RecoveryAction(
+                          key: ValueKey(state.recovery),
+                          onPressed: onReconnect!,
+                          icon: const Icon(Icons.refresh),
+                          child: Text(
+                            state.phase == SessionPhase.retrying
+                                ? 'Retry now'
+                                : 'Reconnect',
+                          ),
                         ),
-                      ),
-                    if (state.recovery == SessionRecovery.rePair || !hasHost)
-                      FilledButton.icon(
-                        onPressed: onPair,
-                        icon: const Icon(Icons.add_link),
-                        label: Text(hasHost ? 'Pair again' : 'Pair host'),
-                      ),
-                    if (onDisconnect != null)
-                      OutlinedButton.icon(
-                        onPressed: onDisconnect,
-                        icon: const Icon(Icons.link_off),
-                        label: const Text('Disconnect'),
-                      ),
-                  ],
-                ),
-              ],
+                      if (state.recovery == SessionRecovery.rePair || !hasHost)
+                        _RecoveryAction(
+                          key: ValueKey(state.recovery),
+                          onPressed: onPair,
+                          icon: const Icon(Icons.add_link),
+                          child: Text(hasHost ? 'Pair again' : 'Pair host'),
+                        ),
+                      if (onDisconnect != null)
+                        OutlinedButton.icon(
+                          onPressed: onDisconnect,
+                          icon: const Icon(Icons.link_off),
+                          label: const Text('Disconnect'),
+                        ),
+                    ],
+                  ),
+                ],
+              ),
             ),
           ),
         ),
       ),
     ),
   );
+}
+
+class _RecoveryAction extends StatefulWidget {
+  const _RecoveryAction({
+    super.key,
+    required this.onPressed,
+    required this.icon,
+    required this.child,
+  });
+
+  final VoidCallback onPressed;
+  final Widget icon;
+  final Widget child;
+
+  @override
+  State<_RecoveryAction> createState() => _RecoveryActionState();
+}
+
+class _RecoveryActionState extends State<_RecoveryAction> {
+  final _focusNode = FocusNode(debugLabel: 'Session recovery action');
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _focusNode.requestFocus();
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) => FilledButton.icon(
+    focusNode: _focusNode,
+    onPressed: widget.onPressed,
+    icon: widget.icon,
+    label: widget.child,
+  );
+
+  @override
+  void dispose() {
+    _focusNode.dispose();
+    super.dispose();
+  }
 }
 
 class _TerminalAccessory extends StatelessWidget {
@@ -2073,41 +2122,49 @@ class _SavedHostListState extends State<SavedHostList> {
           ),
         ),
         const SizedBox(height: 6),
-        Card(
-          margin: EdgeInsets.zero,
-          child: matches.isEmpty
-              ? Padding(
-                  padding: const EdgeInsets.all(12),
-                  child: Column(
+        Semantics(
+          liveRegion: _search.text.isNotEmpty,
+          label: _search.text.isEmpty
+              ? null
+              : matches.isEmpty
+              ? 'No matching hosts'
+              : '${matches.length} matching ${matches.length == 1 ? 'host' : 'hosts'}',
+          child: Card(
+            margin: EdgeInsets.zero,
+            child: matches.isEmpty
+                ? Padding(
+                    padding: const EdgeInsets.all(12),
+                    child: Column(
+                      children: [
+                        const Text(
+                          'No matching hosts',
+                          textAlign: TextAlign.center,
+                        ),
+                        const SizedBox(height: 4),
+                        TextButton(
+                          onPressed: _search.clear,
+                          child: const Text('Clear search'),
+                        ),
+                      ],
+                    ),
+                  )
+                : Column(
                     children: [
-                      const Text(
-                        'No matching hosts',
-                        textAlign: TextAlign.center,
-                      ),
-                      const SizedBox(height: 4),
-                      TextButton(
-                        onPressed: _search.clear,
-                        child: const Text('Clear search'),
-                      ),
+                      for (var index = 0; index < matches.length; index++) ...[
+                        _SavedHostTile(
+                          host: matches[index],
+                          selected:
+                              matches[index].nodeId == widget.selected?.nodeId,
+                          onTap: () => widget.onConnect(matches[index]),
+                          onAction: (action) =>
+                              widget.onAction(action, matches[index]),
+                        ),
+                        if (index != matches.length - 1)
+                          const Divider(height: 1, indent: 38),
+                      ],
                     ],
                   ),
-                )
-              : Column(
-                  children: [
-                    for (var index = 0; index < matches.length; index++) ...[
-                      _SavedHostTile(
-                        host: matches[index],
-                        selected:
-                            matches[index].nodeId == widget.selected?.nodeId,
-                        onTap: () => widget.onConnect(matches[index]),
-                        onAction: (action) =>
-                            widget.onAction(action, matches[index]),
-                      ),
-                      if (index != matches.length - 1)
-                        const Divider(height: 1, indent: 38),
-                    ],
-                  ],
-                ),
+          ),
         ),
       ],
     );

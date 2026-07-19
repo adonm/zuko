@@ -275,13 +275,19 @@ rather than treating an unattempted build as success.
 This is an evaluation order, not a release promise. The roadmap remains the
 source of product commitments.
 
+The automated baseline now drives first pairing, host search, connection
+recovery, terminal focus, and forget-versus-revoke guidance through keyboard and
+semantics journeys. Recovery actions receive focus when terminal input is no
+longer available, while pairing, search-result, and recovery status changes are
+live regions.
+
 ### Next
 
-1. Perform keyboard and screen-reader journey tests for first pairing, host
-   search, connection recovery, terminal focus, and forget-versus-revoke
-   guidance.
-2. Verify QR scanning, lifecycle changes, client-state migration, and terminal
+1. Verify QR scanning, lifecycle changes, client-state migration, and terminal
    touch behavior on representative physical devices before target promotion.
+2. Record representative VoiceOver, TalkBack, and desktop screen-reader runs,
+   then reduce any platform-specific failures into automated regressions where
+   possible.
 
 ### After those foundations
 

@@ -76,6 +76,35 @@ void main() {
     expect(storage.values['zuko-client-state-v5'], isNotNull);
   });
 
+  test(
+    'current client identity and saved hosts survive repeated loads',
+    () async {
+      final storage = _MemoryStorage({});
+      final firstStore = ClientStateStore.withStorage(storage);
+      final created = await firstStore.load();
+      final saved = created.copyWith(
+        clientName: 'office-laptop',
+        hosts: const [
+          SavedHost(
+            name: 'Home',
+            label: 'home',
+            ticket: 'ticket',
+            nodeId: 'node',
+            authorizedClientLabel: 'zuko-linux-a1b2c3',
+          ),
+        ],
+      );
+      await firstStore.save(saved);
+
+      final reopened = await ClientStateStore.withStorage(storage).load();
+
+      expect(reopened.clientKey, saved.clientKey);
+      expect(reopened.clientName, 'office-laptop');
+      expect(reopened.hosts.single.nodeId, 'node');
+      expect(reopened.hosts.single.authorizedClientLabel, 'zuko-linux-a1b2c3');
+    },
+  );
+
   test('invalid state resets only Zuko state', () async {
     final storage = _MemoryStorage({
       'zuko-client-state-v4': '{broken',

@@ -60,7 +60,10 @@ final class TerminalConnection extends ChangeNotifier {
            isClipboardSourceActive ?? _inactiveClipboardSource,
        _clipboardWriter = clipboardWriter ?? _writeSystemClipboard,
        terminal = TerminalController() {
-    terminal.onOutput = (bytes) => unawaited(_session?.send(bytes));
+    terminal.onOutput = (bytes) {
+      final session = _session;
+      if (_acceptingIo && session != null) unawaited(session.send(bytes));
+    };
     terminal.onClipboardWrite = _handleClipboardWrite;
     terminal.onResize = (cols, rows) {
       geometry = TerminalGeometry(cols, rows, 0, 0);
@@ -85,6 +88,7 @@ final class TerminalConnection extends ChangeNotifier {
   StreamSubscription<SessionState>? _stateSubscription;
   StreamSubscription<TunnelEndpoint>? _tunnelSubscription;
   int _generation = 0;
+  bool _acceptingIo = false;
   bool _closed = false;
   bool _disposed = false;
 
@@ -148,7 +152,9 @@ final class TerminalConnection extends ChangeNotifier {
       }
       _session = active;
       _outputSubscription = active.output.listen((bytes) {
-        if (isCurrentGeneration(generation) && identical(_session, active)) {
+        if (_acceptingIo &&
+            isCurrentGeneration(generation) &&
+            identical(_session, active)) {
           terminal.write(bytes);
         }
       });
@@ -156,6 +162,7 @@ final class TerminalConnection extends ChangeNotifier {
         if (!isCurrentGeneration(generation) || !identical(_session, active)) {
           return;
         }
+        _acceptingIo = next.isAttached;
         state = next;
         _notify();
       });
@@ -185,6 +192,7 @@ final class TerminalConnection extends ChangeNotifier {
   }
 
   _DetachedSession _detachSession() {
+    _acceptingIo = false;
     final detached = _DetachedSession(
       session: _session,
       output: _outputSubscription,

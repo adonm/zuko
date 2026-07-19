@@ -233,21 +233,27 @@ class _PairingScreenState extends State<PairingScreen> {
                 ),
                 if (_message != null) ...[
                   const SizedBox(height: 8),
-                  Text(
-                    _message!,
-                    textAlign: TextAlign.center,
-                    style: TextStyle(
-                      color: Theme.of(context).colorScheme.error,
+                  Semantics(
+                    liveRegion: true,
+                    child: Text(
+                      _message!,
+                      textAlign: TextAlign.center,
+                      style: TextStyle(
+                        color: Theme.of(context).colorScheme.error,
+                      ),
                     ),
                   ),
                 ],
                 if (_claimError != null) ...[
                   const SizedBox(height: 8),
-                  Text(
-                    _claimError!,
-                    textAlign: TextAlign.center,
-                    style: TextStyle(
-                      color: Theme.of(context).colorScheme.error,
+                  Semantics(
+                    liveRegion: true,
+                    child: Text(
+                      _claimError!,
+                      textAlign: TextAlign.center,
+                      style: TextStyle(
+                        color: Theme.of(context).colorScheme.error,
+                      ),
                     ),
                   ),
                 ],
@@ -347,10 +353,13 @@ class _PairingScreenState extends State<PairingScreen> {
                 ),
                 if (_claimError != null) ...[
                   const SizedBox(height: 12),
-                  Text(
-                    _claimError!,
-                    style: TextStyle(
-                      color: Theme.of(context).colorScheme.error,
+                  Semantics(
+                    liveRegion: true,
+                    child: Text(
+                      _claimError!,
+                      style: TextStyle(
+                        color: Theme.of(context).colorScheme.error,
+                      ),
                     ),
                   ),
                 ],

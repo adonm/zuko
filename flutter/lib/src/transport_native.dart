@@ -8,6 +8,7 @@ import 'package:iroh_flutter/iroh_flutter.dart';
 import 'identity.dart';
 import 'model.dart';
 import 'pairing_code.dart';
+import 'session_io.dart';
 import 'session_state.dart';
 import 'ticket.dart';
 import 'transport.dart';
@@ -132,8 +133,8 @@ final class _NativeSession implements TerminalSession {
   final Map<String, _NativeTunnel> _activeTunnels = {};
   SendStream? _send;
   Connection? _connection;
-  Future<void> _writeTail = Future.value();
-  bool _attached = false;
+  final _attachment = SessionAttachmentGate();
+  final _writer = BoundedSessionWriter();
   bool _closed = false;
   final _closedSignal = Completer<void>();
   Future<void>? _runner;
@@ -208,7 +209,7 @@ final class _NativeSession implements TerminalSession {
     _connection = connection;
     final (send, receive) = await connection.openBi();
     _send = send;
-    _attached = false;
+    _attachment.reset();
     await send.writeAll(encodeAttach(token, _geometry));
     final decoder = WireDecoder();
     try {
@@ -218,23 +219,15 @@ final class _NativeSession implements TerminalSession {
         for (final frame in decoder.add(bytes)) {
           switch (frame.type) {
             case WireType.data:
-              if (!_attached) {
-                throw const _SessionFailure(
-                  SessionState.failed(
-                    'Protocol error: host sent data before attachment.',
-                  ),
-                );
-              }
+              final failure = _attachment.acceptData();
+              if (failure != null) throw _SessionFailure(failure);
               _output.add(frame.payload);
             case WireType.attached:
-              if (frame.payload.length != 16 || !_equal(frame.payload, token)) {
-                throw const _SessionFailure(
-                  SessionState.failed(
-                    'Protocol error: host confirmed a different identity.',
-                  ),
-                );
-              }
-              _attached = true;
+              final failure = _attachment.confirm(
+                echoedIdentity: frame.payload,
+                expectedIdentity: token,
+              );
+              if (failure != null) throw _SessionFailure(failure);
               onAttached();
               _states.add(const SessionState.attached());
             case WireType.ping:
@@ -247,7 +240,7 @@ final class _NativeSession implements TerminalSession {
               throw _SessionFailure(sessionFailureState(code, message));
             case WireType.tunnelOffer:
               final offer = decodeTunnelOffer(frame.payload);
-              if (_attached && offer != null) {
+              if (_attachment.attached && offer != null) {
                 unawaited(_openTunnel(endpoint, ticket.address, token, offer));
               }
             case WireType.tunnelClose:
@@ -258,19 +251,22 @@ final class _NativeSession implements TerminalSession {
         }
       }
     } finally {
-      _attached = false;
+      _attachment.reset();
       _send = null;
       _connection = null;
       connection.close(reason: utf8.encode('session ended'));
     }
   }
 
-  Future<void> _write(List<int> bytes) {
-    _writeTail = _writeTail.catchError((_) {}).then((_) async {
-      final send = _send;
-      if (!_closed && send != null) await send.writeAll(bytes);
+  Future<void> _write(List<int> bytes) async {
+    final send = _send;
+    if (_closed || send == null) return;
+    final completed = _writer.enqueue(bytes.length, () async {
+      if (!_closed && identical(_send, send)) await send.writeAll(bytes);
     });
-    return _writeTail;
+    if (completed == null || !await completed) {
+      throw StateError('session write queue is closed or full');
+    }
   }
 
   Future<void> _openTunnel(
@@ -318,7 +314,7 @@ final class _NativeSession implements TerminalSession {
 
   @override
   Future<void> send(List<int> bytes) async {
-    if (!_attached) return;
+    if (!_attachment.attached) return;
     try {
       for (final frame in encodeData(bytes)) {
         await _write(frame);
@@ -331,7 +327,7 @@ final class _NativeSession implements TerminalSession {
   @override
   Future<void> resize(TerminalGeometry geometry) async {
     _geometry = geometry;
-    if (!_attached) return;
+    if (!_attachment.attached) return;
     try {
       await _write(encodeResize(geometry));
     } catch (_) {
@@ -344,9 +340,10 @@ final class _NativeSession implements TerminalSession {
     if (_closed) return;
     _closed = true;
     _closedSignal.complete();
-    _attached = false;
+    _attachment.reset();
+    _writer.close();
     _connection?.close(reason: utf8.encode('client disconnected'));
-    await _writeTail.catchError((_) {});
+    await _writer.drain();
     await _runner?.catchError((_) {});
     await _closeAllTunnels();
     await _output.close();

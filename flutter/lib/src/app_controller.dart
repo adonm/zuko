@@ -10,6 +10,13 @@ import 'transport_factory.dart';
 final class AppController extends ChangeNotifier {
   AppController._(this._store, this._state, this.transport);
 
+  @visibleForTesting
+  factory AppController.forTesting({
+    required ClientStateStore store,
+    required ClientState state,
+    required ClientTransport transport,
+  }) => AppController._(store, state, transport);
+
   final ClientStateStore _store;
   ClientState _state;
   final ClientTransport transport;
