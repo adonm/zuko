@@ -33,7 +33,7 @@ Optional settings:
 ```sh
 # Install one release rather than latest.
 curl --proto '=https' --tlsv1.2 -LsSf https://zuko.adonm.dev/install.sh |
-  ZUKO_VERSION=0.10.12 sh
+  ZUKO_VERSION=0.10.13 sh
 ```
 
 Update with `zuko upgrade` or `mise upgrade github:adonm/zuko`. Restarting the

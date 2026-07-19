@@ -7,8 +7,8 @@ inputs.
 
 ## Common release controls
 
-- [ ] Keep Cargo and Flutter versions aligned (`0.10.12` and
-  `0.10.12+1800010012` at the time of writing); run
+- [ ] Keep Cargo and Flutter versions aligned (`0.10.13` and
+  `0.10.13+1800010013` at the time of writing); run
   `just check-release-metadata`.
 - [ ] Use application/package/bundle ID `dev.adonm.zuko` everywhere except the
   Partner Center-assigned Microsoft package identity.
