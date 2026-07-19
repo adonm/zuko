@@ -27,6 +27,7 @@ final class AppController extends ChangeNotifier {
   Uint8List get clientKey => Uint8List.fromList(_state.clientKey);
   List<SavedHost> get hosts => _state.hosts;
   AppThemePreference get theme => _state.theme;
+  AppInterfaceSize get interfaceSize => _state.interfaceSize;
   double get terminalFontSize => _state.terminalFontSize;
   bool get terminalFontSizeCustomized => _state.terminalFontSizeCustomized;
   bool get showAdditionalKeys => _state.showAdditionalKeys;
@@ -111,6 +112,9 @@ final class AppController extends ChangeNotifier {
 
   Future<void> setTheme(AppThemePreference value) =>
       _commit((state) => state.copyWith(theme: value));
+
+  Future<void> setInterfaceSize(AppInterfaceSize value) =>
+      _commit((state) => state.copyWith(interfaceSize: value));
 
   Future<void> setTerminalFontSize(double value) => _commit(
     (state) => state.copyWith(

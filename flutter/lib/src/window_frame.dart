@@ -2,20 +2,18 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:yaru/yaru.dart';
 
-const wideLayoutBreakpoint = 760.0;
-
 bool usesYaruWindowTitleBar({
   required TargetPlatform platform,
   required bool isWeb,
 }) => !isWeb && platform == TargetPlatform.linux;
 
 bool usesIntegratedDesktopHeader({
-  required double width,
+  required bool wideLayout,
   required TargetPlatform platform,
   required bool isWeb,
 }) =>
     usesYaruWindowTitleBar(platform: platform, isWeb: isWeb) ||
-    (width >= wideLayoutBreakpoint &&
+    (wideLayout &&
         !isWeb &&
         switch (platform) {
           TargetPlatform.macOS || TargetPlatform.windows => true,

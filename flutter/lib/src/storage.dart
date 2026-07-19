@@ -15,8 +15,9 @@ final class ClientStateStore {
   @visibleForTesting
   ClientStateStore.withStorage(SecureStateStorage storage) : _storage = storage;
 
-  static const _stateKey = 'zuko-client-state-v5';
+  static const _stateKey = 'zuko-client-state-v6';
   static const _previousStateKeys = [
+    'zuko-client-state-v5',
     'zuko-client-state-v4',
     'zuko-client-state-v3',
     'zuko-client-state-v1',

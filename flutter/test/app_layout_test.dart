@@ -3,13 +3,16 @@ import 'package:flutter/material.dart' hide Key;
 import 'package:flutter_test/flutter_test.dart';
 import 'package:zuko/src/app.dart';
 import 'package:zuko/src/model.dart';
+import 'package:zuko/src/theme.dart';
 import 'package:zuko/src/window_frame.dart';
 
 void main() {
-  test('terminal accessory controls use compact Adwaita dimensions', () {
-    expect(terminalAccessoryHeight, 34);
-    expect(terminalAccessoryItemWidth, 34);
-    expect(terminalAccessoryGroupSpacing, 6);
+  test('terminal accessory controls use standard Adwaita dimensions', () {
+    const metrics = ZukoMetrics.standard();
+
+    expect(metrics.terminalAccessoryHeight, 34);
+    expect(metrics.terminalAccessoryItemWidth, 34);
+    expect(metrics.terminalAccessoryGroupSpacing, 6);
   });
 
   test('terminal navigation keys use predictable paired ordering', () {
@@ -315,7 +318,7 @@ void main() {
   test('screens use responsive defaults until the user chooses a size', () {
     expect(
       effectiveTerminalFontSize(
-        width: 390,
+        wideLayout: false,
         configuredSize: 14,
         customized: false,
       ),
@@ -323,7 +326,7 @@ void main() {
     );
     expect(
       effectiveTerminalFontSize(
-        width: 1280,
+        wideLayout: true,
         configuredSize: 14,
         customized: false,
       ),
@@ -331,12 +334,28 @@ void main() {
     );
     expect(
       effectiveTerminalFontSize(
-        width: 390,
+        wideLayout: false,
         configuredSize: 9,
         customized: true,
       ),
       9,
     );
+  });
+
+  test('sidebar breakpoint preserves usable main-pane width at every size', () {
+    const compact = ZukoMetrics.compact();
+    const standard = ZukoMetrics.standard();
+    const comfortable = ZukoMetrics.comfortable();
+
+    expect(compact.wideLayoutBreakpoint, 730);
+    expect(standard.wideLayoutBreakpoint, 760);
+    expect(comfortable.wideLayoutBreakpoint, 805);
+    for (final metrics in [compact, standard, comfortable]) {
+      expect(
+        metrics.wideLayoutBreakpoint - metrics.sidebarWidth,
+        ZukoMetrics.minimumMainPaneWidth,
+      );
+    }
   });
 
   test('Linux always uses the integrated Yaru window title bar', () {
@@ -347,7 +366,7 @@ void main() {
     for (final width in [390.0, 1280.0]) {
       expect(
         usesIntegratedDesktopHeader(
-          width: width,
+          wideLayout: width >= 760,
           platform: TargetPlatform.linux,
           isWeb: false,
         ),
@@ -360,7 +379,7 @@ void main() {
     for (final platform in [TargetPlatform.macOS, TargetPlatform.windows]) {
       expect(
         usesIntegratedDesktopHeader(
-          width: 1280,
+          wideLayout: true,
           platform: platform,
           isWeb: false,
         ),
@@ -368,7 +387,7 @@ void main() {
       );
       expect(
         usesIntegratedDesktopHeader(
-          width: 759,
+          wideLayout: false,
           platform: platform,
           isWeb: false,
         ),
@@ -384,7 +403,7 @@ void main() {
     );
     expect(
       usesIntegratedDesktopHeader(
-        width: 1280,
+        wideLayout: true,
         platform: TargetPlatform.linux,
         isWeb: true,
       ),
@@ -392,7 +411,7 @@ void main() {
     );
     expect(
       usesIntegratedDesktopHeader(
-        width: 1280,
+        wideLayout: true,
         platform: TargetPlatform.android,
         isWeb: false,
       ),

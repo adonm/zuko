@@ -24,6 +24,7 @@ void main() {
     );
 
     expect(state.theme, AppThemePreference.system);
+    expect(state.interfaceSize, AppInterfaceSize.standard);
     expect(state.terminalFontSize, 10);
     expect(state.terminalFontSizeCustomized, isFalse);
     expect(state.showAdditionalKeys, isTrue);
@@ -36,6 +37,7 @@ void main() {
       clientKey: key,
       clientName: 'office-ipad',
       theme: AppThemePreference.light,
+      interfaceSize: AppInterfaceSize.comfortable,
       terminalFontSize: 17,
       terminalFontSizeCustomized: true,
       showAdditionalKeys: false,
@@ -52,6 +54,7 @@ void main() {
 
     final decoded = ClientState.decode(original.encode());
     expect(decoded.theme, AppThemePreference.light);
+    expect(decoded.interfaceSize, AppInterfaceSize.comfortable);
     expect(decoded.terminalFontSize, 17);
     expect(decoded.terminalFontSizeCustomized, isTrue);
     expect(decoded.showAdditionalKeys, isFalse);
@@ -88,6 +91,20 @@ void main() {
           'hosts': 'not-a-list',
           'clientName': 7,
           'showAdditionalKeys': true,
+        }),
+      ),
+      throwsA(isA<FormatException>()),
+    );
+  });
+
+  test('rejects invalid interface size preferences', () {
+    expect(
+      () => ClientState.decode(
+        jsonEncode({
+          'version': ClientState.currentVersion,
+          'clientKey': base64Encode(key),
+          'hosts': <Object?>[],
+          'interfaceSize': 'huge',
         }),
       ),
       throwsA(isA<FormatException>()),

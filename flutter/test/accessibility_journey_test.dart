@@ -77,10 +77,13 @@ void main() {
     final controller = await _controller(
       transport: transport,
       hosts: const [_office, _home],
+      interfaceSize: AppInterfaceSize.comfortable,
     );
 
     await tester.pumpWidget(ZukoApp(controller: controller));
     await tester.pump();
+    expect(find.text('Interface size'), findsOneWidget);
+    expect(find.text('Comfortable'), findsOneWidget);
     final search = find.widgetWithText(TextField, 'Search hosts');
     await _focusWithTab(tester, search);
     await tester.enterText(search, 'home');
@@ -279,11 +282,13 @@ bool _isAncestor(Element possibleAncestor, Element element) {
 Future<AppController> _controller({
   required _JourneyTransport transport,
   List<SavedHost> hosts = const [],
+  AppInterfaceSize interfaceSize = AppInterfaceSize.standard,
 }) async {
   final state = ClientState(
     clientKey: Uint8List.fromList(List<int>.generate(32, (index) => index)),
     clientName: 'test-device',
     hosts: hosts,
+    interfaceSize: interfaceSize,
   );
   final storage = _MemoryStorage();
   final store = ClientStateStore.withStorage(storage);

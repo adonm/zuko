@@ -23,7 +23,7 @@ void main() {
 
     expect(state.clientKey, key);
     expect(storage.values['zuko-client-state-v1'], isNull);
-    expect(storage.values['zuko-client-state-v5'], isNotNull);
+    expect(storage.values['zuko-client-state-v6'], isNotNull);
     expect(storage.values['unrelated'], 'preserve-me');
     expect(store.recoveredInvalidState, isFalse);
   });
@@ -50,16 +50,17 @@ void main() {
     expect(state.terminalFontSizeCustomized, isTrue);
     expect(state.showAdditionalKeys, isFalse);
     expect(storage.values['zuko-client-state-v3'], isNull);
-    expect(storage.values['zuko-client-state-v5'], isNotNull);
+    expect(storage.values['zuko-client-state-v6'], isNotNull);
     expect(storage.values['unrelated'], 'preserve-me');
   });
 
   test('migrates the previous current state key', () async {
     final storage = _MemoryStorage({
-      'zuko-client-state-v4': jsonEncode({
-        'version': 4,
+      'zuko-client-state-v5': jsonEncode({
+        'version': 5,
         'clientKey': base64Encode(key),
         'hosts': <Object?>[],
+        'clientName': 'office-laptop',
         'theme': AppThemePreference.system.name,
         'terminalFontSize': 10,
         'terminalFontSizeCustomized': false,
@@ -71,9 +72,10 @@ void main() {
     final state = await store.load();
 
     expect(state.clientKey, key);
-    expect(state.clientName, isNull);
-    expect(storage.values['zuko-client-state-v4'], isNull);
-    expect(storage.values['zuko-client-state-v5'], isNotNull);
+    expect(state.clientName, 'office-laptop');
+    expect(state.interfaceSize, AppInterfaceSize.standard);
+    expect(storage.values['zuko-client-state-v5'], isNull);
+    expect(storage.values['zuko-client-state-v6'], isNotNull);
   });
 
   test(
@@ -84,6 +86,7 @@ void main() {
       final created = await firstStore.load();
       final saved = created.copyWith(
         clientName: 'office-laptop',
+        interfaceSize: AppInterfaceSize.comfortable,
         hosts: const [
           SavedHost(
             name: 'Home',
@@ -100,6 +103,7 @@ void main() {
 
       expect(reopened.clientKey, saved.clientKey);
       expect(reopened.clientName, 'office-laptop');
+      expect(reopened.interfaceSize, AppInterfaceSize.comfortable);
       expect(reopened.hosts.single.nodeId, 'node');
       expect(reopened.hosts.single.authorizedClientLabel, 'zuko-linux-a1b2c3');
     },
@@ -107,7 +111,8 @@ void main() {
 
   test('invalid state resets only Zuko state', () async {
     final storage = _MemoryStorage({
-      'zuko-client-state-v4': '{broken',
+      'zuko-client-state-v5': '{broken',
+      'zuko-client-state-v4': 'stale',
       'zuko-client-state-v3': 'stale',
       'zuko-client-state-v1': 'stale',
       'unrelated': 'preserve-me',
@@ -121,8 +126,9 @@ void main() {
     expect(storage.values['zuko-client-state-v1'], isNull);
     expect(storage.values['zuko-client-state-v3'], isNull);
     expect(storage.values['zuko-client-state-v4'], isNull);
+    expect(storage.values['zuko-client-state-v5'], isNull);
     expect(
-      ClientState.decode(storage.values['zuko-client-state-v5']!),
+      ClientState.decode(storage.values['zuko-client-state-v6']!),
       isA<ClientState>(),
     );
     expect(storage.values['unrelated'], 'preserve-me');

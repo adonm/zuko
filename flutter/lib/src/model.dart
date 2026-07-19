@@ -50,14 +50,17 @@ final class SavedHost {
 
 enum AppThemePreference { system, dark, light }
 
+enum AppInterfaceSize { compact, standard, comfortable }
+
 final class ClientState {
-  static const currentVersion = 5;
+  static const currentVersion = 6;
 
   ClientState({
     required Uint8List clientKey,
     required List<SavedHost> hosts,
     this.clientName,
     this.theme = AppThemePreference.system,
+    this.interfaceSize = AppInterfaceSize.standard,
     double terminalFontSize = 10,
     this.terminalFontSizeCustomized = false,
     this.showAdditionalKeys = true,
@@ -69,6 +72,7 @@ final class ClientState {
   final List<SavedHost> hosts;
   final String? clientName;
   final AppThemePreference theme;
+  final AppInterfaceSize interfaceSize;
   final double terminalFontSize;
   final bool terminalFontSizeCustomized;
   final bool showAdditionalKeys;
@@ -104,6 +108,16 @@ final class ClientState {
       final theme = AppThemePreference.values
           .where((item) => item.name == themeName)
           .firstOrNull;
+      final interfaceSizeName = version >= 6 ? decoded['interfaceSize'] : null;
+      if (interfaceSizeName != null && interfaceSizeName is! String) {
+        throw const FormatException('invalid interface size');
+      }
+      final interfaceSize = AppInterfaceSize.values
+          .where((item) => item.name == interfaceSizeName)
+          .firstOrNull;
+      if (interfaceSizeName != null && interfaceSize == null) {
+        throw const FormatException('invalid interface size');
+      }
       final fontSize = version >= 2 ? decoded['terminalFontSize'] : null;
       if (fontSize != null && fontSize is! num) {
         throw const FormatException('invalid terminal font size');
@@ -132,6 +146,7 @@ final class ClientState {
         hosts: hosts,
         clientName: clientName as String?,
         theme: theme ?? AppThemePreference.system,
+        interfaceSize: interfaceSize ?? AppInterfaceSize.standard,
         terminalFontSize: (fontSize as num?)?.toDouble() ?? 10,
         terminalFontSizeCustomized: fontSizeCustomized,
         showAdditionalKeys: showAdditionalKeys,
@@ -147,6 +162,7 @@ final class ClientState {
     List<SavedHost>? hosts,
     String? clientName,
     AppThemePreference? theme,
+    AppInterfaceSize? interfaceSize,
     double? terminalFontSize,
     bool? terminalFontSizeCustomized,
     bool? showAdditionalKeys,
@@ -155,6 +171,7 @@ final class ClientState {
     hosts: hosts ?? this.hosts,
     clientName: clientName ?? this.clientName,
     theme: theme ?? this.theme,
+    interfaceSize: interfaceSize ?? this.interfaceSize,
     terminalFontSize: terminalFontSize ?? this.terminalFontSize,
     terminalFontSizeCustomized:
         terminalFontSizeCustomized ?? this.terminalFontSizeCustomized,
@@ -167,6 +184,7 @@ final class ClientState {
     'hosts': hosts.map((host) => host.toJson()).toList(),
     if (clientName != null) 'clientName': clientName,
     'theme': theme.name,
+    'interfaceSize': interfaceSize.name,
     'terminalFontSize': terminalFontSize,
     'terminalFontSizeCustomized': terminalFontSizeCustomized,
     'showAdditionalKeys': showAdditionalKeys,

@@ -24,9 +24,6 @@ const _installCommand =
     "curl --proto '=https' --tlsv1.2 -LsSf "
     'https://zuko.adonm.dev/install.sh | sh';
 const _shareCommand = 'zuko install\nzuko share';
-const terminalAccessoryHeight = kYaruButtonHeight;
-const terminalAccessoryItemWidth = kYaruButtonHeight;
-const terminalAccessoryGroupSpacing = 6.0;
 const terminalNavigationKeys = <({String label, Key key})>[
   (label: 'Home', key: Key.home),
   (label: 'End', key: Key.end),
@@ -402,12 +399,12 @@ class _RepeatableActionState extends State<RepeatableAction> {
 }
 
 double effectiveTerminalFontSize({
-  required double width,
+  required bool wideLayout,
   required double configuredSize,
   required bool customized,
 }) {
   if (customized) return configuredSize;
-  return width < wideLayoutBreakpoint ? 7 : 10;
+  return wideLayout ? 10 : 7;
 }
 
 Uri? supportedTerminalLink(Uri? uri) {
@@ -433,8 +430,14 @@ class ZukoApp extends StatelessWidget {
         AppThemePreference.dark => ThemeMode.dark,
         AppThemePreference.light => ThemeMode.light,
       },
-      theme: buildZukoTheme(Brightness.light),
-      darkTheme: buildZukoTheme(Brightness.dark),
+      theme: buildZukoTheme(
+        Brightness.light,
+        interfaceSize: controller.interfaceSize,
+      ),
+      darkTheme: buildZukoTheme(
+        Brightness.dark,
+        interfaceSize: controller.interfaceSize,
+      ),
       home: _Home(controller: controller),
       builder: (context, child) => ZukoWindowFrame(child: child),
     ),
@@ -731,14 +734,15 @@ class _HomeState extends State<_Home>
     animation: widget.controller,
     builder: (context, _) {
       final width = MediaQuery.sizeOf(context).width;
-      final wide = width >= wideLayoutBreakpoint;
+      final metrics = ZukoMetrics.of(context);
+      final wide = width >= metrics.wideLayoutBreakpoint;
       final terminalFontSize = effectiveTerminalFontSize(
-        width: width,
+        wideLayout: wide,
         configuredSize: widget.controller.terminalFontSize,
         customized: widget.controller.terminalFontSizeCustomized,
       );
       final integratedDesktopHeader = usesIntegratedDesktopHeader(
-        width: width,
+        wideLayout: wide,
         platform: defaultTargetPlatform,
         isWeb: kIsWeb,
       );
@@ -889,7 +893,6 @@ class ConnectionTabStrip extends StatefulWidget {
 }
 
 class _ConnectionTabStripState extends State<ConnectionTabStrip> {
-  static const _minimumTabWidth = 128.0;
   final _scrollController = ScrollController();
 
   @override
@@ -909,7 +912,7 @@ class _ConnectionTabStripState extends State<ConnectionTabStrip> {
       if (!position.hasContentDimensions || widget.connections.isEmpty) return;
       final contentWidth = math.max(
         position.viewportDimension,
-        widget.connections.length * _minimumTabWidth,
+        widget.connections.length * ZukoMetrics.of(context).size(128),
       );
       final tabWidth = contentWidth / widget.connections.length;
       final start = (selectedIndex ?? widget.selectedIndex) * tabWidth;
@@ -939,73 +942,79 @@ class _ConnectionTabStripState extends State<ConnectionTabStrip> {
   }
 
   @override
-  Widget build(BuildContext context) => Material(
-    color: Theme.of(context).colorScheme.surfaceContainerLow,
-    child: LayoutBuilder(
-      builder: (context, constraints) {
-        final width = math.max(
-          constraints.maxWidth,
-          widget.connections.length * _minimumTabWidth,
-        );
-        return YaruScrollViewUndershoot(
-          controller: _scrollController,
-          scrollDirection: Axis.horizontal,
-          child: SingleChildScrollView(
+  Widget build(BuildContext context) {
+    final metrics = ZukoMetrics.of(context);
+    return Material(
+      color: Theme.of(context).colorScheme.surfaceContainerLow,
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          final width = math.max(
+            constraints.maxWidth,
+            widget.connections.length * metrics.size(128),
+          );
+          return YaruScrollViewUndershoot(
             controller: _scrollController,
             scrollDirection: Axis.horizontal,
-            child: SizedBox(
-              width: width,
-              child: YaruTabBar(
-                tabController: widget.controller,
-                onTap: _selected,
-                height: 42,
-                tabs: [
-                  for (final connection in widget.connections)
-                    Tab(
-                      key: ObjectKey(connection),
-                      height: 32,
-                      child: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Icon(
-                            connection.state.isAttached
-                                ? Icons.link
-                                : Icons.link_off,
-                            size: 14,
-                          ),
-                          const SizedBox(width: 6),
-                          Flexible(
-                            child: Text(
-                              widget.labelFor(connection),
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
+            child: SingleChildScrollView(
+              controller: _scrollController,
+              scrollDirection: Axis.horizontal,
+              child: SizedBox(
+                width: width,
+                child: YaruTabBar(
+                  tabController: widget.controller,
+                  onTap: _selected,
+                  height: metrics.tabBarHeight,
+                  tabs: [
+                    for (final connection in widget.connections)
+                      Tab(
+                        key: ObjectKey(connection),
+                        height: metrics.tabHeight,
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(
+                              connection.state.isAttached
+                                  ? Icons.link
+                                  : Icons.link_off,
+                              size: metrics.size(14),
                             ),
-                          ),
-                          const SizedBox(width: 2),
-                          IconButton(
-                            tooltip: 'Close ${widget.labelFor(connection)}',
-                            onPressed: () => widget.onClose(connection),
-                            icon: const Icon(YaruIcons.window_close, size: 14),
-                            padding: EdgeInsets.zero,
-                            constraints: const BoxConstraints.tightFor(
-                              width: 28,
-                              height: 28,
+                            SizedBox(width: metrics.size(6)),
+                            Flexible(
+                              child: Text(
+                                widget.labelFor(connection),
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                              ),
                             ),
-                            style: IconButton.styleFrom(
-                              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                            SizedBox(width: metrics.size(2)),
+                            IconButton(
+                              tooltip: 'Close ${widget.labelFor(connection)}',
+                              onPressed: () => widget.onClose(connection),
+                              icon: Icon(
+                                YaruIcons.window_close,
+                                size: metrics.size(14),
+                              ),
+                              padding: EdgeInsets.zero,
+                              constraints: BoxConstraints.tightFor(
+                                width: metrics.size(28),
+                                height: metrics.size(28),
+                              ),
+                              style: IconButton.styleFrom(
+                                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                              ),
                             ),
-                          ),
-                        ],
+                          ],
+                        ),
                       ),
-                    ),
-                ],
+                  ],
+                ),
               ),
             ),
-          ),
-        );
-      },
-    ),
-  );
+          );
+        },
+      ),
+    );
+  }
 
   @override
   void dispose() {
@@ -1069,69 +1078,72 @@ class _DesktopSidebar extends StatelessWidget {
   final Widget child;
 
   @override
-  Widget build(BuildContext context) => AnimatedSize(
-    duration: const Duration(milliseconds: 200),
-    curve: Curves.easeOutCubic,
-    alignment: Alignment.centerLeft,
-    child: SizedBox(
-      width: expanded ? 300 : 56,
-      child: ColoredBox(
-        color: Theme.of(context).colorScheme.surfaceContainerLow,
-        child: expanded
-            ? Column(
-                children: [
-                  SizedBox(
-                    height: 52,
-                    child: Padding(
-                      padding: const EdgeInsetsDirectional.only(
-                        start: 16,
-                        end: 6,
-                      ),
-                      child: Row(
-                        children: [
-                          Expanded(
-                            child: Text(
-                              'Connections',
-                              style: Theme.of(context).textTheme.titleSmall,
+  Widget build(BuildContext context) {
+    final metrics = ZukoMetrics.of(context);
+    return AnimatedSize(
+      duration: const Duration(milliseconds: 200),
+      curve: Curves.easeOutCubic,
+      alignment: Alignment.centerLeft,
+      child: SizedBox(
+        width: expanded ? metrics.sidebarWidth : metrics.collapsedSidebarWidth,
+        child: ColoredBox(
+          color: Theme.of(context).colorScheme.surfaceContainerLow,
+          child: expanded
+              ? Column(
+                  children: [
+                    SizedBox(
+                      height: metrics.sidebarHeaderHeight,
+                      child: Padding(
+                        padding: EdgeInsetsDirectional.only(
+                          start: metrics.size(16),
+                          end: metrics.size(6),
+                        ),
+                        child: Row(
+                          children: [
+                            Expanded(
+                              child: Text(
+                                'Connections',
+                                style: Theme.of(context).textTheme.titleSmall,
+                              ),
                             ),
-                          ),
-                          IconButton(
-                            onPressed: onToggle,
-                            tooltip: 'Collapse sidebar',
-                            icon: const Icon(Icons.chevron_left),
-                          ),
-                        ],
+                            IconButton(
+                              onPressed: onToggle,
+                              tooltip: 'Collapse sidebar',
+                              icon: const Icon(Icons.chevron_left),
+                            ),
+                          ],
+                        ),
                       ),
                     ),
-                  ),
-                  const Divider(height: 1),
-                  Expanded(child: child),
-                ],
-              )
-            : Column(
-                children: [
-                  SizedBox(
-                    height: 52,
-                    child: IconButton(
-                      onPressed: onToggle,
-                      tooltip: 'Expand sidebar',
-                      icon: const Icon(Icons.chevron_right),
-                    ),
-                  ),
-                  const Divider(height: 1),
-                  if (showPairAction) ...[
-                    const SizedBox(height: 6),
-                    IconButton(
-                      onPressed: onPair,
-                      tooltip: 'Pair a new host',
-                      icon: const Icon(Icons.add_link),
-                    ),
+                    const Divider(height: 1),
+                    Expanded(child: child),
                   ],
-                ],
-              ),
+                )
+              : Column(
+                  children: [
+                    SizedBox(
+                      height: metrics.sidebarHeaderHeight,
+                      child: IconButton(
+                        onPressed: onToggle,
+                        tooltip: 'Expand sidebar',
+                        icon: const Icon(Icons.chevron_right),
+                      ),
+                    ),
+                    const Divider(height: 1),
+                    if (showPairAction) ...[
+                      SizedBox(height: metrics.size(6)),
+                      IconButton(
+                        onPressed: onPair,
+                        tooltip: 'Pair a new host',
+                        icon: const Icon(Icons.add_link),
+                      ),
+                    ],
+                  ],
+                ),
+        ),
       ),
-    ),
-  );
+    );
+  }
 }
 
 class _SessionOverlay extends StatelessWidget {
@@ -1335,6 +1347,7 @@ class _TerminalAccessory extends StatelessWidget {
     animation: controller,
     builder: (context, _) {
       final colors = Theme.of(context).colorScheme;
+      final metrics = ZukoMetrics.of(context);
       return Material(
         color: colors.surfaceContainerLow,
         child: DecoratedBox(
@@ -1344,47 +1357,47 @@ class _TerminalAccessory extends StatelessWidget {
           child: SafeArea(
             top: false,
             child: SizedBox(
-              height: terminalAccessoryHeight,
+              height: metrics.terminalAccessoryHeight,
               child: ListView(
                 scrollDirection: Axis.horizontal,
-                padding: const EdgeInsets.symmetric(horizontal: 6),
+                padding: EdgeInsets.symmetric(horizontal: metrics.size(6)),
                 children: [
                   _AccessoryKey(
-                    width: terminalAccessoryItemWidth,
+                    width: metrics.terminalAccessoryItemWidth,
                     label: 'Esc',
                     onPressed: () => controller.sendKey(Key.escape),
                   ),
                   _AccessoryKey(
-                    width: terminalAccessoryItemWidth,
+                    width: metrics.terminalAccessoryItemWidth,
                     label: 'Tab',
                     onPressed: () => controller.sendKey(Key.tab),
                   ),
-                  const SizedBox(width: terminalAccessoryGroupSpacing),
+                  SizedBox(width: metrics.terminalAccessoryGroupSpacing),
                   if (showAdditionalKeys) ...[
                     _AccessoryKey(
-                      width: terminalAccessoryItemWidth,
+                      width: metrics.terminalAccessoryItemWidth,
                       label: 'Ctrl',
                       selected: controller.virtualMods.hasCtrl,
                       onPressed: () => controller.toggleMod(const Mods.ctrl()),
                     ),
                     _AccessoryKey(
-                      width: terminalAccessoryItemWidth,
+                      width: metrics.terminalAccessoryItemWidth,
                       label: 'Alt',
                       selected: controller.virtualMods.hasAlt,
                       onPressed: () => controller.toggleMod(const Mods.alt()),
                     ),
-                    const SizedBox(width: terminalAccessoryGroupSpacing),
+                    SizedBox(width: metrics.terminalAccessoryGroupSpacing),
                     for (final item in terminalArrowKeys)
                       _RepeatableAccessoryIcon(
-                        width: terminalAccessoryItemWidth,
+                        width: metrics.terminalAccessoryItemWidth,
                         tooltip: item.label,
                         icon: _terminalArrowIcon(item.key),
                         onPressed: () => controller.sendKey(item.key),
                       ),
-                    const SizedBox(width: terminalAccessoryGroupSpacing),
+                    SizedBox(width: metrics.terminalAccessoryGroupSpacing),
                   ],
                   _AccessoryIcon(
-                    width: terminalAccessoryItemWidth,
+                    width: metrics.terminalAccessoryItemWidth,
                     tooltip: controller.keyboardState == KeyboardState.showing
                         ? 'Hide keyboard'
                         : 'Show keyboard',
@@ -1401,7 +1414,7 @@ class _TerminalAccessory extends StatelessWidget {
                     },
                   ),
                   _AccessoryIcon(
-                    width: terminalAccessoryItemWidth,
+                    width: metrics.terminalAccessoryItemWidth,
                     tooltip: touchSelectionEnabled
                         ? 'Disable touch text selection'
                         : 'Enable touch text selection',
@@ -1411,7 +1424,7 @@ class _TerminalAccessory extends StatelessWidget {
                         onTouchSelectionChanged(!touchSelectionEnabled),
                   ),
                   _AccessoryIcon(
-                    width: terminalAccessoryItemWidth,
+                    width: metrics.terminalAccessoryItemWidth,
                     tooltip: controller.hasSelection
                         ? 'Copy selected text'
                         : 'Paste',
@@ -1423,7 +1436,7 @@ class _TerminalAccessory extends StatelessWidget {
                         : () => _paste(context),
                   ),
                   _AccessoryMenu(
-                    width: terminalAccessoryItemWidth,
+                    width: metrics.terminalAccessoryItemWidth,
                     hasSelection: controller.hasSelection,
                     onSelected: (action) {
                       switch (action) {
@@ -1553,6 +1566,7 @@ class _AccessoryButtonState extends State<_AccessoryButton> {
   @override
   Widget build(BuildContext context) {
     final colors = Theme.of(context).colorScheme;
+    final metrics = ZukoMetrics.of(context);
     final radius = BorderRadius.circular(kYaruButtonRadius);
     final foreground = widget.selected == true
         ? colors.primary
@@ -1561,7 +1575,7 @@ class _AccessoryButtonState extends State<_AccessoryButton> {
     final pressedColor = colors.onSurfaceVariant.withValues(alpha: 0.12);
     final content = SizedBox(
       width: widget.width,
-      height: terminalAccessoryHeight,
+      height: metrics.terminalAccessoryHeight,
       child: Center(child: widget.child),
     );
     final interactive = widget.repeatable
@@ -1611,7 +1625,10 @@ class _AccessoryButtonState extends State<_AccessoryButton> {
           child: Material(
             type: MaterialType.transparency,
             child: IconTheme(
-              data: IconThemeData(color: foreground, size: kYaruIconSize),
+              data: IconThemeData(
+                color: foreground,
+                size: metrics.size(kYaruIconSize),
+              ),
               child: DefaultTextStyle(
                 style: Theme.of(context).textTheme.labelSmall!.copyWith(
                   color: foreground,
@@ -1642,17 +1659,18 @@ class _AccessoryMenu extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final colors = Theme.of(context).colorScheme;
+    final metrics = ZukoMetrics.of(context);
     return SizedBox(
       width: width,
-      height: terminalAccessoryHeight,
+      height: metrics.terminalAccessoryHeight,
       child: PopupMenuButton<String>(
         tooltip: 'More terminal actions',
         padding: EdgeInsets.zero,
-        iconSize: kYaruIconSize,
+        iconSize: metrics.size(kYaruIconSize),
         icon: const Icon(YaruIcons.view_more),
         style: ButtonStyle(
           fixedSize: WidgetStatePropertyAll(
-            Size(width, terminalAccessoryHeight),
+            Size(width, metrics.terminalAccessoryHeight),
           ),
           padding: const WidgetStatePropertyAll(EdgeInsets.zero),
           shape: WidgetStatePropertyAll(
@@ -1948,6 +1966,42 @@ class _Sidebar extends StatelessWidget {
               ),
               const Divider(indent: 42),
               Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 12),
+                child: Row(
+                  children: [
+                    const Icon(Icons.aspect_ratio_outlined, size: 20),
+                    const SizedBox(width: 10),
+                    const Expanded(child: Text('Interface size')),
+                    DropdownButtonHideUnderline(
+                      child: DropdownButton<AppInterfaceSize>(
+                        value: controller.interfaceSize,
+                        borderRadius: BorderRadius.circular(9),
+                        onChanged: (value) {
+                          if (value != null) {
+                            unawaited(controller.setInterfaceSize(value));
+                          }
+                        },
+                        items: const [
+                          DropdownMenuItem(
+                            value: AppInterfaceSize.compact,
+                            child: Text('Compact'),
+                          ),
+                          DropdownMenuItem(
+                            value: AppInterfaceSize.standard,
+                            child: Text('Default'),
+                          ),
+                          DropdownMenuItem(
+                            value: AppInterfaceSize.comfortable,
+                            child: Text('Comfortable'),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const Divider(indent: 42),
+              Padding(
                 padding: const EdgeInsets.only(left: 12),
                 child: Row(
                   children: [
@@ -2193,18 +2247,17 @@ class _SavedHostTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final metrics = ZukoMetrics.of(context);
     final showLabel =
         host.name.trim().toLowerCase() != host.label.trim().toLowerCase();
     return ListTile(
       selected: selected,
-      dense: true,
-      minTileHeight: showLabel ? 48 : 40,
-      visualDensity: const VisualDensity(horizontal: -2, vertical: -4),
-      contentPadding: const EdgeInsetsDirectional.only(start: 10),
-      horizontalTitleGap: 8,
+      minTileHeight: metrics.size(showLabel ? 48 : 40),
+      contentPadding: EdgeInsetsDirectional.only(start: metrics.size(10)),
+      horizontalTitleGap: metrics.size(8),
       leading: Icon(
         selected ? YaruIcons.computer_filled : YaruIcons.computer,
-        size: 18,
+        size: metrics.size(18),
       ),
       title: Text(host.name, maxLines: 1, overflow: TextOverflow.ellipsis),
       subtitle: showLabel
@@ -2214,7 +2267,7 @@ class _SavedHostTile extends StatelessWidget {
       trailing: PopupMenuButton<String>(
         tooltip: 'Manage ${host.name}',
         padding: EdgeInsets.zero,
-        iconSize: 18,
+        iconSize: metrics.size(18),
         icon: const Icon(YaruIcons.view_more),
         onSelected: onAction,
         itemBuilder: (context) => const [
