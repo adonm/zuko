@@ -21,7 +21,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest]
+        os: [ubuntu-24.04, macos-latest]
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
@@ -40,21 +40,21 @@ jobs:
         run: mise exec -- just test
 
       - name: End-to-end (connect, pairing, revocation)
-        if: ${{ matrix.os == 'ubuntu-latest' }}
+        if: ${{ matrix.os == 'ubuntu-24.04' }}
         run: mise exec -- just test-e2e
 
       - name: Lint markdown links
-        if: ${{ matrix.os == 'ubuntu-latest' }}
+        if: ${{ matrix.os == 'ubuntu-24.04' }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: mise exec -- just lint-md
 
       - name: Lint GitHub Actions workflows
-        if: ${{ matrix.os == 'ubuntu-latest' }}
+        if: ${{ matrix.os == 'ubuntu-24.04' }}
         run: mise exec -- just lint-ci
 
       - name: Test release automation
-        if: ${{ matrix.os == 'ubuntu-latest' }}
+        if: ${{ matrix.os == 'ubuntu-24.04' }}
         run: mise exec -- just check-release-metadata test-release-automation
 
   cli:
@@ -63,8 +63,8 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { runner: ubuntu-latest, target: x86_64-unknown-linux-gnu, cross: false }
-          - { runner: ubuntu-latest, target: aarch64-unknown-linux-gnu, cross: true }
+          - { runner: ubuntu-24.04, target: x86_64-unknown-linux-gnu, cross: false }
+          - { runner: ubuntu-24.04, target: aarch64-unknown-linux-gnu, cross: true }
           - { runner: macos-latest, target: x86_64-apple-darwin, cross: false }
           - { runner: macos-latest, target: aarch64-apple-darwin, cross: false }
     runs-on: ${{ matrix.runner }}
@@ -340,7 +340,7 @@ jobs:
     name: Assemble build-once release candidate
     if: ${{ github.event_name == 'push' }}
     needs: [test, cli, flutter-linux, flutter-android, flutter-windows, flutter-ios-simulator, flutter-macos]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0

@@ -115,6 +115,7 @@ build-flutter-android-store tag version build_number: patch-flutter-plugins
 
 [group('flutter')]
 build-flutter-linux: patch-flutter-plugins
+    rm -rf flutter/build/linux-gtk4
     cd flutter && flutter build linux --release --no-pub
 
 [group('flutter')]

@@ -18,7 +18,7 @@ concurrency:
 jobs:
   verify:
     name: verify exact release candidate
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
       actions: read
@@ -66,7 +66,7 @@ jobs:
   tag:
     name: publish immutable release tag
     needs: verify
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     environment: release
     permissions:
@@ -102,7 +102,7 @@ jobs:
   assets:
     name: validate and sign candidate assets
     needs: [verify, tag]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     permissions:
       actions: read
@@ -171,7 +171,7 @@ jobs:
   publish:
     name: publish immutable GitHub Release
     needs: [verify, tag, assets]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     permissions:
       actions: write

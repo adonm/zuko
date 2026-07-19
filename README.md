@@ -146,8 +146,15 @@ See [`docs/app.md`](docs/app.md).
 
 ## Build/test
 
+Linux contributors use a version-pinned Ubuntu 24.04 Distrobox as the primary
+development environment. Enter it and activate Mise before running repository
+commands; [`docs/building-clients.md`](docs/building-clients.md) lists the box,
+system, Android, and platform prerequisites.
+
 ```sh
-mise install
+mise trust
+mise bootstrap
+eval "$(mise activate bash)"
 hk install --mise # local format and full pre-push checks
 just check
 just test-e2e      # live Iroh network + PTY

@@ -22,7 +22,7 @@ concurrency:
 jobs:
   publish:
     name: publish signed iOS build to TestFlight
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 100
     environment: testflight
     steps:

@@ -4,17 +4,48 @@ This page starts from a fresh clone and names each build's output. The shared
 Flutter client targets Android, iOS, macOS, web, Linux, and Windows. Run commands
 from the repository root unless noted.
 
-## Preferred Linux container setup
+## Recommended Ubuntu 24.04 Distrobox
 
-On x86_64 Linux, use the repository's container recipes for every build that
-does not require Apple or Windows host APIs. Install a rootless Docker or Podman
-engine and [mise](https://mise.jdx.dev/getting-started.html) on the host first; an
-activated mise shell supplies `just`, or use the explicit
-`mise exec -- just ...` form. The Ubuntu 24.04 image contains the same
-checksum-pinned Mise Flutter SDK used by hosted builds, Rust, JDK 17, Android
-platforms/build-tools/NDK/CMake, GTK4, and the web Wasm tools. The source checkout is mounted
-read-only and copied into an ephemeral `/workspace`; only artifact and cache
-directories are mounted back into their normal host paths.
+The primary x86_64 Linux development environment is a version-pinned Ubuntu
+24.04 Distrobox. Create it on the host, then run repository commands inside it:
+
+```sh
+distrobox create \
+  --name flutter-dev \
+  --image quay.io/toolbx/ubuntu-toolbox:24.04
+distrobox enter flutter-dev
+```
+
+Do not use an unversioned `latest` image. Distrobox shares the host checkout,
+display, GPU, devices, network, and home by default; it is a convenient mutable
+development environment rather than a security boundary. Ubuntu 26.04 and
+Fedora are useful additional compatibility checks, but Ubuntu 24.04 remains the
+local and CI baseline.
+
+Inside the box, install [mise](https://mise.jdx.dev/getting-started.html) if it
+is not already available through the shared home, then bootstrap the native
+toolchain and activate Mise for the current shell:
+
+```sh
+mise trust
+mise bootstrap
+eval "$(mise activate bash)"
+just check
+```
+
+Activation is explicit because Distrobox shares the host's shell startup files
+by default. Run the `eval` once in each plain shell. When Zuko is checked out
+through the `flutter-dev` workspace, its `just devbox-enter` command starts
+with Mise already active.
+
+## Hermetic Flutter compile recipes
+
+The current full Linux-hostable compile matrix still uses the repository's
+pinned Ubuntu 24.04 builder image. These recipes require a healthy rootless
+Docker or Podman engine reachable from the development box. The image contains
+the checksum-pinned Flutter SDK, Rust, JDK 17, Android SDK/NDK/CMake, GTK4, and
+web Wasm tools. Source is copied from a read-only mount into an ephemeral
+workspace; only artifact and cache directories are written back.
 
 ```sh
 mise install just
@@ -51,20 +82,22 @@ Linux containers cannot faithfully build Windows, iOS, or macOS runners.
 GitHub Actions builds those targets on native Windows and macOS hosts;
 Codemagic is used only for signed iOS candidates and uploads.
 
-## Host toolchain setup
+## Native toolchain setup
 
-Install [mise](https://mise.jdx.dev/getting-started.html), then bootstrap the
-repository-managed tools, Linux OS packages, and shell activation:
+Install [mise](https://mise.jdx.dev/getting-started.html), bootstrap the
+repository-managed tools and Linux OS packages, then activate the current
+shell:
 
 ```sh
 mise bootstrap
-mise install
+eval "$(mise activate bash)"
 just flutter-check
 ```
 
-Use this path for native Apple/Windows work or quick host-side iteration. On
-Linux, a missing CMake or Android SDK is a signal to use the container recipes,
-not a reason to skip the corresponding compile gate.
+Use this path for quick native iteration inside Ubuntu 24.04 and for native
+Apple/Windows work on those operating systems. On Linux, a missing CMake or
+Android SDK is a signal to finish provisioning the Distrobox or use the
+container recipes, not a reason to skip the corresponding compile gate.
 
 The shared client pins flterm and libghostty to the same immutable commit of
 the `adonm/libghostty` monorepo. `flutter pub get` resolves both package paths
@@ -97,7 +130,8 @@ The focused container compile gate intentionally emits ARM64 native libraries.
 Use an ARM64 physical device/emulator for that APK. For an x86_64 emulator,
 use the host-native unrestricted debug build below.
 
-For host-native Android development, after installing the requirements above:
+For direct Android development inside Ubuntu 24.04, after installing the
+requirements above:
 
 ```sh
 mise exec -C flutter -- flutter build apk --debug
@@ -129,7 +163,7 @@ Preferred Linux build:
 just container-web
 ```
 
-For host-native iteration, Linux needs `clang`; the script installs the Wasm
+For direct Distrobox iteration, Linux needs `clang`; the script installs the Wasm
 Rust target and the exact `wasm-bindgen-cli` version used by the bridge:
 
 ```sh
@@ -153,9 +187,8 @@ The pinned Ubuntu 24.04 container is the release-compatible default:
 just container-linux-build
 ```
 
-For host-native iteration, `mise bootstrap` installs the configured
-dependencies on Debian/Ubuntu, Fedora, and Arch. The equivalent Debian/Ubuntu
-command is:
+For direct Ubuntu 24.04 Distrobox iteration, `mise bootstrap` installs the
+configured dependencies. The equivalent APT command is:
 
 ```sh
 sudo apt-get update
@@ -223,7 +256,7 @@ selected Apple platform. The generated runners target iOS 18 and macOS 15.
 
 ```sh
 mise bootstrap
-mise install
+eval "$(mise activate bash)"
 flutter --version
 just build-flutter-ios
 just build-flutter-macos

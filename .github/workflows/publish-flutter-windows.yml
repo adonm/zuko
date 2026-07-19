@@ -26,7 +26,7 @@ concurrency:
 jobs:
   prepare:
     name: resolve release version and source
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     outputs:
       tag: ${{ steps.release.outputs.tag }}

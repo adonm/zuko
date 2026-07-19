@@ -4,9 +4,17 @@ Use `mise` for pinned tools, environment, and bootstrap dependencies. Use
 `just` for every human-facing and CI operation. CI installs `mise.toml` directly
 and invokes the same Justfile recipes through `mise exec -- just <recipe>`.
 
+On Linux, contribute from an x86_64 Ubuntu 24.04 Distrobox created from
+`quay.io/toolbx/ubuntu-toolbox:24.04`. This is the local baseline used to match
+the repository's explicit Ubuntu 24.04 Linux jobs. Enter the box and activate
+Mise before running checks; Ubuntu 26.04 and Fedora are
+optional compatibility environments, not replacements for this gate. See
+[Building clients](building-clients.md) for creation and package setup.
+
 ```sh
-mise bootstrap          # OS packages + shell activation + pinned tools
-mise install            # includes exact host Flutter/Dart SDK archive
+mise trust
+mise bootstrap          # OS packages and pinned tools, including Flutter
+eval "$(mise activate bash)"
 hk install --mise       # local format and full pre-push gates
 just                     # grouped recipe list
 just check           # Rust + Flutter + release metadata
@@ -18,12 +26,13 @@ just container-all   # preflight + quality + Linux-hostable Flutter builds
 just build
 ```
 
-On x86_64 Linux, the container recipes are the expected path for Flutter
-compile coverage. They prevent host package drift and avoid silently skipping
-Android or Linux because CMake, GTK, Java, or the Android SDK is absent. Use
-focused `container-web`, `container-android`, and `container-linux-build`
-recipes during iteration; use `container-all` before requesting review when
-Flutter or its build configuration changed. See
+The Ubuntu 24.04 Distrobox is the normal Rust, Dart, Flutter-test, and direct
+Linux iteration environment. The `container-*` recipes remain the full Flutter
+compile gate because they pin the Android SDK/NDK and other build-only inputs.
+They prevent silently skipping Android or Linux because CMake, GTK, Java, or
+the Android SDK is absent. Use focused `container-web`, `container-android`, and
+`container-linux-build` recipes during iteration; use `container-all` before
+requesting review when Flutter or its build configuration changed. See
 [Building clients](building-clients.md) for the exact coverage and the
 Apple/Windows boundary.
 

@@ -30,7 +30,7 @@ concurrency:
 jobs:
   prepare:
     name: resolve immutable release
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     outputs:
       asset: ${{ steps.identity.outputs.asset }}
@@ -54,7 +54,7 @@ jobs:
   publish:
     name: publish existing AAB to Google Play ${{ inputs.track }}
     needs: prepare
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     environment: google-play
     steps:

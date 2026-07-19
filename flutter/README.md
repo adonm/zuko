@@ -13,10 +13,13 @@ native Windows builds use the documented PowerShell sequence because the
 repository Justfile requires Bash. Apple builds require macOS/Xcode and use
 `just build-flutter-ios` or `just build-flutter-macos`.
 
-On x86_64 Linux, prefer `just container-ci` for the shared Dart, web, Android,
-and Linux compile gate, or the focused `container-web`, `container-android`,
-and `container-linux-build` recipes. The pinned image supplies CMake, GTK, JDK 17,
-the Android SDK/NDK, and Wasm tooling instead of relying on host setup.
+On x86_64 Linux, use the version-pinned Ubuntu 24.04 Distrobox documented in
+[`../docs/building-clients.md`](../docs/building-clients.md) for normal Dart,
+Flutter, and native Linux iteration. Continue to use `just container-ci` for
+the complete web, Android, and Linux compile gate, or the focused
+`container-web`, `container-android`, and `container-linux-build` recipes,
+when you need their pinned build-only inputs. The builder supplies CMake, GTK,
+JDK 17, the Android SDK/NDK, and Wasm tooling.
 
 Architecture:
 

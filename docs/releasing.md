@@ -32,9 +32,14 @@ in [Clients](clients.md); source build outputs are in
 
 ## Cut a release
 
+Run Linux-side release checks and dispatch from the version-pinned Ubuntu 24.04
+Distrobox documented in [Building clients](building-clients.md). Hosted jobs
+remain authoritative for their native and hermetic build environments.
+
 ```sh
+mise trust
 mise bootstrap
-mise install
+eval "$(mise activate bash)"
 just check
 just test-e2e
 just release

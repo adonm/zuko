@@ -46,11 +46,6 @@ windows-x64 = { url = "https://github.com/adonm/flutter-dev/releases/download/fl
 "pacman:ninja" = "latest"
 "pacman:pkgconf" = "latest"
 
-[bootstrap.mise_shell_activate]
-bashrc = "activate"
-zshrc = "activate"
-fish = "activate"
-
 [settings]
 experimental = true
 
