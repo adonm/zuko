@@ -21,10 +21,10 @@ dependencies:
       url: https://github.com/adonm/libghostty.git
       ref: 33e98c6257b7dabfb416d1a225413c2713736894
       path: packages/flterm
-  flutter_secure_storage: 10.3.1
-  iroh_flutter: 1.0.1
+  flutter_secure_storage: 11.0.0
+  iroh_flutter: 1.0.3
   libghostty: ^0.0.11
-  mobile_scanner: 7.2.0
+  mobile_scanner: 7.4.0
   pointycastle: 4.0.0
   url_launcher: 6.3.2
   yaru: 10.2.0
