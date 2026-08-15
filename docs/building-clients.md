@@ -43,7 +43,7 @@ with Mise already active.
 The current full Linux-hostable compile matrix still uses the repository's
 pinned Ubuntu 24.04 builder image. These recipes require a healthy rootless
 Docker or Podman engine reachable from the development box. The image contains
-the checksum-pinned Flutter SDK, Rust, JDK 17, Android SDK/NDK/CMake, GTK4, and
+the checksum-pinned Flutter beta SDK, Rust, JDK 17, Android SDK/NDK/CMake, GTK3, and
 web Wasm tools. Source is copied from a read-only mount into an ephemeral
 workspace; only artifact and cache directories are written back.
 
@@ -103,12 +103,11 @@ The shared client pins flterm and libghostty to the same immutable commit of
 the `adonm/libghostty` monorepo. `flutter pub get` resolves both package paths
 from one Git checkout.
 
-Every platform installs the immutable `flutter-dev` host archive through
-Mise's `http:flutter` backend at framework revision
-`328b829d35a3a5d7a00e0c2f0e97eb8cc0d97188`, with Dart
-`3.14.0-28.0.dev` and precache content hash `469f2b34de41cab5f677ba84d6e9099c0e682d1e`.
-The Linux archive already contains the checksummed GTK4 engine; no build job
-clones, deepens, patches, or precaches Flutter.
+Every platform installs the official Flutter beta archive through Mise's
+`http:flutter` backend at framework revision
+`ceb9a865625239789d86b31be0a8d04e4c5a5084` (version `3.48.0-0.1.pre`, Dart
+`3.14.0-95.1.beta`). Linux builds use the stock GTK3 embedder with Impeller;
+no build job clones, deepens, patches, or precaches Flutter.
 
 ## Android
 
@@ -200,11 +199,11 @@ just build-flutter-linux
 Output and run command:
 
 ```sh
-flutter/build/linux-gtk4/x64/release/bundle/zuko
+flutter/build/linux/x64/release/bundle/zuko
 ```
 
 Keep the complete `bundle/` directory together. The supported packaged target
-is Wayland with Impeller/OpenGL; runtime machines also need GTK 4, libsecret,
+is Wayland with Impeller/OpenGL; runtime machines also need GTK 3, libsecret,
 and an active Secret Service provider such as GNOME Keyring. Tagged releases
 package this directory for [FlatPark](flatpark.md). See the [Linux runtime
 notes](../flutter/linux/README.md).
@@ -303,7 +302,7 @@ Current automation coverage is:
 |--------|--------------|------------------|----------------------|
 | Shared Dart + web | Analyze, test, and compile web | Recheck shared client; Pages builds web | No release asset |
 | Android | Shared Flutter checks | Unsigned APK/AAB | Same candidate signed once, published, and promoted to Appetize/Google Play |
-| Linux | Shared Flutter checks | GTK4 release bundle and smoke | Same checksummed archive consumed by FlatPark |
+| Linux | Shared Flutter checks | GTK3 release bundle and smoke | Same checksummed archive consumed by FlatPark |
 | Windows | Shared Flutter checks | x86_64 portable build | Same ZIP published; protected Store package remains manual |
 | iOS/iPadOS | Shared Flutter checks | Simulator build | Same Simulator ZIP to Appetize; exact-tag signed IPA to TestFlight |
 | macOS | Rust and shared Flutter checks | Release application build | Same development ZIP published; Mac App Store is not automated |

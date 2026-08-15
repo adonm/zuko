@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Validate the immutable Flutter SDK and build-once release policy."""
+"""Validate the pinned official Flutter beta SDK and build-once release policy."""
 
 from __future__ import annotations
 
@@ -10,21 +10,22 @@ import tomllib
 import xml.etree.ElementTree as ET
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
-FRAMEWORK_REVISION = "9351f0f780c7936af1e9b5fef0d21e8b01ee7cb6"
-FRAMEWORK_VERSION = "3.47.0-1.0.pre-672"
-PRECACHE_HASH = "e723cb127ef0d4153cc41a0b390c837b47e5f573"
-SDK_RELEASE = f"flutter-sdk-{FRAMEWORK_REVISION}"
+FRAMEWORK_REVISION = "ceb9a865625239789d86b31be0a8d04e4c5a5084"
+FRAMEWORK_VERSION = "3.48.0-0.1.pre"
+SDK_BASE = "https://storage.googleapis.com/flutter_infra_release/releases/beta"
 SDK_PLATFORMS = {
-    "linux-x64": "0d7e06f623ff778e04980bce7460955ad8f8e60fdc5e9ad8dd82966ec4770b44",
-    "macos-arm64": "7983a51457de487f7a9e6ebb9f3c80ba41e880b4e5f99bddf26776a5d1fd417c",
-    "macos-x64": "c43b5df0fa6faddfc332c247686fbaf6e202ed67a55987dd9d4a4d377eb1d68b",
-    "windows-x64": "30809cc2244124937c3eea06d5c09ad706de27b4df61cdf557bb9667f1258d57",
-}
-SDK_EXTENSIONS = {
-    "linux-x64": "tar.xz",
-    "macos-arm64": "zip",
-    "macos-x64": "zip",
-    "windows-x64": "zip",
+    "linux-x64": {
+        "archive": "linux/flutter_linux_3.48.0-0.1.pre-beta.tar.xz",
+        "digest": "9a21104985070dbddf09112b82d2e54991b28020fea91dd255ef14e8c717082e",
+    },
+    "macos-arm64": {
+        "archive": "macos/flutter_macos_3.48.0-0.1.pre-beta.zip",
+        "digest": "5cbedc2adcc06b3e6d9f674b68b0735cca369c9e4ca4dbb982a6d244d958da67",
+    },
+    "windows-x64": {
+        "archive": "windows/flutter_windows_3.48.0-0.1.pre-beta.zip",
+        "digest": "ddbf615571184c007d0754b02982e4e5e12d708125dd3810c40821fdd2296692",
+    },
 }
 
 
@@ -68,28 +69,22 @@ def validate_sdk() -> None:
         mise = tomllib.load(source)
     flutter = mise["tools"].get("http:flutter")
     if not isinstance(flutter, dict) or flutter.get("version") != FRAMEWORK_VERSION:
-        raise SystemExit("Flutter config: Mise must install the immutable host SDK")
+        raise SystemExit("Flutter config: Mise must install the official beta SDK")
     platforms = flutter.get("platforms")
     if not isinstance(platforms, dict) or set(platforms) != set(SDK_PLATFORMS):
         raise SystemExit("Flutter config: Mise SDK platforms are incomplete")
-    base = f"https://github.com/adonm/flutter-dev/releases/download/{SDK_RELEASE}"
-    for name, digest in SDK_PLATFORMS.items():
-        if not re.fullmatch(r"[0-9a-f]{64}", digest):
+    for name, entry in SDK_PLATFORMS.items():
+        if not re.fullmatch(r"[0-9a-f]{64}", entry["digest"]):
             raise SystemExit(f"Flutter config: unresolved SDK checksum for {name}")
-        archive = f"flutter-{name}-{FRAMEWORK_REVISION}.{SDK_EXTENSIONS[name]}"
         expected = {
-            "url": f"{base}/{archive}",
-            "checksum": f"sha256:{digest}",
+            "url": f"{SDK_BASE}/{entry['archive']}",
+            "checksum": f"sha256:{entry['digest']}",
         }
         if platforms.get(name) != expected:
             raise SystemExit(f"Flutter config: invalid Mise SDK pin for {name}")
     environment = mise["env"]
     if "_" in environment:
         raise SystemExit("Flutter config: repository SDK PATH override must be removed")
-    if environment.get("ZUKO_FLUTTER_REVISION") != FRAMEWORK_REVISION:
-        raise SystemExit("Flutter config: framework revision environment mismatch")
-    if environment.get("FLUTTER_PREBUILT_ENGINE_VERSION") != PRECACHE_HASH:
-        raise SystemExit("Flutter config: engine cache environment mismatch")
 
 
 def validate_rendering() -> None:
@@ -127,7 +122,7 @@ def validate_automation() -> None:
         "ubuntu@sha256:52df9b1ee71626e0088f7d400d5c6b5f7bb916f8f0c82b474289a4ece6cf3faf",
         "ANDROID_COMMAND_LINE_TOOLS_VERSION=14742923",
         "ANDROID_COMMAND_LINE_TOOLS_SHA256=04453066b540409d975c676d781da1477479dde3761310f1a7eb92a1dfb15af7",
-        "libgtk-4-dev",
+        "libgtk-3-dev",
         "mise install",
         "mise exec -- flutter --version",
         "'platforms;android-34'",
@@ -169,8 +164,8 @@ def validate_automation() -> None:
     require_text("flutter/windows/store/Test-Package.ps1", "$flutterBuild = 1800000000 +")
     require_text("scripts/package-linux-release.sh", "debug sections remain")
     require_text("scripts/package-linux-release.sh", "release bundle contains a JIT artifact")
-    require_text("scripts/package-linux-release.sh", "GTK4 engine does not match its immutable release")
-    require_text("scripts/prepare-libghostty-ios-static.py", 'version != "3.47.0-1.0.pre-160"')
+    require_text("scripts/package-linux-release.sh", "engine does not match the pinned beta archive")
+    require_text("scripts/prepare-libghostty-ios-static.py", 'version != "3.48.0-0.1.pre"')
     require_text("scripts/install-android-platform-tools.sh", "VERSION=37.0.0")
     require_text(
         "scripts/install-android-platform-tools.sh",
@@ -232,7 +227,7 @@ def main() -> None:
     validate_sdk()
     validate_rendering()
     validate_automation()
-    print(f"Flutter config: immutable Mise SDK and build-once candidate at {FRAMEWORK_REVISION}")
+    print(f"Flutter config: official beta SDK {FRAMEWORK_VERSION} at {FRAMEWORK_REVISION}")
 
 
 if __name__ == "__main__":

@@ -114,7 +114,7 @@ jobs:
           compression-level: 0
 
   flutter-linux:
-    name: Flutter Linux GTK4 candidate
+    name: Flutter Linux candidate
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     steps:
@@ -124,7 +124,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            build-essential cage clang cmake dbus-daemon libegl-dev libgl-dev libgtk-4-dev \
+            build-essential cage clang cmake dbus-daemon libegl-dev libgl-dev libgtk-3-dev \
             libsecret-1-dev mesa-vulkan-drivers ninja-build pkg-config
 
       - name: Install pinned tools and Flutter SDK
@@ -138,7 +138,7 @@ jobs:
       - name: Analyze and test shared Flutter client
         run: mise exec -- just flutter-ci-check
 
-      - name: Build GTK4 release bundle
+      - name: Build Linux release bundle
         run: |
           for attempt in 1 2; do
             if mise exec -- just build-flutter-linux; then break; fi
@@ -146,7 +146,7 @@ jobs:
             echo 'Native-assets build failed; retrying once with its populated cache' >&2
           done
 
-      - name: Package deterministic GTK4 archive
+      - name: Package deterministic Linux archive
         env:
           SHA: ${{ github.sha }}
         run: |
@@ -161,21 +161,21 @@ jobs:
 
       - name: Smoke extracted archive with Impeller
         run: |
-          install -d -m 700 .tmp/gtk4-wayland
+          install -d -m 700 .tmp/gtk3-wayland
           set +e
-          XDG_RUNTIME_DIR="$GITHUB_WORKSPACE/.tmp/gtk4-wayland" \
+          XDG_RUNTIME_DIR="$GITHUB_WORKSPACE/.tmp/gtk3-wayland" \
           GDK_BACKEND=wayland GDK_DISABLE=gl,vulkan GSK_RENDERER=cairo \
           WLR_BACKENDS=headless WLR_LIBINPUT_NO_DEVICES=1 \
           WLR_RENDERER=pixman LIBGL_ALWAYS_SOFTWARE=1 \
           timeout 30s dbus-run-session -- \
             cage -- build/linux-release/extracted/bundle/zuko \
-            > gtk4-release-smoke.log 2>&1
+            > gtk3-release-smoke.log 2>&1
           status=$?
           set -e
-          cat gtk4-release-smoke.log
+          cat gtk3-release-smoke.log
           test "$status" -eq 124
           grep -Eq 'Using the Impeller rendering backend \((Vulkan|OpenGLES|VulkanSDF|OpenGLESSDF)\)\.' \
-            gtk4-release-smoke.log
+            gtk3-release-smoke.log
 
       - name: Upload Linux candidate
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1

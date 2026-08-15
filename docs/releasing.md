@@ -107,7 +107,7 @@ and [Windows publishing](windows-publishing.md).
 ## Linux and Windows
 
 GitHub's Ubuntu 24.04 job builds, normalizes, linkage-checks, reproduces, and
-smokes the GTK4 Linux archive. FlatPark consumes that immutable URL and owns
+smokes the Linux archive. FlatPark consumes that immutable URL and owns
 Flatpak wrapping and repository publication. GitHub's Windows runner produces
 the portable x86_64 ZIP and checksum. Neither platform is rebuilt after the
 release tag.

@@ -11,7 +11,7 @@ RUN set -eux; \
     apt-get update; \
     DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
       bash binutils build-essential ca-certificates cage clang cmake curl git \
-      gzip jq libegl-dev libgl-dev libgtk-4-dev libsecret-1-dev \
+      gzip jq libegl-dev libgl-dev libgtk-3-dev libsecret-1-dev \
       mesa-vulkan-drivers ninja-build openjdk-17-jdk-headless pkg-config \
       python3 tar unzip xz-utils; \
     rm -rf /var/lib/apt/lists/*; \
@@ -21,7 +21,7 @@ RUN set -eux; \
       --output /app/bin/mise; \
     printf '%s  %s\n' "$MISE_SHA256" /app/bin/mise | sha256sum --check -; \
     chmod 0755 /app/bin/mise /app/bin/install-android-platform-tools; \
-    pkg-config --modversion gtk4
+    pkg-config --modversion gtk+-3.0
 
 ENV JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64 \
     ANDROID_HOME=/opt/android-sdk \

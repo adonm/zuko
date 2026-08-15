@@ -2024,7 +2024,7 @@ class _Sidebar extends StatelessWidget {
         if (controller.hosts.isEmpty)
           const Card(
             margin: EdgeInsets.zero,
-            child: ListTile(
+            child: YaruListTile(
               leading: Icon(Icons.computer_outlined),
               title: Text('No saved hosts'),
               subtitle: Text('Pair your first host from the welcome screen.'),
@@ -2052,76 +2052,39 @@ class _Sidebar extends StatelessWidget {
         Card(
           child: Column(
             children: [
-              Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 12),
-                child: Row(
-                  children: [
-                    const Icon(Icons.palette_outlined, size: 20),
-                    const SizedBox(width: 10),
-                    const Expanded(child: Text('Color scheme')),
-                    DropdownButtonHideUnderline(
-                      child: DropdownButton<AppThemePreference>(
-                        value: controller.theme,
-                        borderRadius: BorderRadius.circular(9),
-                        onChanged: (value) {
-                          if (value != null) {
-                            unawaited(controller.setTheme(value));
-                          }
-                        },
-                        items: const [
-                          DropdownMenuItem(
-                            value: AppThemePreference.system,
-                            child: Text('System'),
-                          ),
-                          DropdownMenuItem(
-                            value: AppThemePreference.dark,
-                            child: Text('Dark'),
-                          ),
-                          DropdownMenuItem(
-                            value: AppThemePreference.light,
-                            child: Text('Light'),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ],
-                ),
+              _OptionTile<AppThemePreference>(
+                icon: Icons.palette_outlined,
+                label: 'Color scheme',
+                value: controller.theme,
+                valueLabel: (value) => switch (value) {
+                  AppThemePreference.system => 'System',
+                  AppThemePreference.dark => 'Dark',
+                  AppThemePreference.light => 'Light',
+                },
+                items: const [
+                  (value: AppThemePreference.system, label: 'System'),
+                  (value: AppThemePreference.dark, label: 'Dark'),
+                  (value: AppThemePreference.light, label: 'Light'),
+                ],
+                onSelected: (value) => unawaited(controller.setTheme(value)),
               ),
               const Divider(indent: 42),
-              Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 12),
-                child: Row(
-                  children: [
-                    const Icon(Icons.aspect_ratio_outlined, size: 20),
-                    const SizedBox(width: 10),
-                    const Expanded(child: Text('Interface size')),
-                    DropdownButtonHideUnderline(
-                      child: DropdownButton<AppInterfaceSize>(
-                        value: controller.interfaceSize,
-                        borderRadius: BorderRadius.circular(9),
-                        onChanged: (value) {
-                          if (value != null) {
-                            unawaited(controller.setInterfaceSize(value));
-                          }
-                        },
-                        items: const [
-                          DropdownMenuItem(
-                            value: AppInterfaceSize.compact,
-                            child: Text('Compact'),
-                          ),
-                          DropdownMenuItem(
-                            value: AppInterfaceSize.standard,
-                            child: Text('Default'),
-                          ),
-                          DropdownMenuItem(
-                            value: AppInterfaceSize.comfortable,
-                            child: Text('Comfortable'),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ],
-                ),
+              _OptionTile<AppInterfaceSize>(
+                icon: Icons.aspect_ratio_outlined,
+                label: 'Interface size',
+                value: controller.interfaceSize,
+                valueLabel: (value) => switch (value) {
+                  AppInterfaceSize.compact => 'Compact',
+                  AppInterfaceSize.standard => 'Default',
+                  AppInterfaceSize.comfortable => 'Comfortable',
+                },
+                items: const [
+                  (value: AppInterfaceSize.compact, label: 'Compact'),
+                  (value: AppInterfaceSize.standard, label: 'Default'),
+                  (value: AppInterfaceSize.comfortable, label: 'Comfortable'),
+                ],
+                onSelected: (value) =>
+                    unawaited(controller.setInterfaceSize(value)),
               ),
               const Divider(indent: 42),
               Padding(
@@ -2164,7 +2127,7 @@ class _Sidebar extends StatelessWidget {
                 ),
               ),
               const Divider(indent: 42),
-              SwitchListTile(
+              YaruSwitchListTile(
                 secondary: const Icon(Icons.keyboard_alt_outlined, size: 20),
                 title: const Text('Additional terminal keys'),
                 subtitle: const Text('Show modifiers and arrows'),
@@ -2179,14 +2142,13 @@ class _Sidebar extends StatelessWidget {
         const _SectionLabel('Connection'),
         const SizedBox(height: 8),
         Card(
-          child: ListTile(
+          child: YaruListTile(
             leading: const Icon(YaruIcons.computer, size: 20),
             title: const Text('This device name'),
             subtitle: Text(
               '${controller.clientName}\n'
               'New pairings use ${controller.clientLabel}',
             ),
-            isThreeLine: true,
             trailing: IconButton(
               tooltip: 'Edit device name',
               onPressed: () => unawaited(_editClientName(context)),
@@ -2201,7 +2163,7 @@ class _Sidebar extends StatelessWidget {
               'Connection status: '
               '${selected == null ? controller.status : sessionState.message}',
           child: Card(
-            child: ListTile(
+            child: YaruListTile(
               leading: Icon(
                 selected == null
                     ? Icons.info_outline
@@ -2373,31 +2335,33 @@ class _SavedHostTile extends StatelessWidget {
     final metrics = ZukoMetrics.of(context);
     final showLabel =
         host.name.trim().toLowerCase() != host.label.trim().toLowerCase();
-    return ListTile(
+    return YaruSelectableContainer(
       selected: selected,
-      minTileHeight: metrics.size(showLabel ? 48 : 40),
-      contentPadding: EdgeInsetsDirectional.only(start: metrics.size(10)),
-      horizontalTitleGap: metrics.size(8),
-      leading: Icon(
-        selected ? YaruIcons.computer_filled : YaruIcons.computer,
-        size: metrics.size(18),
-      ),
-      title: Text(host.name, maxLines: 1, overflow: TextOverflow.ellipsis),
-      subtitle: showLabel
-          ? Text(host.label, maxLines: 1, overflow: TextOverflow.ellipsis)
-          : null,
-      onTap: onTap,
-      trailing: PopupMenuButton<String>(
-        tooltip: 'Manage ${host.name}',
-        padding: EdgeInsets.zero,
-        iconSize: metrics.size(18),
-        icon: const Icon(YaruIcons.view_more),
-        onSelected: onAction,
-        itemBuilder: (context) => const [
-          PopupMenuItem(value: 'details', child: Text('Details')),
-          PopupMenuItem(value: 'rename', child: Text('Rename')),
-          PopupMenuItem(value: 'forget', child: Text('Forget')),
-        ],
+      padding: EdgeInsets.zero,
+      child: YaruListTile(
+        title: Text(host.name, maxLines: 1, overflow: TextOverflow.ellipsis),
+        subtitle: showLabel
+            ? Text(host.label, maxLines: 1, overflow: TextOverflow.ellipsis)
+            : null,
+        leading: Icon(
+          selected ? YaruIcons.computer_filled : YaruIcons.computer,
+          size: metrics.size(18),
+        ),
+        contentPadding: EdgeInsetsDirectional.only(start: metrics.size(10)),
+        horizontalGap: metrics.size(8),
+        onTap: onTap,
+        trailing: PopupMenuButton<String>(
+          tooltip: 'Manage ${host.name}',
+          padding: EdgeInsets.zero,
+          iconSize: metrics.size(18),
+          icon: const Icon(YaruIcons.view_more),
+          onSelected: onAction,
+          itemBuilder: (context) => const [
+            PopupMenuItem(value: 'details', child: Text('Details')),
+            PopupMenuItem(value: 'rename', child: Text('Rename')),
+            PopupMenuItem(value: 'forget', child: Text('Forget')),
+          ],
+        ),
       ),
     );
   }
@@ -2418,6 +2382,83 @@ class _SectionLabel extends StatelessWidget {
         letterSpacing: 0.4,
       ),
     ),
+  );
+}
+
+/// A GNOME-style option selector: a [YaruListTile] row showing the current
+/// value with a trailing arrow that opens a checked menu of alternatives.
+class _OptionTile<T> extends StatelessWidget {
+  const _OptionTile({
+    required this.icon,
+    required this.label,
+    required this.value,
+    required this.valueLabel,
+    required this.items,
+    required this.onSelected,
+  });
+
+  final IconData icon;
+  final String label;
+  final T value;
+  final String Function(T value) valueLabel;
+  final List<({T value, String label})> items;
+  final ValueChanged<T> onSelected;
+
+  Future<void> _open(BuildContext context) async {
+    final overlay =
+        Overlay.of(context).context.findRenderObject()! as RenderBox;
+    final tile = context.findRenderObject()! as RenderBox;
+    final selected = await showMenu<T>(
+      context: context,
+      position: RelativeRect.fromRect(
+        Rect.fromPoints(
+          tile.localToGlobal(Offset.zero, ancestor: overlay),
+          tile.localToGlobal(
+            tile.size.bottomRight(Offset.zero),
+            ancestor: overlay,
+          ),
+        ),
+        Offset.zero & overlay.size,
+      ),
+      items: [
+        for (final item in items)
+          PopupMenuItem(
+            value: item.value,
+            child: Row(
+              children: [
+                SizedBox(
+                  width: 24,
+                  child: item.value == value
+                      ? const Icon(Icons.check, size: 18)
+                      : null,
+                ),
+                Text(item.label),
+              ],
+            ),
+          ),
+      ],
+    );
+    if (selected != null) onSelected(selected);
+  }
+
+  @override
+  Widget build(BuildContext context) => YaruListTile(
+    leading: Icon(icon, size: 20),
+    title: Text(label),
+    trailing: Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Text(
+          valueLabel(value),
+          style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+            color: Theme.of(context).colorScheme.onSurfaceVariant,
+          ),
+        ),
+        const SizedBox(width: 4),
+        const Icon(YaruIcons.pan_end, size: 16),
+      ],
+    ),
+    onTap: () => unawaited(_open(context)),
   );
 }
 

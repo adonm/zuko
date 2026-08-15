@@ -2,7 +2,7 @@
 # Tool versions and bootstrap dependencies live in mise.toml.
 # Run through an activated Mise shell or `mise exec -- just <recipe>`.
 # On x86_64 Linux, prefer the `container-*` Flutter recipes: they include the
-# pinned JDK, Android SDK/NDK, GTK4 dependencies, Flutter, Rust, and web toolchain.
+# pinned JDK, Android SDK/NDK, GTK3 dependencies, Flutter, Rust, and web toolchain.
 set shell := ["bash", "-euo", "pipefail", "-c"]
 
 default:
@@ -96,7 +96,7 @@ flutter-linux-ci: flutter-ci-check flutter-linux-builds
 # Compile every Flutter target faithfully buildable on a Linux host.
 [group('flutter')]
 flutter-linux-builds:
-    rm -rf target/book/web flutter/build/app flutter/build/linux-gtk4
+    rm -rf target/book/web flutter/build/app flutter/build/linux
     just build-web
     just build-flutter-android-debug
     just build-flutter-linux
@@ -120,7 +120,7 @@ build-flutter-android-store tag version build_number: patch-flutter-plugins
 
 [group('flutter')]
 build-flutter-linux: patch-flutter-plugins
-    rm -rf flutter/build/linux-gtk4
+    rm -rf flutter/build/linux
     cd flutter && flutter build linux --release --no-pub
 
 [group('flutter')]
@@ -223,7 +223,7 @@ container-android:
 container-android-release:
     bash scripts/container-flutter.sh android-release
 
-# Build the Linux desktop client in the pinned Ubuntu/GTK4 image.
+# Build the Linux desktop client in the pinned Ubuntu/GTK3 image.
 [group('containers')]
 container-linux-build:
     bash scripts/container-flutter.sh linux

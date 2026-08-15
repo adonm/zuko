@@ -39,11 +39,11 @@ case "$mode" in
     command='rm -rf flutter/build/app && mise exec -- just build-flutter-android'
     ;;
   linux)
-    command='rm -rf flutter/build/linux-gtk4 && mise exec -- just build-flutter-linux'
+    command='rm -rf flutter/build/linux && mise exec -- just build-flutter-linux'
     ;;
   linux-bundle)
     # shellcheck disable=SC2016 # Expanded by the container's bash.
-    command='rm -rf flutter/build/linux-gtk4 && mise exec -- just build-flutter-linux && mise exec -- just package-linux-release "v$(scripts/version.sh)" HEAD'
+    command='rm -rf flutter/build/linux && mise exec -- just build-flutter-linux && mise exec -- just package-linux-release "v$(scripts/version.sh)" HEAD'
     ;;
   ci)
     command='mise exec -- just flutter-linux-ci'
