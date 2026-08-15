@@ -246,14 +246,17 @@ class _PairingScreenState extends State<PairingScreen> {
 
   Widget _buildSubmittingOverlay() => ColoredBox(
     color: Colors.black.withValues(alpha: 0.55),
-    child: const Center(
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          CircularProgressIndicator(color: Colors.white),
-          SizedBox(height: 16),
-          Text('Pairing…', style: TextStyle(color: Colors.white)),
-        ],
+    child: Center(
+      child: Semantics(
+        liveRegion: true,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: const [
+            CircularProgressIndicator(color: Colors.white),
+            SizedBox(height: 16),
+            Text('Pairing…', style: TextStyle(color: Colors.white)),
+          ],
+        ),
       ),
     ),
   );
