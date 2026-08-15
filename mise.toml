@@ -15,13 +15,13 @@ hk = "1.50.0"
 "github:cli/cli" = "2.96.0"
 
 [tools."http:flutter"]
-version = "3.47.0-1.0.pre-160"
+version = "3.47.0-1.0.pre-672"
 
 [tools."http:flutter".platforms]
-linux-x64 = { url = "https://github.com/adonm/flutter-dev/releases/download/flutter-sdk-328b829d35a3a5d7a00e0c2f0e97eb8cc0d97188/flutter-linux-x64-328b829d35a3a5d7a00e0c2f0e97eb8cc0d97188.tar.xz", checksum = "sha256:b6e95c97348bebd1f129db1f1cbfb7a4a8f6481839ebe80d3eb746e102336bb9" }
-macos-arm64 = { url = "https://github.com/adonm/flutter-dev/releases/download/flutter-sdk-328b829d35a3a5d7a00e0c2f0e97eb8cc0d97188/flutter-macos-arm64-328b829d35a3a5d7a00e0c2f0e97eb8cc0d97188.zip", checksum = "sha256:7752c1f52abebeaccd4d3c3d8201cd7b0208282636ae58ef5f1a958ca610358a" }
-macos-x64 = { url = "https://github.com/adonm/flutter-dev/releases/download/flutter-sdk-328b829d35a3a5d7a00e0c2f0e97eb8cc0d97188/flutter-macos-x64-328b829d35a3a5d7a00e0c2f0e97eb8cc0d97188.zip", checksum = "sha256:85b9ffaa0316cf84852bd1055514759270e97939a618a79bac3d6037182f0adf" }
-windows-x64 = { url = "https://github.com/adonm/flutter-dev/releases/download/flutter-sdk-328b829d35a3a5d7a00e0c2f0e97eb8cc0d97188/flutter-windows-x64-328b829d35a3a5d7a00e0c2f0e97eb8cc0d97188.zip", checksum = "sha256:581f30161c555a5eab288de2b218dec501ac5e71f316b2d36fbb53f5322599ce" }
+linux-x64 = { url = "https://github.com/adonm/flutter-dev/releases/download/flutter-sdk-9351f0f780c7936af1e9b5fef0d21e8b01ee7cb6/flutter-linux-x64-9351f0f780c7936af1e9b5fef0d21e8b01ee7cb6.tar.xz", checksum = "sha256:0d7e06f623ff778e04980bce7460955ad8f8e60fdc5e9ad8dd82966ec4770b44" }
+macos-arm64 = { url = "https://github.com/adonm/flutter-dev/releases/download/flutter-sdk-9351f0f780c7936af1e9b5fef0d21e8b01ee7cb6/flutter-macos-arm64-9351f0f780c7936af1e9b5fef0d21e8b01ee7cb6.zip", checksum = "sha256:7983a51457de487f7a9e6ebb9f3c80ba41e880b4e5f99bddf26776a5d1fd417c" }
+macos-x64 = { url = "https://github.com/adonm/flutter-dev/releases/download/flutter-sdk-9351f0f780c7936af1e9b5fef0d21e8b01ee7cb6/flutter-macos-x64-9351f0f780c7936af1e9b5fef0d21e8b01ee7cb6.zip", checksum = "sha256:c43b5df0fa6faddfc332c247686fbaf6e202ed67a55987dd9d4a4d377eb1d68b" }
+windows-x64 = { url = "https://github.com/adonm/flutter-dev/releases/download/flutter-sdk-9351f0f780c7936af1e9b5fef0d21e8b01ee7cb6/flutter-windows-x64-9351f0f780c7936af1e9b5fef0d21e8b01ee7cb6.zip", checksum = "sha256:30809cc2244124937c3eea06d5c09ad706de27b4df61cdf557bb9667f1258d57" }
 
 # System-level dependencies used by Linux builds. `mise bootstrap` installs
 # only entries for package managers available on the current OS.
@@ -52,5 +52,5 @@ experimental = true
 [env]
 CARGO_TERM_COLOR = "always"
 CODEMAGIC_APP_ID = "6a52dc14add8531e99f88b8a"
-FLUTTER_PREBUILT_ENGINE_VERSION = "469f2b34de41cab5f677ba84d6e9099c0e682d1e"
-ZUKO_FLUTTER_REVISION = "328b829d35a3a5d7a00e0c2f0e97eb8cc0d97188"
+FLUTTER_PREBUILT_ENGINE_VERSION = "e723cb127ef0d4153cc41a0b390c837b47e5f573"
+ZUKO_FLUTTER_REVISION = "9351f0f780c7936af1e9b5fef0d21e8b01ee7cb6"

@@ -10,15 +10,15 @@ import tomllib
 import xml.etree.ElementTree as ET
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
-FRAMEWORK_REVISION = "328b829d35a3a5d7a00e0c2f0e97eb8cc0d97188"
-FRAMEWORK_VERSION = "3.47.0-1.0.pre-160"
-PRECACHE_HASH = "469f2b34de41cab5f677ba84d6e9099c0e682d1e"
+FRAMEWORK_REVISION = "9351f0f780c7936af1e9b5fef0d21e8b01ee7cb6"
+FRAMEWORK_VERSION = "3.47.0-1.0.pre-672"
+PRECACHE_HASH = "e723cb127ef0d4153cc41a0b390c837b47e5f573"
 SDK_RELEASE = f"flutter-sdk-{FRAMEWORK_REVISION}"
 SDK_PLATFORMS = {
-    "linux-x64": "b6e95c97348bebd1f129db1f1cbfb7a4a8f6481839ebe80d3eb746e102336bb9",
-    "macos-arm64": "7752c1f52abebeaccd4d3c3d8201cd7b0208282636ae58ef5f1a958ca610358a",
-    "macos-x64": "85b9ffaa0316cf84852bd1055514759270e97939a618a79bac3d6037182f0adf",
-    "windows-x64": "581f30161c555a5eab288de2b218dec501ac5e71f316b2d36fbb53f5322599ce",
+    "linux-x64": "0d7e06f623ff778e04980bce7460955ad8f8e60fdc5e9ad8dd82966ec4770b44",
+    "macos-arm64": "7983a51457de487f7a9e6ebb9f3c80ba41e880b4e5f99bddf26776a5d1fd417c",
+    "macos-x64": "c43b5df0fa6faddfc332c247686fbaf6e202ed67a55987dd9d4a4d377eb1d68b",
+    "windows-x64": "30809cc2244124937c3eea06d5c09ad706de27b4df61cdf557bb9667f1258d57",
 }
 SDK_EXTENSIONS = {
     "linux-x64": "tar.xz",
