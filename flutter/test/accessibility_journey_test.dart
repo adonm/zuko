@@ -61,6 +61,9 @@ void main() {
       controller.clientLabel,
     );
     expect(transport.claimedCodes, ['iridescent-hilton']);
+    // The pairing confirmation shows briefly, then the connection opens.
+    await tester.pump(const Duration(milliseconds: 500));
+    await tester.pump();
     expect(transport.sessions, hasLength(1));
 
     await tester.pumpWidget(const SizedBox.shrink());
@@ -106,17 +109,21 @@ void main() {
     expect(transport.sessions, hasLength(1));
 
     transport.sessions.first.emitState(
-      const SessionState.retrying('Connection lost. Retrying in 1s...'),
+      const SessionState.retrying(
+        'Connection lost. Retrying…',
+        retryAfter: Duration(seconds: 1),
+      ),
     );
     await tester.pump();
     await tester.pump();
     final retryMessage = tester.getSemantics(
-      find.bySemanticsLabel('Connection lost. Retrying in 1s...'),
+      find.bySemanticsLabel('Connection lost. Retrying…'),
     );
     expect(
       retryMessage.getSemanticsData().flagsCollection.isLiveRegion,
       isTrue,
     );
+    expect(find.text('1s'), findsOneWidget);
 
     final retry = find.widgetWithText(FilledButton, 'Retry now');
     final retryNode = tester.getSemantics(retry);

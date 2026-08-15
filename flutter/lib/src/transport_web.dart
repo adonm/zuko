@@ -193,9 +193,7 @@ final class _WebSession implements TerminalSession {
       final delay = sessionRetryDelay(attempt);
       attempt++;
       _states.add(
-        SessionState.retrying(
-          'Connection lost. Retrying in ${delay.inSeconds}s...',
-        ),
+        SessionState.retrying('Connection lost. Retrying…', retryAfter: delay),
       );
       await Future.any<void>([
         Future<void>.delayed(delay),

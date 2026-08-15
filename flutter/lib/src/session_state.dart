@@ -7,36 +7,46 @@ final class SessionState {
     required this.phase,
     required this.message,
     this.recovery = SessionRecovery.none,
+    this.retryAfter,
   });
 
   const SessionState.connecting([this.message = 'Connecting to host...'])
     : phase = SessionPhase.connecting,
-      recovery = SessionRecovery.none;
+      recovery = SessionRecovery.none,
+      retryAfter = null;
 
   const SessionState.attached([this.message = 'Attached'])
     : phase = SessionPhase.attached,
-      recovery = SessionRecovery.none;
+      recovery = SessionRecovery.none,
+      retryAfter = null;
 
-  const SessionState.retrying(this.message)
+  const SessionState.retrying(this.message, {this.retryAfter})
     : phase = SessionPhase.retrying,
       recovery = SessionRecovery.reconnect;
 
   const SessionState.ended([this.message = 'Session ended.'])
     : phase = SessionPhase.ended,
-      recovery = SessionRecovery.reconnect;
+      recovery = SessionRecovery.reconnect,
+      retryAfter = null;
 
   const SessionState.rejected([
     this.message = 'This client is no longer authorized. Pair it again.',
   ]) : phase = SessionPhase.rejected,
-       recovery = SessionRecovery.rePair;
+       recovery = SessionRecovery.rePair,
+       retryAfter = null;
 
   const SessionState.failed(this.message)
     : phase = SessionPhase.failed,
-      recovery = SessionRecovery.reconnect;
+      recovery = SessionRecovery.reconnect,
+      retryAfter = null;
 
   final SessionPhase phase;
   final String message;
   final SessionRecovery recovery;
+
+  /// When the transport plans to reconnect, how long it waits before the
+  /// next attempt. Null when the delay is unknown.
+  final Duration? retryAfter;
 
   bool get isAttached => phase == SessionPhase.attached;
 }

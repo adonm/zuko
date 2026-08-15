@@ -1,5 +1,8 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/semantics.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:zuko/src/model.dart';
 import 'package:zuko/src/pairing_screen.dart';
@@ -135,7 +138,10 @@ void main() {
       );
 
       await tester.tap(find.text('Open pairing'));
-      await tester.pumpAndSettle();
+      // The live viewfinder animates forever; pump the route transition
+      // instead of settling.
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 400));
       expect(find.text('Enter code instead'), findsOneWidget);
 
       await tester.tap(find.text('Emit scan'));
@@ -175,13 +181,84 @@ void main() {
     );
 
     await tester.tap(find.text('Open pairing'));
-    await tester.pumpAndSettle();
+    // The live viewfinder animates forever; pump the route transition
+    // instead of settling.
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
     await tester.tap(find.text('Emit scan'));
     await tester.pump();
 
     expect(find.text('That share code expired.'), findsOneWidget);
     expect(find.text('Scan again'), findsOneWidget);
     expect(find.text('Enter code instead'), findsOneWidget);
+  });
+
+  testWidgets('paste extracts a code from zuko share output', (tester) async {
+    final messenger =
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+    messenger.setMockMethodCallHandler(SystemChannels.platform, (call) async {
+      if (call.method == 'Clipboard.getData') {
+        return const <String, dynamic>{
+          'text':
+              'share this code (serves 1, then exits):\n'
+              'iridescent-hilton\n'
+              'on the other machine:\n'
+              '    zuko claim iridescent-hilton\n',
+        };
+      }
+      return null;
+    });
+    addTearDown(
+      () => messenger.setMockMethodCallHandler(SystemChannels.platform, null),
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: PairingScreen(startInManual: true, onClaim: (_) async => _host),
+      ),
+    );
+
+    await tester.tap(find.byTooltip('Paste share code'));
+    await tester.pump();
+
+    final field = tester.widget<TextFormField>(find.byType(TextFormField));
+    expect(field.controller!.text, 'iridescent-hilton');
+    final pair = tester.widget<FilledButton>(
+      find.widgetWithText(FilledButton, 'Pair'),
+    );
+    expect(pair.onPressed, isNotNull);
+  });
+
+  testWidgets('successful pairing confirms before opening the host', (
+    tester,
+  ) async {
+    final gate = Completer<SavedHost>();
+    await tester.pumpWidget(
+      _PairingLauncher(
+        screen: PairingScreen(
+          scannerAvailable: false,
+          onClaim: (_) => gate.future,
+        ),
+      ),
+    );
+
+    await tester.tap(find.text('Open pairing'));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byType(TextFormField), 'iridescent-hilton');
+    await tester.pump();
+    await tester.tap(find.widgetWithText(FilledButton, 'Pair'));
+    await tester.pump();
+
+    // The button label and the progress overlay both report pairing.
+    expect(find.text('Pairing…'), findsNWidgets(2));
+
+    gate.complete(_host);
+    await tester.pump();
+    expect(find.text('Paired workstation'), findsOneWidget);
+
+    await tester.pumpAndSettle();
+    expect(find.text('Paired workstation'), findsOneWidget);
+    expect(find.byType(PairingScreen), findsNothing);
   });
 
   testWidgets('pairing failures are exposed as live-region status', (

@@ -33,4 +33,43 @@ final class PairingCode {
     if (!RegExp(r'^[a-z]+(?:-[a-z]+)+$').hasMatch(candidate)) return null;
     return candidate;
   }
+
+  /// Finds the first pairing code inside free-form text, such as the
+  /// combined output of `zuko share` (e.g. `zuko claim iridescent-hilton`).
+  ///
+  /// Returns a canonical code, or null when the text contains none.
+  static String? extract(String text) {
+    if (text.length > 4096) return null;
+    final lower = text.toLowerCase();
+    // A `zuko://pair/<code>` URI embedded in surrounding text.
+    for (final match in RegExp(
+      r'zuko://pair/[a-z]+(?:-[a-z]+)+',
+    ).allMatches(lower)) {
+      final code = parse(match.group(0)!);
+      if (code != null) return code;
+    }
+    // The `zuko claim <code>` instruction printed by `zuko share`.
+    for (final match in RegExp(
+      r'zuko\s+claim\s+([a-z]+(?:-[a-z]+)+)',
+    ).allMatches(lower)) {
+      final code = parse(match.group(1)!);
+      if (code != null) return code;
+    }
+    // A line that is exactly the code: the clean `zuko share` stdout line,
+    // or merged stdout/stderr where the code sits on its own line.
+    for (final match in RegExp(
+      r'(?:^|[\r\n]+)[ \t]*([a-z]+[-_ ][a-z]+)[ \t]*[.,!?]?[ \t]*(?=[\r\n]|$)',
+    ).allMatches(lower)) {
+      final code = parse(match.group(1)!);
+      if (code != null) return code;
+    }
+    // A labelled code from chat or notes, e.g. `code: iridescent-hilton`.
+    for (final match in RegExp(
+      r'(?:^|[\s])(?:share\s+)?code\s*[:=]\s*([a-z]+[-_ ][a-z]+)',
+    ).allMatches(lower)) {
+      final code = parse(match.group(1)!);
+      if (code != null) return code;
+    }
+    return null;
+  }
 }

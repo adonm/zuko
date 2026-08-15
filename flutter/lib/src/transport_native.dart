@@ -175,7 +175,8 @@ final class _NativeSession implements TerminalSession {
         final delay = sessionRetryDelay(attempt);
         _states.add(
           SessionState.retrying(
-            'Connection lost. Retrying in ${delay.inSeconds}s...',
+            'Connection lost. Retrying…',
+            retryAfter: delay,
           ),
         );
         attempt++;
