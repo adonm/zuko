@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
 """Prepare Flutter and libghostty for an App-Store-compatible iOS build.
 
-libghostty 0.0.11 bundles a Zig-linked dylib on iOS. App Store Connect rejects
-that Mach-O because it lacks Apple's LC_ENCRYPTION_INFO_64 load command. The
-upstream Ghostty build also emits a complete static archive. This patch compiles
-that archive and relinks it into the bundled dylib with Apple clang.
+libghostty compiles Ghostty's vt core with Zig. On iOS devices Zig emits a
+Mach-O dylib without Apple's LC_ENCRYPTION_INFO_64 load command, which App
+Store Connect rejects. This patch converts the native-assets hook so the iOS
+device build relinks Zig's static `libghostty-vt.a` with Apple clang instead.
 
 Flutter 3.48.0-0.1.pre also hardcodes native-asset framework Info.plists to an
-iOS 13.0 minimum even when the binary targets iOS 18.0. Patch the pinned Flutter
-generator so its framework metadata matches the linked binary.
+iOS 13.0 minimum even when the binary targets iOS 18.0. Patch the pinned
+Flutter generator so its framework metadata matches the linked binary.
 """
 
 from __future__ import annotations
@@ -39,16 +39,6 @@ def replace_once(path: pathlib.Path, old: str, new: str) -> bool:
         fail(f"unexpected upstream source in {path}")
     path.write_text(text.replace(old, new))
     return True
-
-
-def replace_one_variant(path: pathlib.Path, variants: tuple[str, ...], new: str) -> None:
-    text = path.read_text()
-    if new in text:
-        return
-    matches = [variant for variant in variants if text.count(variant) == 1]
-    if len(matches) != 1:
-        fail(f"unexpected upstream source in {path}")
-    path.write_text(text.replace(matches[0], new))
 
 
 def package_root() -> pathlib.Path:
@@ -97,8 +87,7 @@ def patch_flutter_native_assets() -> None:
     (flutter_root / "bin/cache/flutter_tools.stamp").unlink(missing_ok=True)
 
 
-def main() -> None:
-    patch_flutter_native_assets()
+def patch_ios_apple_link() -> None:
     package = package_root()
     pubspec = (package / "pubspec.yaml").read_text()
     if "version: 0.0.11\n" not in pubspec:
@@ -106,121 +95,14 @@ def main() -> None:
     if (package / "ghostty.version").read_text().strip() != GHOSTTY_COMMIT:
         fail("the patch must be reviewed for the resolved Ghostty commit")
 
-    hook = package / "hook/build.dart"
     provider = package / "lib/src/hook/library_provider.dart"
-
-    replace_once(
-        hook,
-        """  final targetOS = input.config.code.targetOS;
-  final staticIos = targetOS == OS.iOS;
-  final libFileName = staticIos
-      ? 'libghostty.a'
-      : targetOS.dylibFileName('ghostty');
-""",
-        """  final targetOS = input.config.code.targetOS;
-  final libFileName = targetOS.dylibFileName('ghostty');
-""",
-    )
-    replace_once(
-        hook,
-        """  if (targetOS == OS.iOS && !staticIos) fixIosPageAlignment(libFile);
-
-  output.assets.code.add(
-    CodeAsset(
-      package: input.packageName,
-      name: 'libghostty.dart',
-      linkMode: staticIos ? StaticLinking() : DynamicLoadingBundled(),
-      file: libFile.uri,
-    ),
-  );
-""",
-        """  if (targetOS == OS.iOS) fixIosPageAlignment(libFile);
-
-  output.assets.code.add(
-    CodeAsset(
-      package: input.packageName,
-      name: 'libghostty.dart',
-      linkMode: DynamicLoadingBundled(),
-      file: libFile.uri,
-    ),
-  );
-""",
-    )
     replace_once(
         provider,
-        """    final source = input.userDefines['source'];
-
-    if (source == 'compile') {
-""",
-        """    final source = input.userDefines['source'];
-
-    if (source == 'compile' || input.config.code.targetOS == OS.iOS) {
-""",
-    )
-    replace_once(
-        provider,
-        """    final zig = zigTarget(os, arch, iOSSdk: ios);
-""",
-        """    final baseZigTarget = zigTarget(os, arch, iOSSdk: ios);
-    final zig = os == .iOS && ios != .iPhoneSimulator
-        ? '$baseZigTarget.18.0'
-        : baseZigTarget;
-""",
-    )
-    replace_one_variant(
-        provider,
-        (
-            """    final srcDir = os == .windows ? 'bin' : 'lib';
+        """    final srcDir = os == .windows ? 'bin' : 'lib';
     final srcFileName = os.dylibFileName('ghostty-vt');
     final srcFile = File('${installDir.toFilePath()}/$srcDir/$srcFileName');
     if (srcFile.existsSync()) srcFile.renameSync(target.path);
 """,
-            """    final srcDir = os == .windows ? 'bin' : 'lib';
-    final staticIos = os == .iOS && target.path.endsWith('.a');
-    final srcFileName = staticIos
-        ? 'libghostty-vt.a'
-        : os.dylibFileName('ghostty-vt');
-    final srcFile = File('${installDir.toFilePath()}/$srcDir/$srcFileName');
-    if (srcFile.existsSync()) srcFile.renameSync(target.path);
-""",
-            """    final srcDir = os == .windows ? 'bin' : 'lib';
-    final appleLinkedIos = os == .iOS && ios != .iPhoneSimulator;
-    final srcFileName = appleLinkedIos
-        ? 'libghostty-vt.a'
-        : os.dylibFileName('ghostty-vt');
-    final srcFile = File('${installDir.toFilePath()}/$srcDir/$srcFileName');
-
-    if (appleLinkedIos && srcFile.existsSync()) {
-      if (arch != Architecture.arm64) {
-        throw UnsupportedError('Unsupported device iOS architecture: $arch');
-      }
-      target.parent.createSync(recursive: true);
-      final result = Process.runSync('xcrun', [
-        '--sdk',
-        'iphoneos',
-        'clang',
-        '-arch',
-        'arm64',
-        '-mios-version-min=18.0',
-        '-dynamiclib',
-        '-Wl,-force_load,${srcFile.path}',
-        '-Wl,-dead_strip',
-        '-Wl,-install_name,@rpath/ghostty.framework/ghostty',
-        '-o',
-        target.path,
-      ]);
-      if (result.exitCode != 0) {
-        throw Exception(
-          'Apple clang link failed (exit code ${result.exitCode}):\\n'
-          'stdout: ${result.stdout}\\n'
-          'stderr: ${result.stderr}',
-        );
-      }
-    } else if (srcFile.existsSync()) {
-      srcFile.renameSync(target.path);
-    }
-""",
-        ),
         """    final srcDir = os == .windows ? 'bin' : 'lib';
     final appleLinkedIos = os == .iOS && ios != .iPhoneSimulator;
     final srcFileName = appleLinkedIos
@@ -260,7 +142,10 @@ def main() -> None:
 """,
     )
 
-    print(f"libghostty iOS Apple-link setup: patched {package}")
+
+def main() -> None:
+    patch_flutter_native_assets()
+    patch_ios_apple_link()
 
 
 if __name__ == "__main__":
