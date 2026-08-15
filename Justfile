@@ -77,7 +77,7 @@ flutter-app-check: flutter-get
     cd flutter && flutter analyze --no-pub
     cd flutter && flutter test --no-pub
 
-# Regenerate the pair/connect flow screenshots under flutter/screenshots.
+# Regenerate the pair/connect flow screenshots under docs/images.
 [group('flutter')]
 screenshots: flutter-get
     cd flutter && flutter test test/screenshot_flow_test.dart --dart-define=SCREENSHOTS=true --no-pub

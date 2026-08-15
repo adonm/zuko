@@ -1,7 +1,8 @@
 // Screenshot generation for the pair/connect flow.
 //
 // This test renders the real Zuko UI (Yaru themes, bundled fonts, window
-// frame, terminal widget) into PNG images under `screenshots/`. It only
+// frame, terminal widget) into PNG images under `docs/images/` for the
+// mdBook pairing flow page. It only
 // writes files when requested, so the normal gate stays fast and hermetic:
 //
 //   flutter test test/screenshot_flow_test.dart --dart-define=SCREENSHOTS=true
@@ -234,10 +235,10 @@ Future<void> _capture(WidgetTester tester, String name) async {
   final bytes = await tester.runAsync(
     () => image.toByteData(format: ui.ImageByteFormat.png),
   );
-  final directory = Directory('screenshots');
+  final directory = Directory('../docs/images');
   if (!directory.existsSync()) directory.createSync(recursive: true);
   File(
-    'screenshots/$name.png',
+    '../docs/images/$name.png',
   ).writeAsBytesSync(bytes!.buffer.asUint8List(), flush: true);
 }
 

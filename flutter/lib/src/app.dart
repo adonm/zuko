@@ -3,7 +3,7 @@ import 'dart:math' as math;
 
 import 'package:flterm/flterm.dart';
 import 'package:flutter/foundation.dart' show defaultTargetPlatform, kIsWeb;
-import 'package:flutter/gestures.dart' show kPrimaryButton;
+import 'package:flutter/gestures.dart' show PointerDeviceKind, kPrimaryButton;
 import 'package:flutter/material.dart' hide Key;
 import 'package:flutter/services.dart';
 import 'package:libghostty/libghostty.dart' show pasteIsSafe;
@@ -63,12 +63,39 @@ IconData _terminalArrowIcon(Key key) => switch (key) {
 
 bool showConnectionTabs(int connectionCount) => connectionCount > 1;
 
+/// On Linux the stock GTK3 embedder reports touchscreen pointers as mouse
+/// (flutter/flutter#90366). Allow mouse drags to scroll so touch drags keep
+/// working, and let the terminal route mouse-kind drags to its Scrollable
+/// instead of selecting.
+final class ZukoScrollBehavior extends MaterialScrollBehavior {
+  const ZukoScrollBehavior();
+
+  @override
+  Set<PointerDeviceKind> get dragDevices => const {
+    PointerDeviceKind.touch,
+    PointerDeviceKind.mouse,
+    PointerDeviceKind.stylus,
+    PointerDeviceKind.invertedStylus,
+    PointerDeviceKind.trackpad,
+  };
+}
+
 TerminalGestureSettings terminalGestureSettings({
   required bool touchSelectionEnabled,
-}) => TerminalGestureSettings(
-  longPressSelection: touchSelectionEnabled,
-  touchMouseTracking: TouchMouseTracking.tapAndScroll,
-);
+  TargetPlatform? platform,
+}) {
+  // The stock GTK3 Linux embedder reports touchscreen events as mouse
+  // pointers (flutter/flutter#90366). Mouse-kind drags select by default,
+  // which leaves touch users unable to scroll; on Linux they scroll instead
+  // and selection stays available through double-click and the keyboard.
+  final effectivePlatform = platform ?? defaultTargetPlatform;
+  final touchScrollsOnLinux = effectivePlatform == TargetPlatform.linux;
+  return TerminalGestureSettings(
+    longPressSelection: touchSelectionEnabled,
+    touchMouseTracking: TouchMouseTracking.tapAndScroll,
+    dragSelection: !touchScrollsOnLinux,
+  );
+}
 
 bool savedHostMatchesQuery(SavedHost host, String query) {
   final terms = query
@@ -425,6 +452,9 @@ class ZukoApp extends StatelessWidget {
     builder: (context, _) => MaterialApp(
       title: 'Zuko',
       debugShowCheckedModeBanner: false,
+      scrollBehavior: defaultTargetPlatform == TargetPlatform.linux
+          ? const ZukoScrollBehavior()
+          : const MaterialScrollBehavior(),
       themeMode: switch (controller.theme) {
         AppThemePreference.system => ThemeMode.system,
         AppThemePreference.dark => ThemeMode.dark,

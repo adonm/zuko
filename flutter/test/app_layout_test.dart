@@ -1,4 +1,5 @@
 import 'package:flterm/flterm.dart' show Key, TouchMouseTracking;
+import 'package:flutter/gestures.dart' show PointerDeviceKind;
 import 'package:flutter/material.dart' hide Key;
 import 'package:flutter_test/flutter_test.dart';
 import 'package:zuko/src/app.dart';
@@ -51,6 +52,25 @@ void main() {
     expect(selecting.touchMouseTracking, TouchMouseTracking.tapAndScroll);
     expect(scrolling.dragSelection, isTrue);
     expect(selecting.dragSelection, isTrue);
+  });
+
+  test('Linux routes touch-as-mouse drags to scrolling', () {
+    final linux = terminalGestureSettings(
+      touchSelectionEnabled: false,
+      platform: TargetPlatform.linux,
+    );
+    final android = terminalGestureSettings(touchSelectionEnabled: false);
+
+    expect(linux.dragSelection, isFalse);
+    expect(android.dragSelection, isTrue);
+    expect(linux.longPressSelection, android.longPressSelection);
+  });
+
+  test('Linux scroll behavior accepts every pointer kind for dragging', () {
+    const behavior = ZukoScrollBehavior();
+    expect(behavior.dragDevices, contains(PointerDeviceKind.touch));
+    expect(behavior.dragDevices, contains(PointerDeviceKind.mouse));
+    expect(behavior.dragDevices, contains(PointerDeviceKind.trackpad));
   });
 
   test('saved host search matches identity fields and multiple terms', () {
