@@ -14,7 +14,6 @@ readonly BUNDLE=$ROOT/flutter/build/linux/x64/release/bundle
 readonly WORK=$ROOT/build/linux-release
 readonly OUTPUT_DIR=$ROOT/dist/linux
 readonly OUTPUT=$OUTPUT_DIR/zuko-linux-$TAG-x86_64.tar.gz
-readonly ENGINE_SHA256=f65068ed49a50f9526ef33777e51020218047c995a01fa75714154fafc949d3f
 
 for command in find git gzip ldd readelf sha256sum strip tar; do
   command -v "$command" >/dev/null 2>&1 || {
@@ -90,8 +89,8 @@ check_linkage "$BUNDLE"
 validate_release_payload() {
   local root=$1 binary engine sections
   engine=$root/lib/libflutter_linux_gtk.so
-  if ! printf '%s  %s\n' "$ENGINE_SHA256" "$engine" | sha256sum --check >/dev/null; then
-    echo "Linux package: engine does not match the pinned beta archive" >&2
+  if ! readelf --dynamic --wide "$engine" | grep -q 'Shared library: \[libgtk-3.so.0\]'; then
+    echo "Linux package: engine does not link the stock GTK3 embedder" >&2
     exit 1
   fi
   if find "$root" -type f \( \

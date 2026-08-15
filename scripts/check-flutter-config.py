@@ -164,7 +164,7 @@ def validate_automation() -> None:
     require_text("flutter/windows/store/Test-Package.ps1", "$flutterBuild = 1800000000 +")
     require_text("scripts/package-linux-release.sh", "debug sections remain")
     require_text("scripts/package-linux-release.sh", "release bundle contains a JIT artifact")
-    require_text("scripts/package-linux-release.sh", "engine does not match the pinned beta archive")
+    require_text("scripts/package-linux-release.sh", "engine does not link the stock GTK3 embedder")
     require_text("scripts/prepare-libghostty-ios-static.py", 'version != "3.48.0-0.1.pre"')
     require_text("scripts/install-android-platform-tools.sh", "VERSION=37.0.0")
     require_text(
