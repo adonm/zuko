@@ -6,7 +6,7 @@ plugins {
 
 android {
     namespace = "dev.adonm.zuko"
-    compileSdk = flutter.compileSdkVersion
+    compileSdk = 37
     ndkVersion = "29.0.14206865"
 
     compileOptions {
