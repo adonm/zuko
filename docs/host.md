@@ -78,6 +78,7 @@ Foreground host:
 
 ```sh
 zuko host --shell /bin/bash --cwd "$HOME"
+zuko host --detached-ttl 0    # detached sessions stay resumable until shell exit/restart
 ```
 
 ## Pair and connect
@@ -120,7 +121,9 @@ zuko reset --yes
 
 - Host runs a real PTY with `TERM=xterm-256color`.
 - Shell exit ends the session and kills the PTY.
-- Network/client drop detaches the PTY for 5 minutes.
+- Network/client drop detaches the PTY for up to 6 hours by default
+  (`zuko host --detached-ttl <seconds>`; `0` keeps detached sessions until the
+  shell exits or the host restarts).
 - Detached output is discarded.
 - CLI reconnects while the process is alive; Flutter redials while its screen
   is active; Flutter clients use bounded reconnect while their session is open.
@@ -198,9 +201,9 @@ from that client. Repeated dialing cannot repair an authorization failure.
 
 ### A reconnect opens a fresh shell
 
-The detached lease lasts 5 minutes and exists only in the host process. Expired
-leases, host restarts, and upgrades create a fresh PTY. Use a terminal
-multiplexer for durable work.
+The detached lease lasts 6 hours by default (`zuko host --detached-ttl
+<seconds>`) and exists only in the host process. Expired leases, host restarts,
+and upgrades create a fresh PTY. Use a terminal multiplexer for durable work.
 
 ### A connected full-screen app looks stale
 

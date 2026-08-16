@@ -65,7 +65,8 @@ lease. A second connection with the same token takes over the same PTY.
 - `PING` replies with `PONG` carrying the same nonce.
 
 Shell EOF closes the stream and kills the PTY. Network/client drop detaches the
-PTY for 5 minutes; output while detached is discarded.
+PTY for the host's detached-session lease (6 hours by default,
+`zuko host --detached-ttl`); output while detached is discarded.
 
 ## Raw TCP tunnel
 

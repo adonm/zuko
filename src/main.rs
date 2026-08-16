@@ -42,9 +42,10 @@
 //!   0x09 ERROR    payload = [code: u8][message: UTF-8]
 //! ```
 //!
-//! zuko keeps only short in-memory PTY leases for reconnects — no replay buffer
-//! or durable session database. Users who want robust resumability run
-//! `tmux`/`zellij`/`screen` inside the zuko session.
+//! zuko keeps only bounded in-memory PTY leases for reconnects — 6 hours by
+//! default (`zuko host --detached-ttl`), no replay buffer or durable session
+//! database. Users who want robust resumability run `tmux`/`zellij`/`screen`
+//! inside the zuko session.
 
 use anyhow::Result;
 use clap::{Args, Parser, Subcommand};

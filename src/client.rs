@@ -14,9 +14,10 @@
 //! (host sends EOF) is **not** retried — the client exits normally. The 3×
 //! Ctrl-C force-quit hatch remains the escape from a wedged-but-not-dead link.
 //!
-//! Auto-resume rides the host's existing short detached lease: there is still
-//! no replay buffer, output while detached is still discarded, and a reconnect
-//! after the lease expires (host restart, long outage) lands on a fresh PTY.
+//! Auto-resume rides the host's existing detached lease (6 hours by default,
+//! `zuko host --detached-ttl`): there is still no replay buffer, output while
+//! detached is still discarded, and a reconnect after the lease expires (host
+//! restart, long outage) lands on a fresh PTY.
 //! Users running long-lived work should still do so inside `tmux`/`zellij`/
 //! `screen` on the host — that's the layer robust to host restarts.
 //!

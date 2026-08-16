@@ -79,6 +79,12 @@ pub struct HostArgs {
     /// Directory to start the shell in.
     #[arg(long)]
     pub cwd: Option<PathBuf>,
+
+    /// How long a detached session stays resumable, in seconds, after its
+    /// client disconnects. Default 21600 (6 hours). 0 keeps detached sessions
+    /// resumable until the shell exits or the host restarts.
+    #[arg(long, default_value_t = 21600)]
+    pub detached_ttl: u64,
 }
 
 /// `zuko tunnel` configuration. The command runs inside a hosted shell and

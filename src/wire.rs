@@ -29,8 +29,9 @@
 //!
 //! The client opens the stream with `ATTACH`: a non-zero, authorized 16-byte
 //! session token plus terminal size. The host replies `ATTACHED` with the token
-//! to reuse on short reconnects. Detached PTYs live only for a short in-memory
-//! lease and output while detached is discarded; there is no replay buffer.
+//! to reuse on reconnects. Detached PTYs live only for a bounded in-memory
+//! lease (6 hours by default, configurable via `zuko host --detached-ttl`) and
+//! output while detached is discarded; there is no replay buffer.
 //!
 //! Unknown frame types **must be ignored** — the protocol is designed to
 //! gain types over time without breaking old peers.

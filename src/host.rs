@@ -4,15 +4,18 @@
 //! ticket to `~/.config/zuko/current_ticket` (read out-of-band by
 //! `zuko share`), and for each incoming connection spawns the user's shell on
 //! a PTY. The connection owns the PTY: when it ends (for any reason — shell
-//! exit, or a short detached lease expires after a client/network drop.
+//! exit, or a detached lease expires after a client/network drop.
 //!
-//! ## Short detached leases
+//! ## Detached leases
 //!
 //! Earlier versions kept replay buffers and durable-ish session registries. The
-//! current host keeps only an in-memory 5-minute lease: if a client reconnects
-//! with its 16-byte token, it gets the same PTY; output while detached is
-//! discarded. There is no replay buffer or cross-restart persistence. Users who
-//! want robust resumability still run `tmux`/`zellij`/`screen` inside zuko.
+//! current host keeps only an in-memory lease: if a client reconnects with its
+//! 16-byte token before the lease expires, it gets the same PTY; output while
+//! detached is discarded. There is no replay buffer or cross-restart
+//! persistence. The lease defaults to 6 hours (`zuko host --detached-ttl`),
+//! which covers overnight sleeps, long phone breaks, and day trips without
+//! letting abandoned shells linger forever. Users who want robust resumability
+//! still run `tmux`/`zellij`/`screen` inside zuko.
 
 use anyhow::{Context, Result, bail};
 use iroh::{Endpoint, SecretKey, endpoint::presets};
@@ -51,11 +54,6 @@ const PUMP_CHANNEL_CAP: usize = 128;
 /// This keeps the host's per-connection task/thread budget predictable without
 /// adding a separate accept limiter.
 const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
-/// How long a PTY stays alive after its client disappears. Five minutes covers
-/// normal mobile backgrounding, lock-screen auth, Wi‑Fi/cellular handover, and
-/// brief tunnel/relay churn without letting abandoned shells linger for hours.
-/// Output while detached is discarded.
-const DETACHED_SESSION_TTL: Duration = Duration::from_secs(300);
 
 type SessionRegistry = Arc<tokio::sync::Mutex<HashMap<SessionToken, Arc<Session>>>>;
 
@@ -309,8 +307,9 @@ pub async fn run(args: HostArgs) -> Result<()> {
     });
 
     // Accept connections forever. Each authorized client token keys a
-    // PTY-backed session; short client drops can reattach within the detached
-    // lease window.
+    // PTY-backed session; client drops can reattach within the detached lease
+    // window (`--detached-ttl`, 6 hours by default).
+    let detached_ttl = Duration::from_secs(args.detached_ttl);
     let sessions: SessionRegistry = Arc::new(tokio::sync::Mutex::new(HashMap::new()));
     let tunnels = TunnelRegistry::default();
     loop {
@@ -321,7 +320,17 @@ pub async fn run(args: HostArgs) -> Result<()> {
             let sessions = sessions.clone();
             let tunnels = tunnels.clone();
             tokio::spawn(async move {
-                if let Err(e) = serve(incoming, shell, shell_args, cwd, sessions, tunnels).await {
+                if let Err(e) = serve(
+                    incoming,
+                    shell,
+                    shell_args,
+                    cwd,
+                    sessions,
+                    tunnels,
+                    detached_ttl,
+                )
+                .await
+                {
                     warn!("connection ended: {e:#}");
                 }
             });
@@ -335,7 +344,7 @@ pub async fn run(args: HostArgs) -> Result<()> {
 
 /// Serve one connection: require ATTACH, create or reattach its token's PTY,
 /// and pump bytes both ways. Shell exit ends the session; a link drop detaches
-/// it for the short lease window.
+/// it for the configured lease window.
 async fn serve(
     incoming: iroh::endpoint::Incoming,
     shell: String,
@@ -343,6 +352,7 @@ async fn serve(
     cwd: Option<PathBuf>,
     sessions: SessionRegistry,
     tunnels: TunnelRegistry,
+    detached_ttl: Duration,
 ) -> Result<()> {
     let connecting = incoming.accept().context("accept connection")?;
     let conn = tokio::time::timeout(HANDSHAKE_TIMEOUT, connecting)
@@ -497,7 +507,7 @@ async fn serve(
 
     // End this attachment when either side ends: client/network EOF, replaced
     // attachment, or PTY EOF (shell exit). The PTY itself survives a network
-    // drop for DETACHED_SESSION_TTL unless it exited.
+    // drop for the configured detached lease unless it exited.
     tokio::select! {
         _ = &mut net_to_pty => pty_to_net.abort(),
         _ = &mut pty_to_net => net_to_pty.abort(),
@@ -510,7 +520,7 @@ async fn serve(
         remove_session_if_same(&sessions, &session).await;
         session.kill();
     } else if let Some(generation) = session.detach(attach_id) {
-        schedule_reap(sessions, session, generation);
+        schedule_reap(sessions, session, generation, detached_ttl);
     }
     Ok(())
 }
@@ -927,9 +937,15 @@ fn spawn_pty_writer(
     });
 }
 
-fn schedule_reap(sessions: SessionRegistry, session: Arc<Session>, generation: u64) {
+fn schedule_reap(sessions: SessionRegistry, session: Arc<Session>, generation: u64, ttl: Duration) {
+    // A zero TTL opts out of reaping: detached sessions stay resumable until
+    // the shell exits or the host restarts. This is an explicit operator
+    // choice (`--detached-ttl 0`), not the default.
+    if ttl.is_zero() {
+        return;
+    }
     tokio::spawn(async move {
-        tokio::time::sleep(DETACHED_SESSION_TTL).await;
+        tokio::time::sleep(ttl).await;
         if session.should_reap(generation) {
             remove_session_if_same(&sessions, &session).await;
             session.kill();
