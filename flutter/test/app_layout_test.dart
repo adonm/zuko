@@ -1,11 +1,21 @@
+import 'dart:async';
+import 'dart:typed_data';
+
 import 'package:flterm/flterm.dart' show Key;
+import 'package:flutter/foundation.dart'
+    show TargetPlatform, debugDefaultTargetPlatformOverride;
 import 'package:flutter/gestures.dart' show PointerDeviceKind;
 import 'package:flutter/material.dart' hide Key;
 import 'package:flutter_test/flutter_test.dart';
 import 'package:zuko/src/app.dart';
+import 'package:zuko/src/app_controller.dart';
 import 'package:zuko/src/model.dart';
+import 'package:zuko/src/session_state.dart';
+import 'package:zuko/src/storage.dart';
 import 'package:zuko/src/theme.dart';
+import 'package:zuko/src/transport.dart';
 import 'package:zuko/src/window_frame.dart';
+import 'package:zuko/src/wire.dart';
 
 void main() {
   test('terminal accessory controls use standard Adwaita dimensions', () {
@@ -13,7 +23,23 @@ void main() {
 
     expect(metrics.terminalAccessoryHeight, 34);
     expect(metrics.terminalAccessoryItemWidth, 34);
+    expect(metrics.terminalAccessorySlimHeight, 28);
     expect(metrics.terminalAccessoryGroupSpacing, 6);
+  });
+
+  test('mobile accessory collapses while the soft keyboard is closed', () {
+    expect(
+      terminalAccessoryMode(keyboardVisible: false, mobile: true),
+      TerminalAccessoryMode.slim,
+    );
+    expect(
+      terminalAccessoryMode(keyboardVisible: true, mobile: true),
+      TerminalAccessoryMode.full,
+    );
+    expect(
+      terminalAccessoryMode(keyboardVisible: false, mobile: false),
+      TerminalAccessoryMode.full,
+    );
   });
 
   test('terminal navigation keys use predictable paired ordering', () {
@@ -435,5 +461,156 @@ void main() {
       ),
       isFalse,
     );
+  });
+
+  _accessoryWidgetTests();
+}
+
+Future<AppController> _accessoryTestController() async {
+  final state = ClientState(
+    clientKey: Uint8List.fromList(List<int>.generate(32, (index) => index)),
+    clientName: 'test-device',
+    hosts: const [
+      SavedHost(
+        name: 'Home server',
+        label: 'home',
+        ticket: 'ticket-home',
+        nodeId: 'node-home',
+      ),
+    ],
+  );
+  final storage = _AccessoryTestStorage();
+  final store = ClientStateStore.withStorage(storage);
+  await store.save(state);
+  return AppController.forTesting(
+    store: store,
+    state: state,
+    transport: _AccessoryTestTransport(),
+  );
+}
+
+final class _AccessoryTestTransport implements ClientTransport {
+  @override
+  Future<ClaimResult> claim(String code, String clientLabel) async {
+    throw UnimplementedError();
+  }
+
+  @override
+  TerminalSession connect(SavedHost host, TerminalGeometry geometry) =>
+      _AccessoryTestSession();
+
+  @override
+  Future<void> close() async {}
+}
+
+final class _AccessoryTestSession implements TerminalSession {
+  final _output = StreamController<Uint8List>.broadcast(sync: true);
+  final _states = StreamController<SessionState>.broadcast(sync: true);
+  final _tunnels = StreamController<TunnelEndpoint>.broadcast(sync: true);
+
+  @override
+  Stream<Uint8List> get output => _output.stream;
+
+  @override
+  Stream<SessionState> get states => _states.stream;
+
+  @override
+  Stream<TunnelEndpoint> get tunnels => _tunnels.stream;
+
+  @override
+  Future<void> send(List<int> bytes) async {}
+
+  @override
+  Future<void> resize(TerminalGeometry geometry) async {}
+
+  @override
+  Future<void> close() async {}
+}
+
+final class _AccessoryTestStorage implements SecureStateStorage {
+  final Map<String, String> values = {};
+
+  @override
+  Future<void> delete(String key) async => values.remove(key);
+
+  @override
+  Future<String?> read(String key) async => values[key];
+
+  @override
+  Future<void> write(String key, String value) async => values[key] = value;
+}
+
+void _setAccessorySurface(WidgetTester tester) {
+  tester.view.devicePixelRatio = 1;
+  tester.view.physicalSize = const Size(390, 844);
+  addTearDown(tester.view.resetDevicePixelRatio);
+  addTearDown(tester.view.resetPhysicalSize);
+}
+
+void _setAccessoryPlatform(TargetPlatform platform) {
+  debugDefaultTargetPlatformOverride = platform;
+  addTearDown(() => debugDefaultTargetPlatformOverride = null);
+}
+
+void _accessoryWidgetTests() {
+  testWidgets('mobile accessory shows typing keys only above the keyboard', (
+    tester,
+  ) async {
+    _setAccessorySurface(tester);
+    _setAccessoryPlatform(TargetPlatform.android);
+    final controller = await _accessoryTestController();
+    addTearDown(controller.dispose);
+
+    await tester.pumpWidget(ZukoApp(controller: controller));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byTooltip('Open navigation menu'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Home server'));
+    await tester.pumpAndSettle();
+
+    // Soft keyboard closed: the slim row keeps only quick actions.
+    expect(find.text('Esc'), findsNothing);
+    expect(find.text('Tab'), findsNothing);
+    expect(find.text('Ctrl'), findsNothing);
+    expect(find.byTooltip('Show keyboard'), findsOneWidget);
+
+    // Soft keyboard opens: typing keys appear above it.
+    tester.view.viewInsets = const FakeViewPadding(bottom: 300);
+    addTearDown(tester.view.resetViewInsets);
+    await tester.pumpAndSettle();
+
+    expect(find.text('Esc'), findsOneWidget);
+    expect(find.text('Ctrl'), findsOneWidget);
+    expect(find.text('Alt'), findsOneWidget);
+    expect(find.text('Tab'), findsNothing); // Tab lives in the menu on mobile
+
+    // Soft keyboard closes again: the row collapses back.
+    tester.view.viewInsets = const FakeViewPadding(bottom: 0);
+    await tester.pumpAndSettle();
+    expect(find.text('Esc'), findsNothing);
+    expect(find.byTooltip('Show keyboard'), findsOneWidget);
+  });
+
+  testWidgets('desktop accessory keeps the full row without a keyboard', (
+    tester,
+  ) async {
+    _setAccessorySurface(tester);
+    _setAccessoryPlatform(TargetPlatform.linux);
+    final controller = await _accessoryTestController();
+    addTearDown(controller.dispose);
+
+    await tester.pumpWidget(ZukoApp(controller: controller));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byTooltip('Open navigation menu'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Home server'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Esc'), findsOneWidget);
+    expect(find.text('Tab'), findsOneWidget);
+    expect(find.text('Ctrl'), findsOneWidget);
+    expect(find.byTooltip('Enable touch text selection'), findsOneWidget);
   });
 }
