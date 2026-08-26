@@ -1,0 +1,181 @@
+import 'dart:async';
+import 'dart:math' as math;
+
+import 'package:flutter/material.dart';
+import 'package:yaru/yaru.dart';
+
+import 'session_state.dart';
+
+import 'terminal_connection.dart';
+import 'theme.dart';
+
+class ConnectionTabStrip extends StatefulWidget {
+  const ConnectionTabStrip({
+    super.key,
+    required this.controller,
+    required this.selectedIndex,
+    required this.connections,
+    required this.labelFor,
+    required this.onSelected,
+    required this.onClose,
+  });
+
+  final TabController controller;
+  final int selectedIndex;
+  final List<TerminalConnection> connections;
+  final String Function(TerminalConnection connection) labelFor;
+  final ValueChanged<int> onSelected;
+  final ValueChanged<TerminalConnection> onClose;
+
+  @override
+  State<ConnectionTabStrip> createState() => _ConnectionTabStripState();
+}
+
+class _ConnectionTabStripState extends State<ConnectionTabStrip> {
+  final _scrollController = ScrollController();
+
+  @override
+  void didUpdateWidget(ConnectionTabStrip oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.controller != widget.controller ||
+        oldWidget.selectedIndex != widget.selectedIndex ||
+        oldWidget.connections.length != widget.connections.length) {
+      _revealSelectedTab();
+    }
+  }
+
+  void _revealSelectedTab([int? selectedIndex]) {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || !_scrollController.hasClients) return;
+      final position = _scrollController.position;
+      if (!position.hasContentDimensions || widget.connections.isEmpty) return;
+      final contentWidth = math.max(
+        position.viewportDimension,
+        widget.connections.length * ZukoMetrics.of(context).size(128),
+      );
+      final tabWidth = contentWidth / widget.connections.length;
+      final start = (selectedIndex ?? widget.selectedIndex) * tabWidth;
+      final end = start + tabWidth;
+      final visibleStart = position.pixels;
+      final visibleEnd = visibleStart + position.viewportDimension;
+      final target = start < visibleStart
+          ? start
+          : end > visibleEnd
+          ? end - position.viewportDimension
+          : null;
+      if (target != null) {
+        unawaited(
+          _scrollController.animateTo(
+            target.clamp(position.minScrollExtent, position.maxScrollExtent),
+            duration: const Duration(milliseconds: 150),
+            curve: Curves.easeOut,
+          ),
+        );
+      }
+    });
+  }
+
+  void _selected(int index) {
+    widget.onSelected(index);
+    _revealSelectedTab(index);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final metrics = ZukoMetrics.of(context);
+    return Material(
+      color: Theme.of(context).colorScheme.surfaceContainerLow,
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          final width = math.max(
+            constraints.maxWidth,
+            widget.connections.length * metrics.size(128),
+          );
+          return YaruScrollViewUndershoot(
+            controller: _scrollController,
+            scrollDirection: Axis.horizontal,
+            child: SingleChildScrollView(
+              controller: _scrollController,
+              scrollDirection: Axis.horizontal,
+              child: SizedBox(
+                width: width,
+                child: YaruTabBar(
+                  tabController: widget.controller,
+                  onTap: _selected,
+                  height: metrics.tabBarHeight,
+                  tabs: [
+                    for (final connection in widget.connections)
+                      Tab(
+                        key: ObjectKey(connection),
+                        height: metrics.tabHeight,
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(
+                              _tabStatusIcon(connection.state),
+                              size: metrics.size(14),
+                              color: _tabStatusColor(context, connection.state),
+                            ),
+                            SizedBox(width: metrics.size(6)),
+                            Flexible(
+                              child: Text(
+                                widget.labelFor(connection),
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ),
+                            SizedBox(width: metrics.size(2)),
+                            IconButton(
+                              tooltip: 'Close ${widget.labelFor(connection)}',
+                              onPressed: () => widget.onClose(connection),
+                              icon: Icon(
+                                YaruIcons.window_close,
+                                size: metrics.size(14),
+                              ),
+                              padding: EdgeInsets.zero,
+                              constraints: BoxConstraints.tightFor(
+                                width: metrics.size(28),
+                                height: metrics.size(28),
+                              ),
+                              style: IconButton.styleFrom(
+                                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                  ],
+                ),
+              ),
+            ),
+          );
+        },
+      ),
+    );
+  }
+
+  @override
+  void dispose() {
+    _scrollController.dispose();
+    super.dispose();
+  }
+}
+
+IconData _tabStatusIcon(SessionState state) => switch (state.phase) {
+  SessionPhase.attached => Icons.link,
+  SessionPhase.connecting => Icons.link,
+  SessionPhase.retrying => Icons.link_off,
+  SessionPhase.ended || SessionPhase.failed => Icons.link_off,
+  SessionPhase.rejected => Icons.link_off,
+};
+
+Color _tabStatusColor(BuildContext context, SessionState state) {
+  final colors = Theme.of(context).colorScheme;
+  return switch (state.phase) {
+    // In-progress states read as "busy" in the accent color; failures fade.
+    SessionPhase.connecting || SessionPhase.retrying => colors.primary,
+    SessionPhase.attached => colors.onSurfaceVariant,
+    SessionPhase.ended || SessionPhase.failed => colors.onSurfaceVariant,
+    SessionPhase.rejected => colors.error,
+  };
+}

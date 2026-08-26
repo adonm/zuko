@@ -1,5 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:zuko/src/app.dart';
+import 'package:zuko/src/repeatable_action.dart';
 
 void main() {
   test('terminal links allow absolute HTTP and HTTPS URLs', () {

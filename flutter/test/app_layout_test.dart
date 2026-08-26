@@ -7,6 +7,11 @@ import 'package:flutter/foundation.dart'
 import 'package:flutter/gestures.dart' show PointerDeviceKind;
 import 'package:flutter/material.dart' hide Key;
 import 'package:flutter_test/flutter_test.dart';
+import 'package:zuko/src/extended_key_palette.dart';
+import 'package:zuko/src/repeatable_action.dart';
+import 'package:zuko/src/accessory_bar.dart';
+import 'package:zuko/src/sidebar.dart';
+import 'package:zuko/src/terminal_key_lists.dart';
 import 'package:zuko/src/app.dart';
 import 'package:zuko/src/app_controller.dart';
 import 'package:zuko/src/model.dart';

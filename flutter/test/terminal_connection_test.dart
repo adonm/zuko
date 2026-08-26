@@ -6,7 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:libghostty/libghostty.dart'
     show ClipboardContent, ClipboardLocation, ClipboardWrite;
-import 'package:zuko/src/app.dart';
+import 'package:zuko/src/connection_tab_strip.dart';
 import 'package:zuko/src/model.dart';
 import 'package:zuko/src/session_state.dart';
 import 'package:zuko/src/terminal_connection.dart';
