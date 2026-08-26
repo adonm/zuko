@@ -4,6 +4,8 @@ import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:libghostty/libghostty.dart'
+    show ClipboardContent, ClipboardLocation, ClipboardWrite;
 import 'package:zuko/src/app.dart';
 import 'package:zuko/src/model.dart';
 import 'package:zuko/src/session_state.dart';
@@ -25,35 +27,38 @@ const _beta = SavedHost(
 );
 
 void main() {
-  test('OSC 52 clipboard writes require strict base64 UTF-8 text', () {
-    ({int selector, Uint8List payload}) request(
-      String payload, {
-      String selector = 'c',
-    }) => (
-      selector: selector.codeUnitAt(0),
-      payload: Uint8List.fromList(ascii.encode(payload)),
+  test('OSC 52 clipboard writes require standard-location UTF-8 text', () {
+    ClipboardWrite request(
+      List<int> data, {
+      ClipboardLocation location = ClipboardLocation.standard,
+    }) => ClipboardWrite(
+      location: location,
+      contents: [
+        ClipboardContent(mime: 'text/plain', data: Uint8List.fromList(data)),
+      ],
     );
 
-    expect(decodeRemoteClipboardWrite(request('aGVsbG8=')), 'hello');
-    expect(decodeRemoteClipboardWrite(request('')), '');
-    expect(decodeRemoteClipboardWrite(request('aGV sbG8=')), isNull);
-    expect(decodeRemoteClipboardWrite(request('aGVsbG8=\n')), isNull);
-    expect(decodeRemoteClipboardWrite(request('aGVsbG8')), isNull);
-    expect(decodeRemoteClipboardWrite(request('/w==')), isNull);
+    expect(decodeRemoteClipboardWrite(request('hello'.codeUnits)), 'hello');
+    expect(decodeRemoteClipboardWrite(request(const [])), '');
+    expect(decodeRemoteClipboardWrite(request(const [0xff, 0xfe])), isNull);
     expect(
-      decodeRemoteClipboardWrite(request('aGVsbG8=', selector: 'p')),
+      decodeRemoteClipboardWrite(
+        request('hello'.codeUnits, location: ClipboardLocation.selection),
+      ),
       isNull,
     );
   });
 
   test('OSC 52 clipboard writes reject decoded text over 1 MiB', () {
-    final encoded = base64.encode(Uint8List(maxRemoteClipboardBytes + 3));
+    final oversized = Uint8List(maxRemoteClipboardBytes + 3);
 
     expect(
-      decodeRemoteClipboardWrite((
-        selector: 'c'.codeUnitAt(0),
-        payload: Uint8List.fromList(ascii.encode(encoded)),
-      )),
+      decodeRemoteClipboardWrite(
+        ClipboardWrite(
+          location: ClipboardLocation.standard,
+          contents: [ClipboardContent(mime: 'text/plain', data: oversized)],
+        ),
+      ),
       isNull,
     );
   });
@@ -231,7 +236,7 @@ void main() {
     session.emitState(const SessionState.attached());
 
     connection.terminal.sendText('hello');
-    connection.terminal.onResize?.call(100, 40);
+    connection.applyTerminalGeometry(100, 40);
     await Future<void>.delayed(Duration.zero);
 
     expect(String.fromCharCodes(session.sent.single), 'hello');

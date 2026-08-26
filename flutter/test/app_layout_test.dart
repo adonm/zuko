@@ -1,4 +1,4 @@
-import 'package:flterm/flterm.dart' show Key, TouchMouseTracking;
+import 'package:flterm/flterm.dart' show Key;
 import 'package:flutter/gestures.dart' show PointerDeviceKind;
 import 'package:flutter/material.dart' hide Key;
 import 'package:flutter_test/flutter_test.dart';
@@ -48,8 +48,6 @@ void main() {
 
     expect(scrolling.longPressSelection, isFalse);
     expect(selecting.longPressSelection, isTrue);
-    expect(scrolling.touchMouseTracking, TouchMouseTracking.tapAndScroll);
-    expect(selecting.touchMouseTracking, TouchMouseTracking.tapAndScroll);
     expect(scrolling.dragSelection, isTrue);
     expect(selecting.dragSelection, isTrue);
   });

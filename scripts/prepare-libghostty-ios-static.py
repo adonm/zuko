@@ -5,7 +5,6 @@ libghostty compiles Ghostty's vt core with Zig. On iOS devices Zig emits a
 Mach-O dylib without Apple's LC_ENCRYPTION_INFO_64 load command, which App
 Store Connect rejects. This patch converts the native-assets hook so the iOS
 device build relinks Zig's static `libghostty-vt.a` with Apple clang instead.
-
 Flutter 3.48.0-0.2.pre also hardcodes native-asset framework Info.plists to an
 iOS 13.0 minimum even when the binary targets iOS 18.0. Patch the pinned
 Flutter generator so its framework metadata matches the linked binary.
@@ -23,7 +22,7 @@ import urllib.parse
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 PACKAGE_CONFIG = ROOT / "flutter/.dart_tool/package_config.json"
-GHOSTTY_COMMIT = "91f66da24527fa02d92b5fd0b41cd020f553a64c"
+GHOSTTY_COMMIT = "b97b17f06b1ffd694f80edd3df5dd2134a0bcb9e"
 
 
 def fail(message: str) -> None:
@@ -90,7 +89,7 @@ def patch_flutter_native_assets() -> None:
 def patch_ios_apple_link() -> None:
     package = package_root()
     pubspec = (package / "pubspec.yaml").read_text()
-    if "version: 0.0.11\n" not in pubspec:
+    if "version: 0.0.12\n" not in pubspec:
         fail("the patch must be reviewed for the resolved libghostty version")
     if (package / "ghostty.version").read_text().strip() != GHOSTTY_COMMIT:
         fail("the patch must be reviewed for the resolved Ghostty commit")

@@ -92,7 +92,6 @@ TerminalGestureSettings terminalGestureSettings({
   final touchScrollsOnLinux = effectivePlatform == TargetPlatform.linux;
   return TerminalGestureSettings(
     longPressSelection: touchSelectionEnabled,
-    touchMouseTracking: TouchMouseTracking.tapAndScroll,
     dragSelection: !touchScrollsOnLinux,
   );
 }
@@ -569,7 +568,7 @@ class _HomeState extends State<_Home>
 
   void _focusActiveTerminal() {
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted) _activeConnection?.terminal.requestFocus();
+      if (mounted) _activeConnection?.focusNode.requestFocus();
     });
   }
 
@@ -848,6 +847,7 @@ class _HomeState extends State<_Home>
                                   children: [
                                     TerminalView(
                                       controller: connection.terminal,
+                                      focusNode: connection.focusNode,
                                       autofocus: identical(connection, active),
                                       theme: terminalTheme,
                                       gestureSettings: terminalGestureSettings(
@@ -884,6 +884,7 @@ class _HomeState extends State<_Home>
                         ),
                         _TerminalAccessory(
                           controller: active.terminal,
+                          focusNode: active.focusNode,
                           showAdditionalKeys:
                               widget.controller.showAdditionalKeys,
                           touchSelectionEnabled: active.touchSelectionEnabled,
@@ -1430,11 +1431,13 @@ class _RecoveryActionState extends State<_RecoveryAction> {
 class _TerminalAccessory extends StatelessWidget {
   const _TerminalAccessory({
     required this.controller,
+    required this.focusNode,
     required this.showAdditionalKeys,
     required this.touchSelectionEnabled,
     required this.onTouchSelectionChanged,
   });
   final TerminalController controller;
+  final FocusNode focusNode;
   final bool showAdditionalKeys;
   final bool touchSelectionEnabled;
   final ValueChanged<bool> onTouchSelectionChanged;
@@ -1488,7 +1491,7 @@ class _TerminalAccessory extends StatelessWidget {
         if (confirmed != true) return;
       }
       controller.paste(text);
-      controller.requestFocus();
+      focusNode.requestFocus();
     } on PlatformException {
       if (!context.mounted) return;
       _showClipboardMessage(context, 'Clipboard access was denied');
@@ -1549,22 +1552,25 @@ class _TerminalAccessory extends StatelessWidget {
                       ),
                     SizedBox(width: metrics.terminalAccessoryGroupSpacing),
                   ],
-                  _AccessoryIcon(
-                    width: metrics.terminalAccessoryItemWidth,
-                    tooltip: controller.keyboardState == KeyboardState.showing
-                        ? 'Hide keyboard'
-                        : 'Show keyboard',
-                    icon: controller.keyboardState == KeyboardState.showing
-                        ? YaruIcons.keyboard_filled
-                        : YaruFreedesktopIcons.input_keyboard.icon,
-                    selected: controller.keyboardState == KeyboardState.showing,
-                    onPressed: () {
-                      if (controller.keyboardState == KeyboardState.showing) {
-                        controller.disableKeyboard();
-                      } else {
-                        controller.showKeyboard();
-                      }
-                    },
+                  ListenableBuilder(
+                    listenable: focusNode,
+                    builder: (context, _) => _AccessoryIcon(
+                      width: metrics.terminalAccessoryItemWidth,
+                      tooltip: focusNode.hasFocus
+                          ? 'Hide keyboard'
+                          : 'Show keyboard',
+                      icon: focusNode.hasFocus
+                          ? YaruIcons.keyboard_filled
+                          : YaruFreedesktopIcons.input_keyboard.icon,
+                      selected: focusNode.hasFocus,
+                      onPressed: () {
+                        if (focusNode.hasFocus) {
+                          focusNode.unfocus();
+                        } else {
+                          focusNode.requestFocus();
+                        }
+                      },
+                    ),
                   ),
                   _AccessoryIcon(
                     width: metrics.terminalAccessoryItemWidth,

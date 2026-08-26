@@ -157,11 +157,11 @@ packages:
     dependency: "direct main"
     description:
       path: "packages/flterm"
-      ref: "6159f54bafe4cae647d1cb9a9cb72ecc25b1562c"
-      resolved-ref: "6159f54bafe4cae647d1cb9a9cb72ecc25b1562c"
+      ref: f3ddef1df50e35a257b308bbfa9a2b0da8c178cd
+      resolved-ref: f3ddef1df50e35a257b308bbfa9a2b0da8c178cd
       url: "https://github.com/adonm/libghostty.git"
     source: git
-    version: "0.0.4"
+    version: "0.0.5"
   flutter:
     dependency: "direct main"
     description: flutter
@@ -349,11 +349,11 @@ packages:
     dependency: "direct main"
     description:
       path: "packages/libghostty"
-      ref: "6159f54bafe4cae647d1cb9a9cb72ecc25b1562c"
-      resolved-ref: "6159f54bafe4cae647d1cb9a9cb72ecc25b1562c"
+      ref: f3ddef1df50e35a257b308bbfa9a2b0da8c178cd
+      resolved-ref: f3ddef1df50e35a257b308bbfa9a2b0da8c178cd
       url: "https://github.com/adonm/libghostty.git"
     source: git
-    version: "0.0.11"
+    version: "0.0.12"
   lints:
     dependency: transitive
     description:

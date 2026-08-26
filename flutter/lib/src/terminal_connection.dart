@@ -4,7 +4,7 @@ import 'dart:convert';
 import 'package:flterm/flterm.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
-import 'package:libghostty/libghostty.dart' show ClipboardWrite;
+import 'package:flutter/widgets.dart' show FocusNode;
 
 import 'model.dart';
 import 'session_state.dart';
@@ -22,23 +22,15 @@ typedef TerminalTunnelHandler =
 typedef RemoteClipboardWriter = Future<void> Function(String text);
 
 const maxRemoteClipboardBytes = 1024 * 1024;
-const _maxRemoteClipboardBase64Bytes = ((maxRemoteClipboardBytes + 2) ~/ 3) * 4;
-final _strictBase64 = RegExp(
-  r'^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$',
-);
 
 String? decodeRemoteClipboardWrite(ClipboardWrite request) {
-  if (request.selector != 'c'.codeUnitAt(0) ||
-      request.payload.length > _maxRemoteClipboardBase64Bytes) {
-    return null;
-  }
+  if (request.location != ClipboardLocation.standard) return null;
+  final contents = request.contents;
+  if (contents.isEmpty) return null;
+  final data = contents.first.data;
+  if (data.length > maxRemoteClipboardBytes) return null;
   try {
-    final encoded = ascii.decode(request.payload, allowInvalid: false);
-    final match = _strictBase64.firstMatch(encoded);
-    if (match == null || match.end != encoded.length) return null;
-    final decoded = base64.decode(encoded);
-    if (decoded.length > maxRemoteClipboardBytes) return null;
-    return utf8.decode(decoded, allowMalformed: false);
+    return utf8.decode(data, allowMalformed: false);
   } on FormatException {
     return null;
   }
@@ -65,10 +57,7 @@ final class TerminalConnection extends ChangeNotifier {
       if (_acceptingIo && session != null) unawaited(session.send(bytes));
     };
     terminal.onClipboardWrite = _handleClipboardWrite;
-    terminal.onResize = (cols, rows) {
-      geometry = TerminalGeometry(cols, rows, 0, 0);
-      unawaited(_session?.resize(geometry));
-    };
+    terminal.onResize = applyTerminalGeometry;
     terminal.write(
       Uint8List.fromList(
         '\x1b[1;38;2;197;64;74mzuko\x1b[0m ready\r\n'.codeUnits,
@@ -82,6 +71,7 @@ final class TerminalConnection extends ChangeNotifier {
   final bool Function() _isClipboardSourceActive;
   final RemoteClipboardWriter _clipboardWriter;
   final TerminalController terminal;
+  final FocusNode focusNode = FocusNode();
 
   TerminalSession? _session;
   StreamSubscription<Uint8List>? _outputSubscription;
@@ -99,11 +89,12 @@ final class TerminalConnection extends ChangeNotifier {
   bool isCurrentGeneration(int generation) =>
       !_closed && generation == _generation;
 
-  void _handleClipboardWrite(ClipboardWrite request) {
-    if (_closed || !_isClipboardSourceActive()) return;
+  ClipboardWriteResult _handleClipboardWrite(ClipboardWrite request) {
+    if (_closed || !_isClipboardSourceActive()) return .denied;
     final text = decodeRemoteClipboardWrite(request);
-    if (text == null) return;
+    if (text == null) return .denied;
     unawaited(_writeClipboard(text));
+    return .success;
   }
 
   Future<void> _writeClipboard(String text) async {
@@ -119,6 +110,11 @@ final class TerminalConnection extends ChangeNotifier {
     touchSelectionEnabled = enabled;
     if (!enabled) terminal.clearSelection();
     _notify();
+  }
+
+  void applyTerminalGeometry(int cols, int rows) {
+    geometry = TerminalGeometry(cols, rows, 0, 0);
+    unawaited(_session?.resize(geometry));
   }
 
   Future<void> updateHost(SavedHost host) async {
@@ -215,6 +211,7 @@ final class TerminalConnection extends ChangeNotifier {
     _closed = true;
     _disposed = true;
     _generation++;
+    focusNode.dispose();
     terminal.dispose();
     super.dispose();
   }
