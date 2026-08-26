@@ -540,9 +540,12 @@ final class _AccessoryTestStorage implements SecureStateStorage {
   Future<void> write(String key, String value) async => values[key] = value;
 }
 
-void _setAccessorySurface(WidgetTester tester) {
+void _setAccessorySurface(
+  WidgetTester tester, {
+  Size size = const Size(390, 844),
+}) {
   tester.view.devicePixelRatio = 1;
-  tester.view.physicalSize = const Size(390, 844);
+  tester.view.physicalSize = size;
   addTearDown(tester.view.resetDevicePixelRatio);
   addTearDown(tester.view.resetPhysicalSize);
 }
@@ -550,6 +553,11 @@ void _setAccessorySurface(WidgetTester tester) {
 void _setAccessoryPlatform(TargetPlatform platform) {
   debugDefaultTargetPlatformOverride = platform;
   addTearDown(() => debugDefaultTargetPlatformOverride = null);
+}
+
+Future<void> _pumpFrames(WidgetTester tester) async {
+  await tester.pump();
+  await tester.pump(const Duration(milliseconds: 300));
 }
 
 void _accessoryWidgetTests() {
@@ -562,12 +570,12 @@ void _accessoryWidgetTests() {
     addTearDown(controller.dispose);
 
     await tester.pumpWidget(ZukoApp(controller: controller));
-    await tester.pumpAndSettle();
+    await _pumpFrames(tester);
 
     await tester.tap(find.byTooltip('Open navigation menu'));
-    await tester.pumpAndSettle();
+    await _pumpFrames(tester);
     await tester.tap(find.text('Home server'));
-    await tester.pumpAndSettle();
+    await _pumpFrames(tester);
 
     // Soft keyboard closed: the slim row keeps only quick actions.
     expect(find.text('Esc'), findsNothing);
@@ -578,7 +586,7 @@ void _accessoryWidgetTests() {
     // Soft keyboard opens: typing keys appear above it.
     tester.view.viewInsets = const FakeViewPadding(bottom: 300);
     addTearDown(tester.view.resetViewInsets);
-    await tester.pumpAndSettle();
+    await _pumpFrames(tester);
 
     expect(find.text('Esc'), findsOneWidget);
     expect(find.text('Ctrl'), findsOneWidget);
@@ -587,7 +595,7 @@ void _accessoryWidgetTests() {
 
     // Soft keyboard closes again: the row collapses back.
     tester.view.viewInsets = const FakeViewPadding(bottom: 0);
-    await tester.pumpAndSettle();
+    await _pumpFrames(tester);
     expect(find.text('Esc'), findsNothing);
     expect(find.byTooltip('Show keyboard'), findsOneWidget);
   });
@@ -595,18 +603,16 @@ void _accessoryWidgetTests() {
   testWidgets('desktop accessory keeps the full row without a keyboard', (
     tester,
   ) async {
-    _setAccessorySurface(tester);
+    _setAccessorySurface(tester, size: const Size(1200, 800));
     _setAccessoryPlatform(TargetPlatform.linux);
     final controller = await _accessoryTestController();
     addTearDown(controller.dispose);
 
     await tester.pumpWidget(ZukoApp(controller: controller));
-    await tester.pumpAndSettle();
+    await _pumpFrames(tester);
 
-    await tester.tap(find.byTooltip('Open navigation menu'));
-    await tester.pumpAndSettle();
     await tester.tap(find.text('Home server'));
-    await tester.pumpAndSettle();
+    await _pumpFrames(tester);
 
     expect(find.text('Esc'), findsOneWidget);
     expect(find.text('Tab'), findsOneWidget);

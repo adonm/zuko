@@ -875,6 +875,7 @@ class _HomeState extends State<_Home>
                                       controller: connection.terminal,
                                       focusNode: connection.focusNode,
                                       autofocus: identical(connection, active),
+                                      showKeyboard: connection.showKeyboard,
                                       theme: terminalTheme,
                                       gestureSettings: terminalGestureSettings(
                                         touchSelectionEnabled:
@@ -916,6 +917,8 @@ class _HomeState extends State<_Home>
                           touchSelectionEnabled: active.touchSelectionEnabled,
                           onTouchSelectionChanged:
                               active.setTouchSelectionEnabled,
+                          showKeyboard: active.showKeyboard,
+                          onShowKeyboardChanged: active.setShowKeyboard,
                         ),
                       ],
                     ),
@@ -1454,19 +1457,74 @@ class _RecoveryActionState extends State<_RecoveryAction> {
   }
 }
 
-class _TerminalAccessory extends StatelessWidget {
+class _TerminalAccessory extends StatefulWidget {
   const _TerminalAccessory({
     required this.controller,
     required this.focusNode,
     required this.showAdditionalKeys,
     required this.touchSelectionEnabled,
     required this.onTouchSelectionChanged,
+    required this.showKeyboard,
+    required this.onShowKeyboardChanged,
   });
   final TerminalController controller;
   final FocusNode focusNode;
   final bool showAdditionalKeys;
   final bool touchSelectionEnabled;
   final ValueChanged<bool> onTouchSelectionChanged;
+  final bool showKeyboard;
+  final ValueChanged<bool> onShowKeyboardChanged;
+
+  @override
+  State<_TerminalAccessory> createState() => _TerminalAccessoryState();
+}
+
+class _TerminalAccessoryState extends State<_TerminalAccessory> {
+  TerminalController get controller => widget.controller;
+  FocusNode get focusNode => widget.focusNode;
+  bool get showAdditionalKeys => widget.showAdditionalKeys;
+  bool get touchSelectionEnabled => widget.touchSelectionEnabled;
+  bool get showKeyboard => widget.showKeyboard;
+
+  void _onShowKeyboardChanged(bool value) =>
+      widget.onShowKeyboardChanged(value);
+
+  void _onTouchSelectionChanged(bool value) =>
+      widget.onTouchSelectionChanged(value);
+
+  /// Closes the soft keyboard whenever the platform reports it hidden, so a
+  /// later terminal tap does not reopen it and break touch scrolling.
+  void _resetDismissedKeyboard(BuildContext context) {
+    if (!showKeyboard || MediaQuery.viewInsetsOf(context).bottom > 0) return;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted && widget.showKeyboard) _onShowKeyboardChanged(false);
+    });
+  }
+
+  void _toggleKeyboard() {
+    final mobile = _isMobileAccessoryPlatform(defaultTargetPlatform);
+    if (!mobile) {
+      if (focusNode.hasFocus) {
+        focusNode.unfocus();
+      } else {
+        focusNode.requestFocus();
+      }
+      return;
+    }
+    if (showKeyboard) {
+      _onShowKeyboardChanged(false);
+      focusNode.unfocus();
+      return;
+    }
+    _onShowKeyboardChanged(true);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || !widget.showKeyboard) return;
+      // Refocus after the view rebuilds with showKeyboard enabled so the
+      // focus change actually presents the keyboard.
+      focusNode.unfocus();
+      focusNode.requestFocus();
+    });
+  }
 
   void _showClipboardMessage(BuildContext context, String message) {
     if (!context.mounted) return;
@@ -1525,23 +1583,26 @@ class _TerminalAccessory extends StatelessWidget {
   }
 
   @override
-  Widget build(BuildContext context) => AnimatedBuilder(
-    animation: controller,
-    builder: (context, _) {
-      final colors = Theme.of(context).colorScheme;
-      final metrics = ZukoMetrics.of(context);
-      final mobile = _isMobileAccessoryPlatform(defaultTargetPlatform);
-      final mode = terminalAccessoryMode(
-        keyboardVisible: MediaQuery.viewInsetsOf(context).bottom > 0,
-        mobile: mobile,
-      );
-      final full = mode == TerminalAccessoryMode.full;
-      final height = full
-          ? metrics.terminalAccessoryHeight
-          : metrics.terminalAccessorySlimHeight;
-      final itemWidth = metrics.terminalAccessoryItemWidth;
-      final showKeys = !mobile || full;
-      return Material(
+  Widget build(BuildContext context) {
+    _resetDismissedKeyboard(context);
+    return AnimatedBuilder(
+      animation: controller,
+      builder: (context, _) {
+        final colors = Theme.of(context).colorScheme;
+        final metrics = ZukoMetrics.of(context);
+        final mobile = _isMobileAccessoryPlatform(defaultTargetPlatform);
+        final keyboardActive = mobile ? showKeyboard : focusNode.hasFocus;
+        final mode = terminalAccessoryMode(
+          keyboardVisible: MediaQuery.viewInsetsOf(context).bottom > 0,
+          mobile: mobile,
+        );
+        final full = mode == TerminalAccessoryMode.full;
+        final height = full
+            ? metrics.terminalAccessoryHeight
+            : metrics.terminalAccessorySlimHeight;
+        final itemWidth = metrics.terminalAccessoryItemWidth;
+        final showKeys = !mobile || full;
+        return Material(
         color: colors.surfaceContainerLow,
         child: DecoratedBox(
           decoration: BoxDecoration(
@@ -1608,20 +1669,14 @@ class _TerminalAccessory extends StatelessWidget {
                       builder: (context, _) => _AccessoryIcon(
                         width: itemWidth,
                         height: height,
-                        tooltip: focusNode.hasFocus
+                        tooltip: keyboardActive
                             ? 'Hide keyboard'
                             : 'Show keyboard',
-                        icon: focusNode.hasFocus
+                        icon: keyboardActive
                             ? YaruIcons.keyboard_filled
                             : YaruFreedesktopIcons.input_keyboard.icon,
-                        selected: focusNode.hasFocus,
-                        onPressed: () {
-                          if (focusNode.hasFocus) {
-                            focusNode.unfocus();
-                          } else {
-                            focusNode.requestFocus();
-                          }
-                        },
+                        selected: keyboardActive,
+                        onPressed: _toggleKeyboard,
                       ),
                     ),
                     if (!mobile)
@@ -1634,7 +1689,7 @@ class _TerminalAccessory extends StatelessWidget {
                         icon: Icons.text_fields,
                         selected: touchSelectionEnabled,
                         onPressed: () =>
-                            onTouchSelectionChanged(!touchSelectionEnabled),
+                            _onTouchSelectionChanged(!touchSelectionEnabled),
                       ),
                     _AccessoryIcon(
                       width: itemWidth,
@@ -1666,7 +1721,7 @@ class _TerminalAccessory extends StatelessWidget {
                           case 'tab':
                             controller.sendKey(Key.tab);
                           case 'touch-selection':
-                            onTouchSelectionChanged(!touchSelectionEnabled);
+                            _onTouchSelectionChanged(!touchSelectionEnabled);
                           case 'select-all':
                             controller.selectAll();
                           case 'copy':
@@ -1685,6 +1740,7 @@ class _TerminalAccessory extends StatelessWidget {
       );
     },
   );
+  }
 }
 
 class _AccessoryKey extends StatelessWidget {

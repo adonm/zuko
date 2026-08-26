@@ -51,7 +51,8 @@ final class TerminalConnection extends ChangeNotifier {
   }) : _isClipboardSourceActive =
            isClipboardSourceActive ?? _inactiveClipboardSource,
        _clipboardWriter = clipboardWriter ?? _writeSystemClipboard,
-       terminal = TerminalController() {
+       terminal = TerminalController(),
+       showKeyboard = _defaultShowKeyboard() {
     terminal.onOutput = (bytes) {
       final session = _session;
       if (_acceptingIo && session != null) unawaited(session.send(bytes));
@@ -85,6 +86,12 @@ final class TerminalConnection extends ChangeNotifier {
   SessionState state = const SessionState.connecting();
   TerminalGeometry geometry = const TerminalGeometry(80, 24, 0, 0);
   bool touchSelectionEnabled = false;
+  bool showKeyboard;
+
+  static bool _defaultShowKeyboard() =>
+      kIsWeb ||
+      defaultTargetPlatform != TargetPlatform.android &&
+          defaultTargetPlatform != TargetPlatform.iOS;
 
   bool isCurrentGeneration(int generation) =>
       !_closed && generation == _generation;
@@ -109,6 +116,12 @@ final class TerminalConnection extends ChangeNotifier {
     if (touchSelectionEnabled == enabled) return;
     touchSelectionEnabled = enabled;
     if (!enabled) terminal.clearSelection();
+    _notify();
+  }
+
+  void setShowKeyboard(bool enabled) {
+    if (showKeyboard == enabled) return;
+    showKeyboard = enabled;
     _notify();
   }
 
