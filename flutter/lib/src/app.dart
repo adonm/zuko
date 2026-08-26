@@ -1322,17 +1322,18 @@ class _SessionOverlayState extends State<_SessionOverlay>
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    if (state.phase == SessionPhase.connecting ||
-                        state.phase == SessionPhase.retrying)
+                    // The retry countdown ring is the only animated progress
+                    // indicator: an indeterminate spinner would keep the
+                    // frame pipeline scheduled forever, which stalls widget
+                    // tests and burns a frame every vsync on device.
+                    if (_countingDown && secondsRemaining != null)
                       Padding(
                         padding: const EdgeInsets.only(bottom: 16),
                         // The countdown is visual feedback only; excluding it
                         // keeps the live region message announced verbatim.
                         child: ExcludeSemantics(
                           child: _RetryRing(
-                            progress: _countingDown
-                                ? 1.0 - _countdown.value
-                                : null,
+                            progress: 1.0 - _countdown.value,
                             seconds: secondsRemaining,
                           ),
                         ),
@@ -1397,8 +1398,8 @@ class _SessionOverlayState extends State<_SessionOverlay>
 class _RetryRing extends StatelessWidget {
   const _RetryRing({required this.progress, required this.seconds});
 
-  final double? progress;
-  final int? seconds;
+  final double progress;
+  final int seconds;
 
   @override
   Widget build(BuildContext context) => SizedBox(
@@ -1408,8 +1409,7 @@ class _RetryRing extends StatelessWidget {
       alignment: Alignment.center,
       children: [
         CircularProgressIndicator(value: progress, strokeWidth: 4),
-        if (seconds != null)
-          Text('${seconds}s', style: Theme.of(context).textTheme.labelLarge),
+        Text('${seconds}s', style: Theme.of(context).textTheme.labelLarge),
       ],
     ),
   );
@@ -1494,8 +1494,8 @@ class _TerminalAccessoryState extends State<_TerminalAccessory> {
 
   /// Closes the soft keyboard whenever the platform reports it hidden, so a
   /// later terminal tap does not reopen it and break touch scrolling.
-  void _resetDismissedKeyboard(BuildContext context) {
-    if (!showKeyboard || MediaQuery.viewInsetsOf(context).bottom > 0) return;
+  void _resetDismissedKeyboard({required bool keyboardVisible}) {
+    if (!showKeyboard || keyboardVisible) return;
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted && widget.showKeyboard) _onShowKeyboardChanged(false);
     });
@@ -1584,7 +1584,10 @@ class _TerminalAccessoryState extends State<_TerminalAccessory> {
 
   @override
   Widget build(BuildContext context) {
-    _resetDismissedKeyboard(context);
+    // Read the view insets at the state level so the accessory rebuilds
+    // whenever the soft keyboard appears or disappears.
+    final keyboardVisible = View.of(context).viewInsets.bottom > 0;
+    _resetDismissedKeyboard(keyboardVisible: keyboardVisible);
     return AnimatedBuilder(
       animation: controller,
       builder: (context, _) {
@@ -1593,7 +1596,7 @@ class _TerminalAccessoryState extends State<_TerminalAccessory> {
         final mobile = _isMobileAccessoryPlatform(defaultTargetPlatform);
         final keyboardActive = mobile ? showKeyboard : focusNode.hasFocus;
         final mode = terminalAccessoryMode(
-          keyboardVisible: MediaQuery.viewInsetsOf(context).bottom > 0,
+          keyboardVisible: keyboardVisible,
           mobile: mobile,
         );
         final full = mode == TerminalAccessoryMode.full;
@@ -1603,143 +1606,147 @@ class _TerminalAccessoryState extends State<_TerminalAccessory> {
         final itemWidth = metrics.terminalAccessoryItemWidth;
         final showKeys = !mobile || full;
         return Material(
-        color: colors.surfaceContainerLow,
-        child: DecoratedBox(
-          decoration: BoxDecoration(
-            border: Border(top: BorderSide(color: colors.outlineVariant)),
-          ),
-          child: SafeArea(
-            top: false,
-            child: AnimatedSize(
-              duration: const Duration(milliseconds: 160),
-              curve: Curves.easeOutCubic,
-              alignment: Alignment.bottomCenter,
-              child: SizedBox(
-                height: height,
-                child: ListView(
-                  scrollDirection: Axis.horizontal,
-                  padding: EdgeInsets.symmetric(horizontal: metrics.size(6)),
-                  children: [
-                    if (showKeys) ...[
-                      _AccessoryKey(
-                        width: itemWidth,
-                        height: height,
-                        label: 'Esc',
-                        onPressed: () => controller.sendKey(Key.escape),
-                      ),
-                      if (!mobile)
+          color: colors.surfaceContainerLow,
+          child: DecoratedBox(
+            decoration: BoxDecoration(
+              border: Border(top: BorderSide(color: colors.outlineVariant)),
+            ),
+            child: SafeArea(
+              top: false,
+              child: AnimatedSize(
+                duration: const Duration(milliseconds: 160),
+                curve: Curves.easeOutCubic,
+                alignment: Alignment.bottomCenter,
+                child: SizedBox(
+                  height: height,
+                  child: ListView(
+                    scrollDirection: Axis.horizontal,
+                    padding: EdgeInsets.symmetric(horizontal: metrics.size(6)),
+                    children: [
+                      if (showKeys) ...[
                         _AccessoryKey(
                           width: itemWidth,
                           height: height,
-                          label: 'Tab',
-                          onPressed: () => controller.sendKey(Key.tab),
+                          label: 'Esc',
+                          onPressed: () => controller.sendKey(Key.escape),
                         ),
-                      SizedBox(width: metrics.terminalAccessoryGroupSpacing),
-                      if (showAdditionalKeys) ...[
-                        _AccessoryKey(
-                          width: itemWidth,
-                          height: height,
-                          label: 'Ctrl',
-                          selected: controller.virtualMods.hasCtrl,
-                          onPressed: () =>
-                              controller.toggleMod(const Mods.ctrl()),
-                        ),
-                        _AccessoryKey(
-                          width: itemWidth,
-                          height: height,
-                          label: 'Alt',
-                          selected: controller.virtualMods.hasAlt,
-                          onPressed: () =>
-                              controller.toggleMod(const Mods.alt()),
-                        ),
-                        SizedBox(width: metrics.terminalAccessoryGroupSpacing),
-                        for (final item in terminalArrowKeys)
-                          _RepeatableAccessoryIcon(
+                        if (!mobile)
+                          _AccessoryKey(
                             width: itemWidth,
                             height: height,
-                            tooltip: item.label,
-                            icon: _terminalArrowIcon(item.key),
-                            onPressed: () => controller.sendKey(item.key),
+                            label: 'Tab',
+                            onPressed: () => controller.sendKey(Key.tab),
                           ),
                         SizedBox(width: metrics.terminalAccessoryGroupSpacing),
+                        if (showAdditionalKeys) ...[
+                          _AccessoryKey(
+                            width: itemWidth,
+                            height: height,
+                            label: 'Ctrl',
+                            selected: controller.virtualMods.hasCtrl,
+                            onPressed: () =>
+                                controller.toggleMod(const Mods.ctrl()),
+                          ),
+                          _AccessoryKey(
+                            width: itemWidth,
+                            height: height,
+                            label: 'Alt',
+                            selected: controller.virtualMods.hasAlt,
+                            onPressed: () =>
+                                controller.toggleMod(const Mods.alt()),
+                          ),
+                          SizedBox(
+                            width: metrics.terminalAccessoryGroupSpacing,
+                          ),
+                          for (final item in terminalArrowKeys)
+                            _RepeatableAccessoryIcon(
+                              width: itemWidth,
+                              height: height,
+                              tooltip: item.label,
+                              icon: _terminalArrowIcon(item.key),
+                              onPressed: () => controller.sendKey(item.key),
+                            ),
+                          SizedBox(
+                            width: metrics.terminalAccessoryGroupSpacing,
+                          ),
+                        ],
                       ],
-                    ],
-                    ListenableBuilder(
-                      listenable: focusNode,
-                      builder: (context, _) => _AccessoryIcon(
-                        width: itemWidth,
-                        height: height,
-                        tooltip: keyboardActive
-                            ? 'Hide keyboard'
-                            : 'Show keyboard',
-                        icon: keyboardActive
-                            ? YaruIcons.keyboard_filled
-                            : YaruFreedesktopIcons.input_keyboard.icon,
-                        selected: keyboardActive,
-                        onPressed: _toggleKeyboard,
+                      ListenableBuilder(
+                        listenable: focusNode,
+                        builder: (context, _) => _AccessoryIcon(
+                          width: itemWidth,
+                          height: height,
+                          tooltip: keyboardActive
+                              ? 'Hide keyboard'
+                              : 'Show keyboard',
+                          icon: keyboardActive
+                              ? YaruIcons.keyboard_filled
+                              : YaruFreedesktopIcons.input_keyboard.icon,
+                          selected: keyboardActive,
+                          onPressed: _toggleKeyboard,
+                        ),
                       ),
-                    ),
-                    if (!mobile)
+                      if (!mobile)
+                        _AccessoryIcon(
+                          width: itemWidth,
+                          height: height,
+                          tooltip: touchSelectionEnabled
+                              ? 'Disable touch text selection'
+                              : 'Enable touch text selection',
+                          icon: Icons.text_fields,
+                          selected: touchSelectionEnabled,
+                          onPressed: () =>
+                              _onTouchSelectionChanged(!touchSelectionEnabled),
+                        ),
                       _AccessoryIcon(
                         width: itemWidth,
                         height: height,
-                        tooltip: touchSelectionEnabled
-                            ? 'Disable touch text selection'
-                            : 'Enable touch text selection',
-                        icon: Icons.text_fields,
-                        selected: touchSelectionEnabled,
-                        onPressed: () =>
-                            _onTouchSelectionChanged(!touchSelectionEnabled),
+                        tooltip: controller.hasSelection
+                            ? 'Copy selected text'
+                            : 'Paste',
+                        icon: controller.hasSelection
+                            ? YaruFreedesktopIcons.edit_copy.icon
+                            : YaruFreedesktopIcons.edit_paste.icon,
+                        onPressed: controller.hasSelection
+                            ? () => _copy(context)
+                            : () => _paste(context),
                       ),
-                    _AccessoryIcon(
-                      width: itemWidth,
-                      height: height,
-                      tooltip: controller.hasSelection
-                          ? 'Copy selected text'
-                          : 'Paste',
-                      icon: controller.hasSelection
-                          ? YaruFreedesktopIcons.edit_copy.icon
-                          : YaruFreedesktopIcons.edit_paste.icon,
-                      onPressed: controller.hasSelection
-                          ? () => _copy(context)
-                          : () => _paste(context),
-                    ),
-                    _AccessoryMenu(
-                      width: itemWidth,
-                      height: height,
-                      hasSelection: controller.hasSelection,
-                      touchSelectionEnabled: touchSelectionEnabled,
-                      onSelected: (action) {
-                        switch (action) {
-                          case 'extended-keys':
-                            unawaited(
-                              showTerminalExtendedKeyPalette(
-                                context,
-                                onKey: (key) => controller.sendKey(key),
-                              ),
-                            );
-                          case 'tab':
-                            controller.sendKey(Key.tab);
-                          case 'touch-selection':
-                            _onTouchSelectionChanged(!touchSelectionEnabled);
-                          case 'select-all':
-                            controller.selectAll();
-                          case 'copy':
-                            unawaited(_copy(context));
-                          case 'paste':
-                            unawaited(_paste(context));
-                        }
-                      },
-                    ),
-                  ],
+                      _AccessoryMenu(
+                        width: itemWidth,
+                        height: height,
+                        hasSelection: controller.hasSelection,
+                        touchSelectionEnabled: touchSelectionEnabled,
+                        onSelected: (action) {
+                          switch (action) {
+                            case 'extended-keys':
+                              unawaited(
+                                showTerminalExtendedKeyPalette(
+                                  context,
+                                  onKey: (key) => controller.sendKey(key),
+                                ),
+                              );
+                            case 'tab':
+                              controller.sendKey(Key.tab);
+                            case 'touch-selection':
+                              _onTouchSelectionChanged(!touchSelectionEnabled);
+                            case 'select-all':
+                              controller.selectAll();
+                            case 'copy':
+                              unawaited(_copy(context));
+                            case 'paste':
+                              unawaited(_paste(context));
+                          }
+                        },
+                      ),
+                    ],
+                  ),
                 ),
               ),
             ),
           ),
-        ),
-      );
-    },
-  );
+        );
+      },
+    );
   }
 }
 
@@ -2517,9 +2524,16 @@ class _SavedHostTile extends StatelessWidget {
     final metrics = ZukoMetrics.of(context);
     final showLabel =
         host.name.trim().toLowerCase() != host.label.trim().toLowerCase();
-    return YaruSelectableContainer(
-      selected: selected,
-      padding: EdgeInsets.zero,
+    // YaruSelectableContainer animates a BoxDecoration that compares by
+    // identity, so every rebuild restarts its animation and keeps a frame
+    // scheduled forever. A static tint keeps the same visual feedback.
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(metrics.size(6)),
+        color: selected
+            ? Theme.of(context).colorScheme.primary.withValues(alpha: 0.14)
+            : null,
+      ),
       child: YaruListTile(
         title: Text(host.name, maxLines: 1, overflow: TextOverflow.ellipsis),
         subtitle: showLabel
