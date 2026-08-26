@@ -10,21 +10,21 @@ import tomllib
 import xml.etree.ElementTree as ET
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
-FRAMEWORK_REVISION = "ceb9a865625239789d86b31be0a8d04e4c5a5084"
-FRAMEWORK_VERSION = "3.48.0-0.1.pre"
+FRAMEWORK_REVISION = "e84caf74d18fc2f11ad6d1df205933a498c92932"
+FRAMEWORK_VERSION = "3.48.0-0.2.pre"
 SDK_BASE = "https://storage.googleapis.com/flutter_infra_release/releases/beta"
 SDK_PLATFORMS = {
     "linux-x64": {
-        "archive": "linux/flutter_linux_3.48.0-0.1.pre-beta.tar.xz",
-        "digest": "9a21104985070dbddf09112b82d2e54991b28020fea91dd255ef14e8c717082e",
+        "archive": "linux/flutter_linux_3.48.0-0.2.pre-beta.tar.xz",
+        "digest": "dc5ec3e0e32c5716da4706dfafcca2a58905de36bc49b8dba8cf9f50cbb63374",
     },
     "macos-arm64": {
-        "archive": "macos/flutter_macos_3.48.0-0.1.pre-beta.zip",
-        "digest": "5cbedc2adcc06b3e6d9f674b68b0735cca369c9e4ca4dbb982a6d244d958da67",
+        "archive": "macos/flutter_macos_3.48.0-0.2.pre-beta.zip",
+        "digest": "7267c3fcb385c4b9144a9014260bdfeedb8025e29b4033dd54dbedfde66b84ac",
     },
     "windows-x64": {
-        "archive": "windows/flutter_windows_3.48.0-0.1.pre-beta.zip",
-        "digest": "ddbf615571184c007d0754b02982e4e5e12d708125dd3810c40821fdd2296692",
+        "archive": "windows/flutter_windows_3.48.0-0.2.pre-beta.zip",
+        "digest": "a751c7b4ae24cd9a49b0df0161f9eea71cf0e3251a5a09f558aa741f3ece2726",
     },
 }
 
@@ -165,7 +165,7 @@ def validate_automation() -> None:
     require_text("scripts/package-linux-release.sh", "debug sections remain")
     require_text("scripts/package-linux-release.sh", "release bundle contains a JIT artifact")
     require_text("scripts/package-linux-release.sh", "engine does not link the stock GTK3 embedder")
-    require_text("scripts/prepare-libghostty-ios-static.py", 'version != "3.48.0-0.1.pre"')
+    require_text("scripts/prepare-libghostty-ios-static.py", 'version != "3.48.0-0.2.pre"')
     require_text("scripts/install-android-platform-tools.sh", "VERSION=37.0.0")
     require_text(
         "scripts/install-android-platform-tools.sh",

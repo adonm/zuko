@@ -6,7 +6,7 @@ Mach-O dylib without Apple's LC_ENCRYPTION_INFO_64 load command, which App
 Store Connect rejects. This patch converts the native-assets hook so the iOS
 device build relinks Zig's static `libghostty-vt.a` with Apple clang instead.
 
-Flutter 3.48.0-0.1.pre also hardcodes native-asset framework Info.plists to an
+Flutter 3.48.0-0.2.pre also hardcodes native-asset framework Info.plists to an
 iOS 13.0 minimum even when the binary targets iOS 18.0. Patch the pinned
 Flutter generator so its framework metadata matches the linked binary.
 """
@@ -71,7 +71,7 @@ def patch_flutter_native_assets() -> None:
         text=True,
     )
     version = json.loads(version_result.stdout)["frameworkVersion"]
-    if version != "3.48.0-0.1.pre":
+    if version != "3.48.0-0.2.pre":
         fail(f"the patch must be reviewed for Flutter {version}")
 
     native_assets = (

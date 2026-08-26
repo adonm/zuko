@@ -4,23 +4,23 @@
 # Explicit: `mise exec -- just <recipe>`.
 
 [tools]
-# iroh 1.0's dependency tree needs edition2024 (Rust 1.85+).
+# Rust toolchain for the CLI and host; edition 2024 needs 1.85+.
 rust = { version = "1.96.1", components = "clippy,rustfmt" }
-zig = "0.15.2"
-just = "1.55.1"
-mdbook = "0.5.4"
-lychee = "0.24.2"
-actionlint = "1.7.12"
-hk = "1.50.0"
-"github:cli/cli" = "2.96.0"
+zig = "0.15.2" # libghostty compiles the Ghostty vt core with Zig
+just = "1.55.1" # local task runner (`just check`)
+"cargo:mdbook" = "0.5.4" # user/contributor documentation (`just build-docs`)
+"cargo:lychee" = "0.24.2" # lints documentation links (`just lint-md`)
+"aqua:rhysd/actionlint" = "1.7.12" # lints GitHub Actions workflows (`just lint-ci`)
+"aqua:jdx/hk" = "1.50.0" # pre-commit/pre-push hooks (hk.pkl)
+"github:cli/cli" = "2.96.0" # release automation (`just publish-github-release`)
 
 [tools."http:flutter"]
-version = "3.48.0-0.1.pre"
+version = "3.48.0-0.2.pre"
 
 [tools."http:flutter".platforms]
-linux-x64 = { url = "https://storage.googleapis.com/flutter_infra_release/releases/beta/linux/flutter_linux_3.48.0-0.1.pre-beta.tar.xz", checksum = "sha256:9a21104985070dbddf09112b82d2e54991b28020fea91dd255ef14e8c717082e" }
-macos-arm64 = { url = "https://storage.googleapis.com/flutter_infra_release/releases/beta/macos/flutter_macos_3.48.0-0.1.pre-beta.zip", checksum = "sha256:5cbedc2adcc06b3e6d9f674b68b0735cca369c9e4ca4dbb982a6d244d958da67" }
-windows-x64 = { url = "https://storage.googleapis.com/flutter_infra_release/releases/beta/windows/flutter_windows_3.48.0-0.1.pre-beta.zip", checksum = "sha256:ddbf615571184c007d0754b02982e4e5e12d708125dd3810c40821fdd2296692" }
+linux-x64 = { url = "https://storage.googleapis.com/flutter_infra_release/releases/beta/linux/flutter_linux_3.48.0-0.2.pre-beta.tar.xz", checksum = "sha256:dc5ec3e0e32c5716da4706dfafcca2a58905de36bc49b8dba8cf9f50cbb63374" }
+macos-arm64 = { url = "https://storage.googleapis.com/flutter_infra_release/releases/beta/macos/flutter_macos_3.48.0-0.2.pre-beta.zip", checksum = "sha256:7267c3fcb385c4b9144a9014260bdfeedb8025e29b4033dd54dbedfde66b84ac" }
+windows-x64 = { url = "https://storage.googleapis.com/flutter_infra_release/releases/beta/windows/flutter_windows_3.48.0-0.2.pre-beta.zip", checksum = "sha256:a751c7b4ae24cd9a49b0df0161f9eea71cf0e3251a5a09f558aa741f3ece2726" }
 
 # System-level dependencies used by Linux builds. `mise bootstrap` installs
 # only entries for package managers available on the current OS.
@@ -44,9 +44,6 @@ windows-x64 = { url = "https://storage.googleapis.com/flutter_infra_release/rele
 "pacman:libsecret" = "latest"
 "pacman:ninja" = "latest"
 "pacman:pkgconf" = "latest"
-
-[settings]
-experimental = true
 
 [env]
 CARGO_TERM_COLOR = "always"
