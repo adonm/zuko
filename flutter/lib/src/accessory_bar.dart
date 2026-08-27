@@ -75,11 +75,27 @@ class _TerminalAccessoryState extends State<TerminalAccessory> {
 
   /// Closes the soft keyboard whenever the platform reports it hidden, so a
   /// later terminal tap does not reopen it and break touch scrolling.
+  /// True while the platform keyboard might still be animating away.
+  bool _keyboardSettlePending = false;
+
   void _resetDismissedKeyboard({required bool keyboardVisible}) {
-    if (!showKeyboard || keyboardVisible) return;
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted && widget.showKeyboard) _onShowKeyboardChanged(false);
-    });
+    if (!showKeyboard) return;
+    if (keyboardVisible) {
+      // The keyboard presented (or is presenting); allow it to animate away
+      // later before considering the state stale.
+      _keyboardSettlePending = false;
+      return;
+    }
+    if (_keyboardSettlePending) {
+      // Keyboard dismissed before it was ever shown (e.g. our present
+      // request raced a dismissal); let the post-frame check decide.
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted || !widget.showKeyboard) return;
+        if (View.of(context).viewInsets.bottom > 0) return;
+        _onShowKeyboardChanged(false);
+      });
+      return;
+    }
   }
 
   void _toggleKeyboard() {
@@ -97,12 +113,18 @@ class _TerminalAccessoryState extends State<TerminalAccessory> {
       focusNode.unfocus();
       return;
     }
+    // Presenting on iOS needs the showKeyboard flag enabled first, then a
+    // (re)acquire of focus so the platform text input actually attaches.
+    // The view insets grow a frame later; the dismissal reset tolerates
+    // that delay via [_keyboardSettlePending] instead of undoing itself.
     _onShowKeyboardChanged(true);
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted || !widget.showKeyboard) return;
-      // Refocus after the view rebuilds with showKeyboard enabled so the
-      // focus change actually presents the keyboard.
-      focusNode.unfocus();
+      if (focusNode.hasFocus) {
+        // Already focused: refocus cycle not needed; the input session
+        // presents with the flag now enabled after this frame settles.
+        return;
+      }
       focusNode.requestFocus();
     });
   }
@@ -219,38 +241,32 @@ class _TerminalAccessoryState extends State<TerminalAccessory> {
                             onPressed: () => controller.sendKey(Key.tab),
                           ),
                         SizedBox(width: metrics.terminalAccessoryGroupSpacing),
-                        if (showAdditionalKeys) ...[
-                          _AccessoryKey(
+                        _AccessoryKey(
+                          width: itemWidth,
+                          height: height,
+                          label: 'Ctrl',
+                          selected: controller.virtualMods.hasCtrl,
+                          onPressed: () =>
+                              controller.toggleMod(const Mods.ctrl()),
+                        ),
+                        _AccessoryKey(
+                          width: itemWidth,
+                          height: height,
+                          label: 'Alt',
+                          selected: controller.virtualMods.hasAlt,
+                          onPressed: () =>
+                              controller.toggleMod(const Mods.alt()),
+                        ),
+                        SizedBox(width: metrics.terminalAccessoryGroupSpacing),
+                        for (final item in terminalArrowKeys)
+                          _RepeatableAccessoryIcon(
                             width: itemWidth,
                             height: height,
-                            label: 'Ctrl',
-                            selected: controller.virtualMods.hasCtrl,
-                            onPressed: () =>
-                                controller.toggleMod(const Mods.ctrl()),
+                            tooltip: item.label,
+                            icon: terminalArrowIcon(item.key),
+                            onPressed: () => controller.sendKey(item.key),
                           ),
-                          _AccessoryKey(
-                            width: itemWidth,
-                            height: height,
-                            label: 'Alt',
-                            selected: controller.virtualMods.hasAlt,
-                            onPressed: () =>
-                                controller.toggleMod(const Mods.alt()),
-                          ),
-                          SizedBox(
-                            width: metrics.terminalAccessoryGroupSpacing,
-                          ),
-                          for (final item in terminalArrowKeys)
-                            _RepeatableAccessoryIcon(
-                              width: itemWidth,
-                              height: height,
-                              tooltip: item.label,
-                              icon: terminalArrowIcon(item.key),
-                              onPressed: () => controller.sendKey(item.key),
-                            ),
-                          SizedBox(
-                            width: metrics.terminalAccessoryGroupSpacing,
-                          ),
-                        ],
+                        SizedBox(width: metrics.terminalAccessoryGroupSpacing),
                       ],
                       ListenableBuilder(
                         listenable: focusNode,
