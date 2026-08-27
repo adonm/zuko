@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Validate the pinned official Flutter beta SDK and build-once release policy."""
+"""Validate the pinned official Flutter SDK and build-once release policy."""
 
 from __future__ import annotations
 
@@ -10,21 +10,21 @@ import tomllib
 import xml.etree.ElementTree as ET
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
-FRAMEWORK_REVISION = "e84caf74d18fc2f11ad6d1df205933a498c92932"
-FRAMEWORK_VERSION = "3.48.0-0.2.pre"
-SDK_BASE = "https://storage.googleapis.com/flutter_infra_release/releases/beta"
+FRAMEWORK_REVISION = "6655482ec06e547f90abf8ae7590466f4415978d"
+FRAMEWORK_VERSION = "3.47.1"
+SDK_BASE = "https://storage.googleapis.com/flutter_infra_release/releases/stable"
 SDK_PLATFORMS = {
     "linux-x64": {
-        "archive": "linux/flutter_linux_3.48.0-0.2.pre-beta.tar.xz",
-        "digest": "dc5ec3e0e32c5716da4706dfafcca2a58905de36bc49b8dba8cf9f50cbb63374",
+        "archive": "linux/flutter_linux_3.47.1-stable.tar.xz",
+        "digest": "a1d8166c0309267cb7dc99f1424eecf08b86946ad3b50723c6f59945964aea45",
     },
     "macos-arm64": {
-        "archive": "macos/flutter_macos_3.48.0-0.2.pre-beta.zip",
-        "digest": "7267c3fcb385c4b9144a9014260bdfeedb8025e29b4033dd54dbedfde66b84ac",
+        "archive": "macos/flutter_macos_3.47.1-stable.zip",
+        "digest": "21e06435c50be9a43ffea8abb549bd7640cd38197e7741dd780f0680afbb64ba",
     },
     "windows-x64": {
-        "archive": "windows/flutter_windows_3.48.0-0.2.pre-beta.zip",
-        "digest": "a751c7b4ae24cd9a49b0df0161f9eea71cf0e3251a5a09f558aa741f3ece2726",
+        "archive": "windows/flutter_windows_3.47.1-stable.zip",
+        "digest": "4cbf94fde1f5f8d6b9fc50b2483b57cf2077f61712282c2f4cf92560168f442b",
     },
 }
 
@@ -69,7 +69,7 @@ def validate_sdk() -> None:
         mise = tomllib.load(source)
     flutter = mise["tools"].get("http:flutter")
     if not isinstance(flutter, dict) or flutter.get("version") != FRAMEWORK_VERSION:
-        raise SystemExit("Flutter config: Mise must install the official beta SDK")
+        raise SystemExit("Flutter config: Mise must install the official SDK")
     platforms = flutter.get("platforms")
     if not isinstance(platforms, dict) or set(platforms) != set(SDK_PLATFORMS):
         raise SystemExit("Flutter config: Mise SDK platforms are incomplete")
@@ -165,7 +165,7 @@ def validate_automation() -> None:
     require_text("scripts/package-linux-release.sh", "debug sections remain")
     require_text("scripts/package-linux-release.sh", "release bundle contains a JIT artifact")
     require_text("scripts/package-linux-release.sh", "engine does not link the stock GTK3 embedder")
-    require_text("scripts/prepare-libghostty-ios-static.py", 'version != "3.48.0-0.2.pre"')
+    require_text("scripts/prepare-libghostty-ios-static.py", 'version != "3.47.1"')
     require_text("scripts/install-android-platform-tools.sh", "VERSION=37.0.0")
     require_text(
         "scripts/install-android-platform-tools.sh",
@@ -227,7 +227,7 @@ def main() -> None:
     validate_sdk()
     validate_rendering()
     validate_automation()
-    print(f"Flutter config: official beta SDK {FRAMEWORK_VERSION} at {FRAMEWORK_REVISION}")
+    print(f"Flutter config: official SDK {FRAMEWORK_VERSION} at {FRAMEWORK_REVISION}")
 
 
 if __name__ == "__main__":

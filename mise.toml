@@ -15,12 +15,12 @@ actionlint = "1.7.12" # lints GitHub Actions workflows (`just lint-ci`)
 "github:cli/cli" = "2.96.0" # release automation (`just publish-github-release`)
 
 [tools."http:flutter"]
-version = "3.48.0-0.2.pre"
+version = "3.47.1"
 
 [tools."http:flutter".platforms]
-linux-x64 = { url = "https://storage.googleapis.com/flutter_infra_release/releases/beta/linux/flutter_linux_3.48.0-0.2.pre-beta.tar.xz", checksum = "sha256:dc5ec3e0e32c5716da4706dfafcca2a58905de36bc49b8dba8cf9f50cbb63374" }
-macos-arm64 = { url = "https://storage.googleapis.com/flutter_infra_release/releases/beta/macos/flutter_macos_3.48.0-0.2.pre-beta.zip", checksum = "sha256:7267c3fcb385c4b9144a9014260bdfeedb8025e29b4033dd54dbedfde66b84ac" }
-windows-x64 = { url = "https://storage.googleapis.com/flutter_infra_release/releases/beta/windows/flutter_windows_3.48.0-0.2.pre-beta.zip", checksum = "sha256:a751c7b4ae24cd9a49b0df0161f9eea71cf0e3251a5a09f558aa741f3ece2726" }
+linux-x64 = { url = "https://storage.googleapis.com/flutter_infra_release/releases/stable/linux/flutter_linux_3.47.1-stable.tar.xz", checksum = "sha256:a1d8166c0309267cb7dc99f1424eecf08b86946ad3b50723c6f59945964aea45" }
+macos-arm64 = { url = "https://storage.googleapis.com/flutter_infra_release/releases/stable/macos/flutter_macos_3.47.1-stable.zip", checksum = "sha256:21e06435c50be9a43ffea8abb549bd7640cd38197e7741dd780f0680afbb64ba" }
+windows-x64 = { url = "https://storage.googleapis.com/flutter_infra_release/releases/stable/windows/flutter_windows_3.47.1-stable.zip", checksum = "sha256:4cbf94fde1f5f8d6b9fc50b2483b57cf2077f61712282c2f4cf92560168f442b" }
 
 # System-level dependencies used by Linux builds. `mise bootstrap` installs
 # only entries for package managers available on the current OS.
