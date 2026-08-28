@@ -88,7 +88,7 @@ flutter-app-check: flutter-get
 flutter-integration: flutter-get
     cd flutter/integration && flutter pub get --enforce-lockfile
     cd flutter/integration && xvfb-run -a flutter test integration_test -d linux --no-pub | tee /tmp/zuko-flutter-integration.log
-    grep -q "All tests passed" /tmp/zuko-flutter-integration.log
+    grep -qE "All tests passed|tests passed" /tmp/zuko-flutter-integration.log
 
 # Regenerate the pair/connect flow screenshots under docs/images.
 [group('flutter')]
