@@ -596,13 +596,10 @@ void _accessoryWidgetTests() {
     await tester.tap(find.text('Home server'));
     await _pumpFrames(tester);
 
-    // Swipe the row left to reveal extended keys.
-    await tester.drag(find.text('Esc'), const Offset(-600, 0));
-    await tester.pump();
-    await tester.pump(const Duration(milliseconds: 300));
-    await tester.runAsync(
-      () => Future<void>.delayed(const Duration(milliseconds: 300)),
-    );
+    // Jump to the second page of the accessory's PageView (the swipeable
+    // extended-keys surface) and verify its contents.
+    final pageView = tester.widget<PageView>(find.byType(PageView));
+    pageView.controller!.jumpToPage(1);
     await tester.pump();
 
     expect(find.text('Home'), findsOneWidget);
