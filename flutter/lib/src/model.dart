@@ -198,6 +198,8 @@ final class ClientState {
     terminalFontSizeCustomized:
         terminalFontSizeCustomized ?? this.terminalFontSizeCustomized,
     showAdditionalKeys: showAdditionalKeys ?? this.showAdditionalKeys,
+    touchSelectionEnabled: touchSelectionEnabled ?? this.touchSelectionEnabled,
+    keyboardOnTap: keyboardOnTap ?? this.keyboardOnTap,
   );
 
   String encode() => jsonEncode({

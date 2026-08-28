@@ -116,4 +116,18 @@ void main() {
     expect(normalizeTerminalFontSize(2), 5);
     expect(normalizeTerminalFontSize(40), 20);
   });
+
+  test('copyWith carries touch selection and keyboard-on-tap prefs', () {
+    final state = ClientState(
+      clientKey: Uint8List.fromList(List<int>.filled(32, 7)),
+      hosts: const [],
+    );
+    final updated = state.copyWith(
+      touchSelectionEnabled: true,
+      keyboardOnTap: true,
+    );
+    expect(updated.touchSelectionEnabled, isTrue);
+    expect(updated.keyboardOnTap, isTrue);
+    expect(updated.hosts, state.hosts);
+  });
 }
