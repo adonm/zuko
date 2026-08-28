@@ -4889,7 +4889,7 @@ dependencies = [
 
 [[package]]
 name = "zuko"
-version = "0.10.20"
+version = "0.10.21"
 dependencies = [
  "anyhow",
  "argon2",
