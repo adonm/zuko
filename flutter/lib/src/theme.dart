@@ -66,7 +66,6 @@ class ZukoMetrics extends ThemeExtension<ZukoMetrics> {
   double get tabBarHeight => size(42);
   double get tabHeight => size(32);
   double get terminalAccessoryHeight => size(kYaruButtonHeight);
-  double get terminalAccessorySlimHeight => size(28);
   double get terminalAccessoryItemWidth => size(kYaruButtonHeight);
   double get terminalAccessoryGroupSpacing => size(6);
   double get wideLayoutBreakpoint => sidebarWidth + minimumMainPaneWidth;

@@ -9,7 +9,6 @@ import 'package:flutter/material.dart' hide Key;
 import 'package:flutter_test/flutter_test.dart';
 import 'package:zuko/src/extended_key_palette.dart';
 import 'package:zuko/src/repeatable_action.dart';
-import 'package:zuko/src/accessory_bar.dart';
 import 'package:zuko/src/sidebar.dart';
 import 'package:zuko/src/terminal_key_lists.dart';
 import 'package:zuko/src/app.dart';
@@ -28,23 +27,7 @@ void main() {
 
     expect(metrics.terminalAccessoryHeight, 34);
     expect(metrics.terminalAccessoryItemWidth, 34);
-    expect(metrics.terminalAccessorySlimHeight, 28);
     expect(metrics.terminalAccessoryGroupSpacing, 6);
-  });
-
-  test('mobile accessory collapses while the soft keyboard is closed', () {
-    expect(
-      terminalAccessoryMode(keyboardVisible: false, mobile: true),
-      TerminalAccessoryMode.slim,
-    );
-    expect(
-      terminalAccessoryMode(keyboardVisible: true, mobile: true),
-      TerminalAccessoryMode.full,
-    );
-    expect(
-      terminalAccessoryMode(keyboardVisible: false, mobile: false),
-      TerminalAccessoryMode.full,
-    );
   });
 
   test('terminal navigation keys use predictable paired ordering', () {
@@ -579,38 +562,9 @@ Future<void> _pumpFrames(WidgetTester tester) async {
 }
 
 void _accessoryWidgetTests() {
-  testWidgets(
-    'mobile accessory keeps quick actions while the keyboard is closed',
-    (tester) async {
-      _setAccessorySurface(tester, size: const Size(1200, 800));
-      _setAccessoryPlatform(TargetPlatform.android);
-      final controller = await _accessoryTestController();
-      addTearDown(controller.dispose);
-
-      await tester.pumpWidget(ZukoApp(controller: controller));
-      await _pumpFrames(tester);
-
-      await tester.tap(find.text('Home server'));
-      await _pumpFrames(tester);
-
-      // Soft keyboard closed: the slim row keeps only quick actions.
-      expect(find.text('Esc'), findsNothing);
-      expect(find.text('Tab'), findsNothing);
-      expect(find.text('Ctrl'), findsNothing);
-      expect(find.byTooltip('Show keyboard'), findsOneWidget);
-      debugDefaultTargetPlatformOverride = null;
-    },
-  );
-
-  testWidgets('mobile accessory shows typing keys above the open keyboard', (
-    tester,
-  ) async {
+  testWidgets('accessory keeps the fixed key row on mobile', (tester) async {
     _setAccessorySurface(tester, size: const Size(1200, 800));
     _setAccessoryPlatform(TargetPlatform.android);
-    // Present the soft keyboard before the app builds so the accessory
-    // mounts directly in full mode.
-    tester.view.viewInsets = const FakeViewPadding(bottom: 300);
-    addTearDown(tester.view.resetViewInsets);
     final controller = await _accessoryTestController();
     addTearDown(controller.dispose);
 
@@ -621,15 +575,42 @@ void _accessoryWidgetTests() {
     await _pumpFrames(tester);
 
     expect(find.text('Esc'), findsOneWidget);
+    expect(find.text('Tab'), findsOneWidget);
     expect(find.text('Ctrl'), findsOneWidget);
     expect(find.text('Alt'), findsOneWidget);
-    expect(find.text('Tab'), findsNothing); // Tab lives in the menu on mobile
+    expect(find.byTooltip('Up'), findsOneWidget);
+    expect(find.byTooltip('Down'), findsOneWidget);
+    expect(find.byTooltip('Show keyboard'), findsOneWidget);
     debugDefaultTargetPlatformOverride = null;
   });
 
-  testWidgets('desktop accessory keeps the full row without a keyboard', (
-    tester,
-  ) async {
+  testWidgets('accessory swipes to the extended keys page', (tester) async {
+    _setAccessorySurface(tester, size: const Size(1200, 800));
+    _setAccessoryPlatform(TargetPlatform.android);
+    final controller = await _accessoryTestController();
+    addTearDown(controller.dispose);
+
+    await tester.pumpWidget(ZukoApp(controller: controller));
+    await _pumpFrames(tester);
+
+    await tester.tap(find.text('Home server'));
+    await _pumpFrames(tester);
+
+    // Swipe the row left to reveal extended keys.
+    await tester.drag(find.text('Esc'), const Offset(-600, 0));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+    await tester.runAsync(
+      () => Future<void>.delayed(const Duration(milliseconds: 300)),
+    );
+    await tester.pump();
+
+    expect(find.text('Home'), findsOneWidget);
+    expect(find.text('F1'), findsOneWidget);
+    debugDefaultTargetPlatformOverride = null;
+  });
+
+  testWidgets('desktop accessory keeps the fixed key row', (tester) async {
     _setAccessorySurface(tester, size: const Size(1200, 800));
     _setAccessoryPlatform(TargetPlatform.linux);
     final controller = await _accessoryTestController();
@@ -644,7 +625,6 @@ void _accessoryWidgetTests() {
     expect(find.text('Esc'), findsOneWidget);
     expect(find.text('Tab'), findsOneWidget);
     expect(find.text('Ctrl'), findsOneWidget);
-    expect(find.byTooltip('Enable touch text selection'), findsOneWidget);
     debugDefaultTargetPlatformOverride = null;
   });
 }

@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart' hide Key;
-import 'package:yaru/yaru.dart';
 import 'package:libghostty/libghostty.dart';
 
 const terminalNavigationKeys = <({String label, Key key})>[
@@ -32,10 +31,10 @@ const terminalArrowKeys = <({String label, Key key})>[
 ];
 
 IconData terminalArrowIcon(Key key) => switch (key) {
-  Key.arrowUp => YaruFreedesktopIcons.go_up.icon,
-  Key.arrowDown => YaruFreedesktopIcons.go_down.icon,
-  Key.arrowLeft => YaruFreedesktopIcons.go_previous.icon,
-  Key.arrowRight => YaruFreedesktopIcons.go_next.icon,
+  Key.arrowUp => Icons.keyboard_arrow_up,
+  Key.arrowDown => Icons.keyboard_arrow_down,
+  Key.arrowLeft => Icons.keyboard_arrow_left,
+  Key.arrowRight => Icons.keyboard_arrow_right,
   _ => throw ArgumentError.value(key, 'key', 'not an arrow key'),
 };
 

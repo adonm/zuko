@@ -1,7 +1,6 @@
 import 'dart:async';
 
 import 'package:flterm/flterm.dart';
-import 'package:flutter/foundation.dart' show defaultTargetPlatform, kIsWeb;
 import 'package:flutter/material.dart' hide Key;
 import 'package:flutter/services.dart';
 import 'package:yaru/yaru.dart';
@@ -9,7 +8,6 @@ import 'package:yaru/yaru.dart';
 import 'terminal_key_lists.dart';
 import 'repeatable_action.dart';
 import 'package:libghostty/libghostty.dart' show pasteIsSafe;
-import 'extended_key_palette.dart';
 import 'theme.dart';
 
 enum TerminalAccessoryMode {
@@ -19,14 +17,6 @@ enum TerminalAccessoryMode {
   /// Compact row: quick actions only, while the soft keyboard is closed.
   slim,
 }
-
-/// Whether the accessory bar adapts to phone-style soft keyboards.
-bool _isMobileAccessoryPlatform(TargetPlatform platform) =>
-    !kIsWeb &&
-    switch (platform) {
-      TargetPlatform.android || TargetPlatform.iOS => true,
-      _ => false,
-    };
 
 /// The mobile accessory shows typing keys above the open soft keyboard and
 /// collapses to quick actions while it is closed. Desktop keeps the full row.
@@ -43,16 +33,12 @@ class TerminalAccessory extends StatefulWidget {
     required this.controller,
     required this.focusNode,
     required this.showAdditionalKeys,
-    required this.touchSelectionEnabled,
-    required this.onTouchSelectionChanged,
     required this.showKeyboard,
     required this.onShowKeyboardChanged,
   });
   final TerminalController controller;
   final FocusNode focusNode;
   final bool showAdditionalKeys;
-  final bool touchSelectionEnabled;
-  final ValueChanged<bool> onTouchSelectionChanged;
   final bool showKeyboard;
   final ValueChanged<bool> onShowKeyboardChanged;
 
@@ -63,70 +49,36 @@ class TerminalAccessory extends StatefulWidget {
 class _TerminalAccessoryState extends State<TerminalAccessory> {
   TerminalController get controller => widget.controller;
   FocusNode get focusNode => widget.focusNode;
-  bool get showAdditionalKeys => widget.showAdditionalKeys;
-  bool get touchSelectionEnabled => widget.touchSelectionEnabled;
   bool get showKeyboard => widget.showKeyboard;
 
-  void _onShowKeyboardChanged(bool value) =>
-      widget.onShowKeyboardChanged(value);
+  final PageController _pageController = PageController();
+  int _page = 0;
 
-  void _onTouchSelectionChanged(bool value) =>
-      widget.onTouchSelectionChanged(value);
-
-  /// Closes the soft keyboard whenever the platform reports it hidden, so a
-  /// later terminal tap does not reopen it and break touch scrolling.
-  /// True while the platform keyboard might still be animating away.
-  bool _keyboardSettlePending = false;
-
-  void _resetDismissedKeyboard({required bool keyboardVisible}) {
-    if (!showKeyboard) return;
-    if (keyboardVisible) {
-      // The keyboard presented (or is presenting); allow it to animate away
-      // later before considering the state stale.
-      _keyboardSettlePending = false;
-      return;
-    }
-    if (_keyboardSettlePending) {
-      // Keyboard dismissed before it was ever shown (e.g. our present
-      // request raced a dismissal); let the post-frame check decide.
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (!mounted || !widget.showKeyboard) return;
-        if (View.of(context).viewInsets.bottom > 0) return;
-        _onShowKeyboardChanged(false);
-      });
-      return;
-    }
+  @override
+  void dispose() {
+    _pageController.dispose();
+    super.dispose();
   }
 
   void _toggleKeyboard() {
-    final mobile = _isMobileAccessoryPlatform(defaultTargetPlatform);
-    if (!mobile) {
-      if (focusNode.hasFocus) {
-        focusNode.unfocus();
-      } else {
-        focusNode.requestFocus();
-      }
-      return;
-    }
-    if (showKeyboard) {
-      _onShowKeyboardChanged(false);
+    if (focusNode.hasFocus) {
       focusNode.unfocus();
       return;
     }
-    // Presenting on iOS needs the showKeyboard flag enabled first, then a
-    // (re)acquire of focus so the platform text input actually attaches.
-    // The view insets grow a frame later; the dismissal reset tolerates
-    // that delay via [_keyboardSettlePending] instead of undoing itself.
-    _onShowKeyboardChanged(true);
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted || !widget.showKeyboard) return;
-      if (focusNode.hasFocus) {
-        // Already focused: refocus cycle not needed; the input session
-        // presents with the flag now enabled after this frame settles.
-        return;
-      }
-      focusNode.requestFocus();
-    });
+    // Enable keyboard presentation for this connection before focusing so
+    // the platform text input attaches and the keyboard appears.
+    if (!widget.showKeyboard) {
+      widget.onShowKeyboardChanged(true);
+    }
+    focusNode.requestFocus();
+  }
+
+  void _showExtendedKeys() {
+    _pageController.animateToPage(
+      1,
+      duration: const Duration(milliseconds: 200),
+      curve: Curves.easeOutCubic,
+    );
   }
 
   void _showClipboardMessage(BuildContext context, String message) {
@@ -186,165 +138,64 @@ class _TerminalAccessoryState extends State<TerminalAccessory> {
   }
 
   @override
-  Widget build(BuildContext context) {
-    // Read the view insets at the state level so the accessory rebuilds
-    // whenever the soft keyboard appears or disappears.
-    final keyboardVisible = View.of(context).viewInsets.bottom > 0;
-    _resetDismissedKeyboard(keyboardVisible: keyboardVisible);
-    return AnimatedBuilder(
-      animation: controller,
-      builder: (context, _) {
-        final colors = Theme.of(context).colorScheme;
-        final metrics = ZukoMetrics.of(context);
-        final mobile = _isMobileAccessoryPlatform(defaultTargetPlatform);
-        final keyboardActive = mobile ? showKeyboard : focusNode.hasFocus;
-        final mode = terminalAccessoryMode(
-          keyboardVisible: keyboardVisible,
-          mobile: mobile,
-        );
-        final full = mode == TerminalAccessoryMode.full;
-        final height = full
-            ? metrics.terminalAccessoryHeight
-            : metrics.terminalAccessorySlimHeight;
-        final itemWidth = metrics.terminalAccessoryItemWidth;
-        final showKeys = !mobile || full;
-        return Material(
-          color: colors.surfaceContainerLow,
-          child: DecoratedBox(
-            decoration: BoxDecoration(
-              border: Border(top: BorderSide(color: colors.outlineVariant)),
-            ),
-            child: SafeArea(
-              top: false,
-              child: AnimatedSize(
-                duration: const Duration(milliseconds: 160),
-                curve: Curves.easeOutCubic,
-                alignment: Alignment.bottomCenter,
-                child: SizedBox(
-                  height: height,
-                  child: ListView(
-                    scrollDirection: Axis.horizontal,
-                    padding: EdgeInsets.symmetric(horizontal: metrics.size(6)),
+  Widget build(BuildContext context) => AnimatedBuilder(
+    animation: controller,
+    builder: (context, _) {
+      final colors = Theme.of(context).colorScheme;
+      final metrics = ZukoMetrics.of(context);
+      final keyboardActive = focusNode.hasFocus;
+      final rowHeight = metrics.terminalAccessoryHeight;
+      return Material(
+        color: colors.surfaceContainerLow,
+        child: DecoratedBox(
+          decoration: BoxDecoration(
+            border: Border(top: BorderSide(color: colors.outlineVariant)),
+          ),
+          child: SafeArea(
+            top: false,
+            child: SizedBox(
+              height: rowHeight,
+              child: Stack(
+                children: [
+                  PageView(
+                    controller: _pageController,
+                    onPageChanged: (page) => setState(() => _page = page),
                     children: [
-                      if (showKeys) ...[
-                        _AccessoryKey(
-                          width: itemWidth,
-                          height: height,
-                          label: 'Esc',
-                          onPressed: () => controller.sendKey(Key.escape),
-                        ),
-                        if (!mobile)
-                          _AccessoryKey(
-                            width: itemWidth,
-                            height: height,
-                            label: 'Tab',
-                            onPressed: () => controller.sendKey(Key.tab),
-                          ),
-                        SizedBox(width: metrics.terminalAccessoryGroupSpacing),
-                        _AccessoryKey(
-                          width: itemWidth,
-                          height: height,
-                          label: 'Ctrl',
-                          selected: controller.virtualMods.hasCtrl,
-                          onPressed: () =>
-                              controller.toggleMod(const Mods.ctrl()),
-                        ),
-                        _AccessoryKey(
-                          width: itemWidth,
-                          height: height,
-                          label: 'Alt',
-                          selected: controller.virtualMods.hasAlt,
-                          onPressed: () =>
-                              controller.toggleMod(const Mods.alt()),
-                        ),
-                        SizedBox(width: metrics.terminalAccessoryGroupSpacing),
-                        for (final item in terminalArrowKeys)
-                          _RepeatableAccessoryIcon(
-                            width: itemWidth,
-                            height: height,
-                            tooltip: item.label,
-                            icon: terminalArrowIcon(item.key),
-                            onPressed: () => controller.sendKey(item.key),
-                          ),
-                        SizedBox(width: metrics.terminalAccessoryGroupSpacing),
-                      ],
-                      ListenableBuilder(
-                        listenable: focusNode,
-                        builder: (context, _) => _AccessoryIcon(
-                          width: itemWidth,
-                          height: height,
-                          tooltip: keyboardActive
-                              ? 'Hide keyboard'
-                              : 'Show keyboard',
-                          icon: keyboardActive
-                              ? YaruIcons.keyboard_filled
-                              : YaruFreedesktopIcons.input_keyboard.icon,
-                          selected: keyboardActive,
-                          onPressed: _toggleKeyboard,
-                        ),
+                      _MainKeyRow(
+                        controller: controller,
+                        focusNode: focusNode,
+                        keyboardActive: keyboardActive,
+                        onToggleKeyboard: _toggleKeyboard,
+                        onCopy: () => _copy(context),
+                        onPaste: () => _paste(context),
+                        onExtendedKeys: _showExtendedKeys,
                       ),
-                      if (!mobile)
-                        _AccessoryIcon(
-                          width: itemWidth,
-                          height: height,
-                          tooltip: touchSelectionEnabled
-                              ? 'Disable touch text selection'
-                              : 'Enable touch text selection',
-                          icon: Icons.text_fields,
-                          selected: touchSelectionEnabled,
-                          onPressed: () =>
-                              _onTouchSelectionChanged(!touchSelectionEnabled),
-                        ),
-                      _AccessoryIcon(
-                        width: itemWidth,
-                        height: height,
-                        tooltip: controller.hasSelection
-                            ? 'Copy selected text'
-                            : 'Paste',
-                        icon: controller.hasSelection
-                            ? YaruFreedesktopIcons.edit_copy.icon
-                            : YaruFreedesktopIcons.edit_paste.icon,
-                        onPressed: controller.hasSelection
-                            ? () => _copy(context)
-                            : () => _paste(context),
-                      ),
-                      _AccessoryMenu(
-                        width: itemWidth,
-                        height: height,
-                        hasSelection: controller.hasSelection,
-                        touchSelectionEnabled: touchSelectionEnabled,
-                        onSelected: (action) {
-                          switch (action) {
-                            case 'extended-keys':
-                              unawaited(
-                                showTerminalExtendedKeyPalette(
-                                  context,
-                                  onKey: (key) => controller.sendKey(key),
-                                ),
-                              );
-                            case 'tab':
-                              controller.sendKey(Key.tab);
-                            case 'touch-selection':
-                              _onTouchSelectionChanged(!touchSelectionEnabled);
-                            case 'select-all':
-                              controller.selectAll();
-                            case 'copy':
-                              unawaited(_copy(context));
-                            case 'paste':
-                              unawaited(_paste(context));
-                          }
-                        },
-                      ),
+                      _ExtendedKeyRow(controller: controller),
                     ],
                   ),
-                ),
+                  if (_page == 1)
+                    Align(
+                      alignment: Alignment.topRight,
+                      child: Padding(
+                        padding: const EdgeInsets.only(top: 2, right: 6),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            _PageDot(active: true),
+                            const SizedBox(width: 4),
+                            _PageDot(active: false),
+                          ],
+                        ),
+                      ),
+                    ),
+                ],
               ),
             ),
           ),
-        );
-      },
-    );
-  }
+        ),
+      );
+    },
+  );
 }
 
 class _AccessoryKey extends StatelessWidget {
@@ -542,14 +393,12 @@ class _AccessoryMenu extends StatelessWidget {
     required this.width,
     this.height,
     required this.hasSelection,
-    required this.touchSelectionEnabled,
     required this.onSelected,
   });
 
   final double width;
   final double? height;
   final bool hasSelection;
-  final bool touchSelectionEnabled;
   final ValueChanged<String> onSelected;
 
   @override
@@ -602,14 +451,6 @@ class _AccessoryMenu extends StatelessWidget {
             value: 'tab',
             child: _MenuAction(icon: Icons.keyboard_tab, label: 'Tab key'),
           ),
-          CheckedPopupMenuItem(
-            value: 'touch-selection',
-            checked: touchSelectionEnabled,
-            child: _MenuAction(
-              icon: Icons.text_fields,
-              label: 'Touch text selection',
-            ),
-          ),
           PopupMenuItem(
             value: 'select-all',
             child: _MenuAction(
@@ -648,4 +489,170 @@ class _MenuAction extends StatelessWidget {
   Widget build(BuildContext context) => Row(
     children: [Icon(icon, size: 18), const SizedBox(width: 12), Text(label)],
   );
+}
+
+class _PageDot extends StatelessWidget {
+  const _PageDot({required this.active});
+
+  final bool active;
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = Theme.of(context).colorScheme;
+    return Container(
+      width: 6,
+      height: 6,
+      decoration: BoxDecoration(
+        shape: BoxShape.circle,
+        color: active
+            ? colors.primary
+            : colors.onSurfaceVariant.withValues(alpha: 0.4),
+      ),
+    );
+  }
+}
+
+class _MainKeyRow extends StatelessWidget {
+  const _MainKeyRow({
+    required this.controller,
+    required this.focusNode,
+    required this.keyboardActive,
+    required this.onToggleKeyboard,
+    required this.onCopy,
+    required this.onPaste,
+    required this.onExtendedKeys,
+  });
+
+  final TerminalController controller;
+  final FocusNode focusNode;
+  final bool keyboardActive;
+  final VoidCallback onToggleKeyboard;
+  final VoidCallback onCopy;
+  final VoidCallback onPaste;
+  final VoidCallback onExtendedKeys;
+
+  @override
+  Widget build(BuildContext context) {
+    final metrics = ZukoMetrics.of(context);
+    final itemWidth = metrics.terminalAccessoryItemWidth;
+    final rowHeight = metrics.terminalAccessoryHeight;
+    return ListView(
+      scrollDirection: Axis.horizontal,
+      padding: EdgeInsets.symmetric(horizontal: metrics.size(6)),
+      children: [
+        _AccessoryKey(
+          width: itemWidth,
+          height: rowHeight,
+          label: 'Esc',
+          onPressed: () => controller.sendKey(Key.escape),
+        ),
+        _AccessoryKey(
+          width: itemWidth,
+          height: rowHeight,
+          label: 'Tab',
+          onPressed: () => controller.sendKey(Key.tab),
+        ),
+        SizedBox(width: metrics.terminalAccessoryGroupSpacing),
+        _AccessoryKey(
+          width: itemWidth,
+          height: rowHeight,
+          label: 'Ctrl',
+          selected: controller.virtualMods.hasCtrl,
+          onPressed: () => controller.toggleMod(const Mods.ctrl()),
+        ),
+        _AccessoryKey(
+          width: itemWidth,
+          height: rowHeight,
+          label: 'Alt',
+          selected: controller.virtualMods.hasAlt,
+          onPressed: () => controller.toggleMod(const Mods.alt()),
+        ),
+        SizedBox(width: metrics.terminalAccessoryGroupSpacing),
+        for (final item in terminalArrowKeys)
+          _RepeatableAccessoryIcon(
+            width: itemWidth,
+            height: rowHeight,
+            tooltip: item.label,
+            icon: terminalArrowIcon(item.key),
+            onPressed: () => controller.sendKey(item.key),
+          ),
+        SizedBox(width: metrics.terminalAccessoryGroupSpacing),
+        ListenableBuilder(
+          listenable: focusNode,
+          builder: (context, _) => _AccessoryIcon(
+            width: itemWidth,
+            height: rowHeight,
+            tooltip: keyboardActive ? 'Hide keyboard' : 'Show keyboard',
+            icon: keyboardActive
+                ? YaruIcons.keyboard_filled
+                : YaruFreedesktopIcons.input_keyboard.icon,
+            selected: keyboardActive,
+            onPressed: onToggleKeyboard,
+          ),
+        ),
+        _AccessoryIcon(
+          width: itemWidth,
+          height: rowHeight,
+          tooltip: controller.hasSelection ? 'Copy selected text' : 'Paste',
+          icon: controller.hasSelection
+              ? YaruFreedesktopIcons.edit_copy.icon
+              : YaruFreedesktopIcons.edit_paste.icon,
+          onPressed: controller.hasSelection ? onCopy : onPaste,
+        ),
+        _AccessoryMenu(
+          width: itemWidth,
+          height: rowHeight,
+          hasSelection: controller.hasSelection,
+          onSelected: (action) {
+            switch (action) {
+              case 'extended-keys':
+                onExtendedKeys();
+              case 'tab':
+                controller.sendKey(Key.tab);
+              case 'select-all':
+                controller.selectAll();
+              case 'copy':
+                onCopy();
+              case 'paste':
+                onPaste();
+            }
+          },
+        ),
+      ],
+    );
+  }
+}
+
+class _ExtendedKeyRow extends StatelessWidget {
+  const _ExtendedKeyRow({required this.controller});
+
+  final TerminalController controller;
+
+  @override
+  Widget build(BuildContext context) {
+    final metrics = ZukoMetrics.of(context);
+    final itemWidth = metrics.terminalAccessoryItemWidth;
+    final rowHeight = metrics.terminalAccessoryHeight;
+    return ListView(
+      scrollDirection: Axis.horizontal,
+      padding: EdgeInsets.symmetric(horizontal: metrics.size(6)),
+      children: [
+        for (final item in terminalNavigationKeys)
+          _AccessoryKey(
+            width: itemWidth,
+            height: rowHeight,
+            label: item.label,
+            onPressed: () => controller.sendKey(item.key),
+          ),
+        SizedBox(width: metrics.terminalAccessoryGroupSpacing),
+        for (final item in terminalFunctionKeys)
+          _AccessoryKey(
+            width: itemWidth,
+            height: rowHeight,
+            label: item.label,
+            onPressed: () => controller.sendKey(item.key),
+          ),
+      ],
+    );
+  }
 }

@@ -31,6 +31,10 @@ final class AppController extends ChangeNotifier {
   double get terminalFontSize => _state.terminalFontSize;
   bool get terminalFontSizeCustomized => _state.terminalFontSizeCustomized;
   bool get showAdditionalKeys => _state.showAdditionalKeys;
+
+  bool get touchSelectionEnabled => _state.touchSelectionEnabled;
+
+  bool get keyboardOnTap => _state.keyboardOnTap;
   String get clientName => _state.clientName ?? 'device';
   String get clientLabel => clientAuthorizationLabel(clientName, clientKey);
 
@@ -125,6 +129,12 @@ final class AppController extends ChangeNotifier {
 
   Future<void> setShowAdditionalKeys(bool value) =>
       _commit((state) => state.copyWith(showAdditionalKeys: value));
+
+  Future<void> setTouchSelectionEnabled(bool value) =>
+      _commit((state) => state.copyWith(touchSelectionEnabled: value));
+
+  Future<void> setKeyboardOnTap(bool value) =>
+      _commit((state) => state.copyWith(keyboardOnTap: value));
 
   Future<void> setClientName(String value) {
     final normalized = normalizeClientName(value);

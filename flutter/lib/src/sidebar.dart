@@ -440,12 +440,24 @@ class Sidebar extends StatelessWidget {
               ),
               const Divider(indent: 42),
               YaruSwitchListTile(
-                secondary: const Icon(Icons.keyboard_alt_outlined, size: 20),
-                title: const Text('Additional terminal keys'),
-                subtitle: const Text('Show modifiers and arrows'),
-                value: controller.showAdditionalKeys,
+                secondary: const Icon(Icons.text_fields, size: 20),
+                title: const Text('Touch text selection'),
+                subtitle: const Text(
+                  'Long-press selects terminal text on touch screens',
+                ),
+                value: controller.touchSelectionEnabled,
                 onChanged: (value) =>
-                    unawaited(controller.setShowAdditionalKeys(value)),
+                    unawaited(controller.setTouchSelectionEnabled(value)),
+              ),
+              YaruSwitchListTile(
+                secondary: const Icon(Icons.keyboard_alt_outlined, size: 20),
+                title: const Text('Open keyboard on tap'),
+                subtitle: const Text(
+                  'Tapping the terminal presents the soft keyboard',
+                ),
+                value: controller.keyboardOnTap,
+                onChanged: (value) =>
+                    unawaited(controller.setKeyboardOnTap(value)),
               ),
             ],
           ),

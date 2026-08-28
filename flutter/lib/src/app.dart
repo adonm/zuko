@@ -106,12 +106,38 @@ class _HomeState extends State<_Home>
       ? _connections[_activeIndex]
       : null;
 
+  bool _lastKeyboardOnTap = false;
+  bool _lastTouchSelection = false;
+
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     _isForeground =
         WidgetsBinding.instance.lifecycleState == AppLifecycleState.resumed;
+    _lastKeyboardOnTap = widget.controller.keyboardOnTap;
+    _lastTouchSelection = widget.controller.touchSelectionEnabled;
+    widget.controller.addListener(_onSettingsChanged);
+  }
+
+  void _onSettingsChanged() {
+    if (!mounted) return;
+    final keyboardOnTap = widget.controller.keyboardOnTap;
+    if (keyboardOnTap != _lastKeyboardOnTap) {
+      _lastKeyboardOnTap = keyboardOnTap;
+      for (final connection in _connections) {
+        connection.setShowKeyboard(keyboardOnTap);
+      }
+    }
+    final touchSelection = widget.controller.touchSelectionEnabled;
+    if (touchSelection != _lastTouchSelection) {
+      _lastTouchSelection = touchSelection;
+      if (!touchSelection) {
+        for (final connection in _connections) {
+          connection.terminal.clearSelection();
+        }
+      }
+    }
   }
 
   @override
@@ -137,6 +163,7 @@ class _HomeState extends State<_Home>
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
+    widget.controller.removeListener(_onSettingsChanged);
     _tabController?.dispose();
     final connections = List.of(_connections);
     _connections.clear();
@@ -216,6 +243,7 @@ class _HomeState extends State<_Home>
       host: host,
       connector: widget.controller.transport.connect,
       onTunnel: _openTunnel,
+      keyboardOnTap: widget.controller.keyboardOnTap,
       isClipboardSourceActive: () =>
           mounted && _isForeground && identical(connection, _activeConnection),
     );
@@ -463,8 +491,9 @@ class _HomeState extends State<_Home>
                                       showKeyboard: connection.showKeyboard,
                                       theme: terminalTheme,
                                       gestureSettings: terminalGestureSettings(
-                                        touchSelectionEnabled:
-                                            connection.touchSelectionEnabled,
+                                        touchSelectionEnabled: widget
+                                            .controller
+                                            .touchSelectionEnabled,
                                       ),
                                       semanticsLabel:
                                           '${_connectionName(connection)} remote terminal',
@@ -499,9 +528,6 @@ class _HomeState extends State<_Home>
                           focusNode: active.focusNode,
                           showAdditionalKeys:
                               widget.controller.showAdditionalKeys,
-                          touchSelectionEnabled: active.touchSelectionEnabled,
-                          onTouchSelectionChanged:
-                              active.setTouchSelectionEnabled,
                           showKeyboard: active.showKeyboard,
                           onShowKeyboardChanged: active.setShowKeyboard,
                         ),

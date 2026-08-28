@@ -100,26 +100,19 @@ void main() {
     expect(writes, ['hello']);
   });
 
-  test('touch selection is opt-in and disabling it clears selection', () {
+  test('touch selection is a global preference, not per connection', () {
     final connection = TerminalConnection(
       host: _alpha,
       connector: (_, _) => _FakeTerminalSession(),
       onTunnel: (_, _, _) {},
+      keyboardOnTap: true,
     );
     addTearDown(() async {
       await connection.close();
       connection.dispose();
     });
 
-    expect(connection.touchSelectionEnabled, isFalse);
-    connection.setTouchSelectionEnabled(true);
-    connection.terminal.selectAll();
-    expect(connection.touchSelectionEnabled, isTrue);
-    expect(connection.terminal.hasSelection, isTrue);
-
-    connection.setTouchSelectionEnabled(false);
-    expect(connection.touchSelectionEnabled, isFalse);
-    expect(connection.terminal.hasSelection, isFalse);
+    expect(connection.showKeyboard, isTrue);
   });
 
   test(

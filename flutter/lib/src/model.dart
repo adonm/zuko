@@ -53,7 +53,7 @@ enum AppThemePreference { system, dark, light }
 enum AppInterfaceSize { compact, standard, comfortable }
 
 final class ClientState {
-  static const currentVersion = 6;
+  static const currentVersion = 7;
 
   ClientState({
     required Uint8List clientKey,
@@ -64,6 +64,8 @@ final class ClientState {
     double terminalFontSize = 10,
     this.terminalFontSizeCustomized = false,
     this.showAdditionalKeys = true,
+    this.touchSelectionEnabled = false,
+    this.keyboardOnTap = false,
   }) : clientKey = Uint8List.fromList(clientKey),
        hosts = List.unmodifiable(hosts),
        terminalFontSize = normalizeTerminalFontSize(terminalFontSize);
@@ -76,6 +78,12 @@ final class ClientState {
   final double terminalFontSize;
   final bool terminalFontSizeCustomized;
   final bool showAdditionalKeys;
+
+  /// Whether touch long-press selects terminal text on mobile.
+  final bool touchSelectionEnabled;
+
+  /// Whether tapping the terminal presents the soft keyboard on mobile.
+  final bool keyboardOnTap;
 
   factory ClientState.decode(String value) {
     try {
@@ -134,6 +142,16 @@ final class ClientState {
       if (showAdditionalKeys is! bool) {
         throw const FormatException('invalid additional keys preference');
       }
+      final touchSelectionEnabled = version >= 7
+          ? decoded['touchSelectionEnabled']
+          : false;
+      if (touchSelectionEnabled is! bool) {
+        throw const FormatException('invalid touch selection preference');
+      }
+      final keyboardOnTap = version >= 7 ? decoded['keyboardOnTap'] : false;
+      if (keyboardOnTap is! bool) {
+        throw const FormatException('invalid keyboard-on-tap preference');
+      }
       final clientName = version >= 5 ? decoded['clientName'] : null;
       if (clientName != null &&
           (clientName is! String ||
@@ -150,6 +168,8 @@ final class ClientState {
         terminalFontSize: (fontSize as num?)?.toDouble() ?? 10,
         terminalFontSizeCustomized: fontSizeCustomized,
         showAdditionalKeys: showAdditionalKeys,
+        touchSelectionEnabled: touchSelectionEnabled,
+        keyboardOnTap: keyboardOnTap,
       );
     } on FormatException {
       rethrow;
@@ -166,6 +186,8 @@ final class ClientState {
     double? terminalFontSize,
     bool? terminalFontSizeCustomized,
     bool? showAdditionalKeys,
+    bool? touchSelectionEnabled,
+    bool? keyboardOnTap,
   }) => ClientState(
     clientKey: clientKey,
     hosts: hosts ?? this.hosts,
@@ -188,6 +210,8 @@ final class ClientState {
     'terminalFontSize': terminalFontSize,
     'terminalFontSizeCustomized': terminalFontSizeCustomized,
     'showAdditionalKeys': showAdditionalKeys,
+    'touchSelectionEnabled': touchSelectionEnabled,
+    'keyboardOnTap': keyboardOnTap,
   });
 }
 
