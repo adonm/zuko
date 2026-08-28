@@ -49,12 +49,10 @@ final class TerminalConnection extends ChangeNotifier {
     required this.onTunnel,
     bool Function()? isClipboardSourceActive,
     RemoteClipboardWriter? clipboardWriter,
-    bool keyboardOnTap = false,
   }) : _isClipboardSourceActive =
            isClipboardSourceActive ?? _inactiveClipboardSource,
        _clipboardWriter = clipboardWriter ?? _writeSystemClipboard,
-       terminal = TerminalController(),
-       showKeyboard = keyboardOnTap {
+       terminal = TerminalController() {
     terminal.onOutput = (bytes) {
       final session = _session;
       if (_acceptingIo && session != null) unawaited(session.send(bytes));
@@ -87,7 +85,6 @@ final class TerminalConnection extends ChangeNotifier {
 
   SessionState state = const SessionState.connecting();
   TerminalGeometry geometry = const TerminalGeometry(80, 24, 0, 0);
-  bool showKeyboard;
 
   bool isCurrentGeneration(int generation) =>
       !_closed && generation == _generation;
@@ -106,12 +103,6 @@ final class TerminalConnection extends ChangeNotifier {
     } on Object {
       // Clipboard denial must not interrupt terminal output processing.
     }
-  }
-
-  void setShowKeyboard(bool enabled) {
-    if (showKeyboard == enabled) return;
-    showKeyboard = enabled;
-    _notify();
   }
 
   void applyTerminalGeometry(int cols, int rows) {

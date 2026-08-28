@@ -44,3 +44,41 @@ bool showConnectionTabs(int connectionCount) => connectionCount > 1;
 /// (flutter/flutter#90366). Allow mouse drags to scroll so touch drags keep
 /// working, and let the terminal route mouse-kind drags to its Scrollable
 /// instead of selecting.
+
+/// CLI punctuation ordered by how often shells, vim, and emacs need them.
+/// Grouped left-to-right as: piping/home, shell metacharacters, redirects,
+/// anchors/operators, quotes/grouping, and common separators.
+const terminalPunctuationKeys = <String>[
+  '|',
+  '~',
+  r'`',
+  r'\',
+  r'$',
+  '<',
+  '>',
+  '^',
+  '&',
+  '*',
+  '%',
+  '#',
+  '@',
+  '!',
+  '/',
+  '?',
+  '-',
+  '_',
+  '=',
+  '+',
+  '[',
+  ']',
+  '{',
+  '}',
+  '(',
+  ')',
+  ':',
+  ';',
+  "'",
+  '"',
+  ',',
+  '.',
+];

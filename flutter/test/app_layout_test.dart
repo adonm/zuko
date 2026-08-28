@@ -580,7 +580,7 @@ void _accessoryWidgetTests() {
     expect(find.text('Alt'), findsOneWidget);
     expect(find.byTooltip('Up'), findsOneWidget);
     expect(find.byTooltip('Down'), findsOneWidget);
-    expect(find.byTooltip('Show keyboard'), findsOneWidget);
+    expect(find.byTooltip('Select all'), findsOneWidget);
     debugDefaultTargetPlatformOverride = null;
   });
 
@@ -596,12 +596,16 @@ void _accessoryWidgetTests() {
     await tester.tap(find.text('Home server'));
     await _pumpFrames(tester);
 
-    // Jump to the second page of the accessory's PageView (the swipeable
-    // extended-keys surface) and verify its contents.
+    // Jump to the punctuation page and the navigation/function page of the
+    // accessory's PageView and verify their contents.
     final pageView = tester.widget<PageView>(find.byType(PageView));
     pageView.controller!.jumpToPage(1);
     await tester.pump();
+    expect(find.text('|'), findsOneWidget);
+    expect(find.text('~'), findsOneWidget);
 
+    pageView.controller!.jumpToPage(2);
+    await tester.pump();
     expect(find.text('Home'), findsOneWidget);
     expect(find.text('F1'), findsOneWidget);
     debugDefaultTargetPlatformOverride = null;

@@ -106,7 +106,6 @@ class _HomeState extends State<_Home>
       ? _connections[_activeIndex]
       : null;
 
-  bool _lastKeyboardOnTap = false;
   bool _lastTouchSelection = false;
 
   @override
@@ -115,20 +114,12 @@ class _HomeState extends State<_Home>
     WidgetsBinding.instance.addObserver(this);
     _isForeground =
         WidgetsBinding.instance.lifecycleState == AppLifecycleState.resumed;
-    _lastKeyboardOnTap = widget.controller.keyboardOnTap;
     _lastTouchSelection = widget.controller.touchSelectionEnabled;
     widget.controller.addListener(_onSettingsChanged);
   }
 
   void _onSettingsChanged() {
     if (!mounted) return;
-    final keyboardOnTap = widget.controller.keyboardOnTap;
-    if (keyboardOnTap != _lastKeyboardOnTap) {
-      _lastKeyboardOnTap = keyboardOnTap;
-      for (final connection in _connections) {
-        connection.setShowKeyboard(keyboardOnTap);
-      }
-    }
     final touchSelection = widget.controller.touchSelectionEnabled;
     if (touchSelection != _lastTouchSelection) {
       _lastTouchSelection = touchSelection;
@@ -243,7 +234,6 @@ class _HomeState extends State<_Home>
       host: host,
       connector: widget.controller.transport.connect,
       onTunnel: _openTunnel,
-      keyboardOnTap: widget.controller.keyboardOnTap,
       isClipboardSourceActive: () =>
           mounted && _isForeground && identical(connection, _activeConnection),
     );
@@ -488,7 +478,8 @@ class _HomeState extends State<_Home>
                                       controller: connection.terminal,
                                       focusNode: connection.focusNode,
                                       autofocus: identical(connection, active),
-                                      showKeyboard: connection.showKeyboard,
+                                      showKeyboard:
+                                          widget.controller.keyboardOnTap,
                                       theme: terminalTheme,
                                       gestureSettings: terminalGestureSettings(
                                         touchSelectionEnabled: widget
@@ -523,14 +514,7 @@ class _HomeState extends State<_Home>
                             ],
                           ),
                         ),
-                        TerminalAccessory(
-                          controller: active.terminal,
-                          focusNode: active.focusNode,
-                          showAdditionalKeys:
-                              widget.controller.showAdditionalKeys,
-                          showKeyboard: active.showKeyboard,
-                          onShowKeyboardChanged: active.setShowKeyboard,
-                        ),
+                        TerminalAccessory(controller: active.terminal),
                       ],
                     ),
             ),

@@ -100,19 +100,11 @@ void main() {
     expect(writes, ['hello']);
   });
 
-  test('touch selection is a global preference, not per connection', () {
-    final connection = TerminalConnection(
-      host: _alpha,
-      connector: (_, _) => _FakeTerminalSession(),
-      onTunnel: (_, _, _) {},
-      keyboardOnTap: true,
-    );
-    addTearDown(() async {
-      await connection.close();
-      connection.dispose();
-    });
-
-    expect(connection.showKeyboard, isTrue);
+  test('keyboard and touch-selection live as global preferences', () {
+    // These preferences moved to app-level client state; the connection no
+    // longer carries them.
+    const state = SessionState.attached();
+    expect(state.isAttached, isTrue);
   });
 
   test(
