@@ -1,6 +1,0 @@
-dependency_overrides:
-  libghostty:
-    git:
-      url: https://github.com/adonm/libghostty.git
-      ref: 2a1e3e2b12882ee8a0e4c6dd39656378a0062012
-      path: packages/libghostty

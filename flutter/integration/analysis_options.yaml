@@ -1,0 +1,15 @@
+include: package:flutter_lints/flutter.yaml
+
+analyzer:
+  language:
+    strict-casts: true
+    strict-inference: true
+    strict-raw-types: true
+  exclude:
+    - build/**
+    - linux/**
+    - android/**
+    - ios/**
+    - web/**
+    - windows/**
+    - macos/**

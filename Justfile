@@ -73,17 +73,22 @@ flutter-get:
 [group('flutter')]
 flutter-app-check: flutter-get
     python3 scripts/check-flutter-config.py
-    python3 scripts/check-dart-format.py flutter/lib flutter/test flutter/integration_test
-    cd flutter && flutter analyze --no-pub
+    python3 scripts/check-dart-format.py flutter/lib flutter/test flutter/integration/lib flutter/integration/integration_test
+    cd flutter && flutter analyze --no-pub lib test
     cd flutter && flutter test --no-pub
 
 # Desktop UI integration tests: drives the real app (pairing, terminal
 # accessory keys, settings, disconnect) against real local PTYs, including a
-# btop TUI rendered through flterm. Needs xvfb and the Linux build bootstrap
-# packages (see mise.toml). Run under xvfb on headless hosts.
+# btop TUI rendered through flterm. Lives in its own package so ptyx and
+# integration_test stay out of the app's dependency graph (ptyx's
+# native-asset hook breaks iOS builds; integration_test breaks the Android
+# release registrant). Needs xvfb and the Linux build bootstrap packages
+# (see mise.toml).
 [group('flutter')]
 flutter-integration: flutter-get
-    cd flutter && xvfb-run -a flutter test integration_test -d linux --no-pub
+    cd flutter/integration && flutter pub get --enforce-lockfile
+    cd flutter/integration && xvfb-run -a flutter test integration_test -d linux --no-pub | tee /tmp/zuko-flutter-integration.log
+    grep -q "All tests passed" /tmp/zuko-flutter-integration.log
 
 # Regenerate the pair/connect flow screenshots under docs/images.
 [group('flutter')]

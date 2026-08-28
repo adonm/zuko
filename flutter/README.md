@@ -39,12 +39,17 @@ mise in your shell, so run recipes directly:
 It drives the real app against real local PTYs under Xvfb — pairing, accessory
 keys, settings toggles, disconnect, and a btop TUI through flterm — swapping
 only the network transport for `integration_test/local_host_transport.dart`.
-CI runs the same recipe in the Linux candidate job.
+The tests live in the standalone `flutter/integration` package so ptyx and
+`integration_test` stay out of the app's dependency graph (ptyx's
+native-asset hook breaks iOS builds and the integration_test plugin breaks the
+Android release registrant). CI runs the same recipe in the Linux candidate
+job.
 
 Architecture:
 
 - `lib/src/`: shared state, pairing, framing, reconnect, UI, and terminal glue
 - `rust/web_transport/`: relay-only browser Iroh bridge
+- `integration/`: standalone desktop UI integration test package
 - `android/`, `ios/`, `macos/`, `linux/`, `windows/`, `web/`: thin Flutter runners
 
 Linux and Windows builds run `scripts/patch-flutter-plugins.py` after dependency

@@ -1,11 +1,14 @@
-name: zuko
-description: Private remote shells over Iroh for Android, Apple platforms, web, Linux, and Windows.
+name: zuko_integration
+description: Desktop UI integration tests for the Zuko Flutter client.
 publish_to: 'none'
-version: 0.10.23+1800010023
+version: 0.0.0
 
 environment:
   sdk: ^3.12.2
 
+# Native libghostty is compiled from source at the same fork ref the app
+# pins; the integration package is its own root package, so hooks are not
+# inherited from the zuko path dependency.
 hooks:
   user_defines:
     libghostty:
@@ -15,19 +18,14 @@ hooks:
 dependencies:
   flutter:
     sdk: flutter
-  crypto: 3.0.7
+  zuko:
+    path: ..
   flterm:
     git:
       url: https://github.com/adonm/libghostty.git
       ref: 2a1e3e2b12882ee8a0e4c6dd39656378a0062012
       path: packages/flterm
-  flutter_secure_storage: 10.3.1
-  iroh_flutter: 1.0.3
   libghostty: ^0.0.12
-  mobile_scanner: 7.4.0
-  pointycastle: 4.0.0
-  url_launcher: 6.3.2
-  yaru: 10.2.0
 
 dependency_overrides:
   libghostty:
@@ -40,10 +38,15 @@ dev_dependencies:
   flutter_test:
     sdk: flutter
   flutter_lints: ^6.0.0
+  integration_test:
+    sdk: flutter
+  ptyx:
+    git:
+      url: https://github.com/elias8/libghostty.git
+      ref: d6dd31017ff9975faa126c0c515ad540b5d3925d
+      path: packages/ptyx
 
 flutter:
-  config:
-    enable-swift-package-manager: false
   uses-material-design: true
   assets:
     - assets/zuko-logo.png
