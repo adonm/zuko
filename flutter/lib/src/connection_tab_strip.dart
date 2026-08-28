@@ -4,6 +4,7 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:yaru/yaru.dart';
 
+import 'model.dart';
 import 'session_state.dart';
 
 import 'terminal_connection.dart';
@@ -12,7 +13,6 @@ import 'theme.dart';
 class ConnectionTabStrip extends StatefulWidget {
   const ConnectionTabStrip({
     super.key,
-    required this.controller,
     required this.selectedIndex,
     required this.connections,
     required this.labelFor,
@@ -20,7 +20,6 @@ class ConnectionTabStrip extends StatefulWidget {
     required this.onClose,
   });
 
-  final TabController controller;
   final int selectedIndex;
   final List<TerminalConnection> connections;
   final String Function(TerminalConnection connection) labelFor;
@@ -31,15 +30,41 @@ class ConnectionTabStrip extends StatefulWidget {
   State<ConnectionTabStrip> createState() => _ConnectionTabStripState();
 }
 
-class _ConnectionTabStripState extends State<ConnectionTabStrip> {
+class _ConnectionTabStripState extends State<ConnectionTabStrip>
+    with SingleTickerProviderStateMixin {
   final _scrollController = ScrollController();
+  late final TabController _tabController;
+
+  @override
+  void initState() {
+    super.initState();
+    _tabController = TabController(
+      length: widget.connections.length,
+      initialIndex: widget.selectedIndex,
+      vsync: this,
+    );
+  }
 
   @override
   void didUpdateWidget(ConnectionTabStrip oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (oldWidget.controller != widget.controller ||
-        oldWidget.selectedIndex != widget.selectedIndex ||
-        oldWidget.connections.length != widget.connections.length) {
+    if (oldWidget.connections.length != widget.connections.length) {
+      final previous = _tabController;
+      _tabController = TabController(
+        length: widget.connections.length,
+        initialIndex: widget.selectedIndex.clamp(
+          0,
+          math.max(0, widget.connections.length - 1),
+        ),
+        vsync: this,
+      );
+      previous.dispose();
+    }
+    if (oldWidget.selectedIndex != widget.selectedIndex) {
+      _tabController.index = widget.selectedIndex;
+      _revealSelectedTab();
+    }
+    if (oldWidget.connections.length != widget.connections.length) {
       _revealSelectedTab();
     }
   }
@@ -100,7 +125,7 @@ class _ConnectionTabStripState extends State<ConnectionTabStrip> {
               child: SizedBox(
                 width: width,
                 child: YaruTabBar(
-                  tabController: widget.controller,
+                  tabController: _tabController,
                   onTap: _selected,
                   height: metrics.tabBarHeight,
                   tabs: [
@@ -111,17 +136,23 @@ class _ConnectionTabStripState extends State<ConnectionTabStrip> {
                         child: Row(
                           mainAxisSize: MainAxisSize.min,
                           children: [
-                            Icon(
-                              _tabStatusIcon(connection.state),
-                              size: metrics.size(14),
-                              color: _tabStatusColor(context, connection.state),
+                            ValueListenableBuilder<SessionState>(
+                              valueListenable: connection.state,
+                              builder: (context, state, _) => Icon(
+                                _tabStatusIcon(state),
+                                size: metrics.size(14),
+                                color: _tabStatusColor(context, state),
+                              ),
                             ),
                             SizedBox(width: metrics.size(6)),
                             Flexible(
-                              child: Text(
-                                widget.labelFor(connection),
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
+                              child: ValueListenableBuilder<SavedHost>(
+                                valueListenable: connection.host,
+                                builder: (context, host, _) => Text(
+                                  host.name,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                ),
                               ),
                             ),
                             SizedBox(width: metrics.size(2)),
@@ -156,6 +187,7 @@ class _ConnectionTabStripState extends State<ConnectionTabStrip> {
 
   @override
   void dispose() {
+    _tabController.dispose();
     _scrollController.dispose();
     super.dispose();
   }

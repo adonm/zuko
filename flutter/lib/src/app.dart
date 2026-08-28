@@ -8,6 +8,7 @@ import 'package:url_launcher/url_launcher.dart';
 
 import 'accessory_bar.dart';
 import 'app_controller.dart';
+import 'connection_hub.dart';
 import 'model.dart';
 import 'pairing_screen.dart';
 import 'session_state.dart';
@@ -94,17 +95,11 @@ class _Home extends StatefulWidget {
 
 class _HomeState extends State<_Home>
     with WidgetsBindingObserver, TickerProviderStateMixin {
-  final List<TerminalConnection> _connections = [];
-  TabController? _tabController;
-  int _activeIndex = -1;
-  DateTime? _backgroundedAt;
+  late final ConnectionHub _hub;
   bool _isForeground = false;
   bool _sidebarExpanded = true;
 
-  TerminalConnection? get _activeConnection =>
-      _activeIndex >= 0 && _activeIndex < _connections.length
-      ? _connections[_activeIndex]
-      : null;
+  TerminalConnection? get _activeConnection => _hub.active;
 
   bool _lastTouchSelection = false;
 
@@ -116,6 +111,12 @@ class _HomeState extends State<_Home>
         WidgetsBinding.instance.lifecycleState == AppLifecycleState.resumed;
     _lastTouchSelection = widget.controller.touchSelectionEnabled;
     widget.controller.addListener(_onSettingsChanged);
+    _hub = ConnectionHub(
+      connector: widget.controller.transport.connect,
+      onTunnel: _openTunnel,
+      isClipboardSourceActive: (connection) =>
+          mounted && _isForeground && identical(connection, _hub.active),
+    )..addListener(_connectionChanged);
   }
 
   void _onSettingsChanged() {
@@ -124,7 +125,7 @@ class _HomeState extends State<_Home>
     if (touchSelection != _lastTouchSelection) {
       _lastTouchSelection = touchSelection;
       if (!touchSelection) {
-        for (final connection in _connections) {
+        for (final connection in _hub.connections) {
           connection.terminal.clearSelection();
         }
       }
@@ -136,59 +137,26 @@ class _HomeState extends State<_Home>
     _isForeground = state == AppLifecycleState.resumed;
     if (state == AppLifecycleState.paused ||
         state == AppLifecycleState.hidden) {
-      _backgroundedAt ??= DateTime.now();
+      _hub.handleLifecyclePaused();
       return;
     }
     if (state != AppLifecycleState.resumed) return;
-    final backgroundedAt = _backgroundedAt;
-    _backgroundedAt = null;
-    if (backgroundedAt != null &&
-        DateTime.now().difference(backgroundedAt) >=
-            const Duration(seconds: 5)) {
-      for (final connection in List.of(_connections)) {
-        unawaited(connection.reconnect());
-      }
-    }
+    _hub.handleLifecycleResumed();
   }
 
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     widget.controller.removeListener(_onSettingsChanged);
-    _tabController?.dispose();
-    final connections = List.of(_connections);
-    _connections.clear();
-    for (final connection in connections) {
-      connection.removeListener(_connectionChanged);
-    }
+    _hub.removeListener(_connectionChanged);
     unawaited(() async {
       try {
-        await Future.wait(
-          connections.map((connection) async {
-            try {
-              await connection.close();
-            } finally {
-              connection.dispose();
-            }
-          }),
-        );
+        await _hub.disposeAll();
       } finally {
         await widget.controller.close();
       }
     }());
     super.dispose();
-  }
-
-  void _replaceTabController() {
-    final previous = _tabController;
-    _tabController = _connections.isEmpty
-        ? null
-        : TabController(
-            length: _connections.length,
-            initialIndex: _activeIndex,
-            vsync: this,
-          );
-    previous?.dispose();
   }
 
   void _connectionChanged() {
@@ -202,88 +170,28 @@ class _HomeState extends State<_Home>
   }
 
   void _selectConnection(TerminalConnection connection) {
-    final index = _connections.indexOf(connection);
-    if (index < 0 || index == _activeIndex) {
-      _focusActiveTerminal();
-      return;
-    }
-    setState(() {
-      _activeIndex = index;
-      _tabController?.index = index;
-    });
+    _hub.select(connection);
     _focusActiveTerminal();
   }
 
   void _selectConnectionAt(int index) {
-    if (index < 0 || index >= _connections.length) return;
-    _selectConnection(_connections[index]);
+    if (index < 0 || index >= _hub.connections.length) return;
+    _selectConnection(_hub.connections[index]);
   }
 
   void _openConnection(SavedHost host) {
-    final existing = _connections
-        .where((connection) => connection.host.nodeId == host.nodeId)
-        .firstOrNull;
+    final existing = _hub.forHost(host);
     if (existing != null) {
       _selectConnection(existing);
       unawaited(existing.updateHost(host));
       return;
     }
-
-    late final TerminalConnection connection;
-    connection = TerminalConnection(
-      host: host,
-      connector: widget.controller.transport.connect,
-      onTunnel: _openTunnel,
-      isClipboardSourceActive: () =>
-          mounted && _isForeground && identical(connection, _activeConnection),
-    );
-    connection.addListener(_connectionChanged);
-    setState(() {
-      _connections.add(connection);
-      _activeIndex = _connections.length - 1;
-      _replaceTabController();
-    });
-    unawaited(connection.reconnect());
+    _hub.open(host);
     _focusActiveTerminal();
   }
 
   Future<void> _closeConnection(TerminalConnection connection) =>
-      _closeConnections([connection]);
-
-  Future<void> _closeConnections(
-    Iterable<TerminalConnection> connections,
-  ) async {
-    final closing = connections
-        .where(_connections.contains)
-        .toList(growable: false);
-    if (closing.isEmpty) return;
-    final activeBefore = _activeConnection;
-    final firstIndex = _connections.indexOf(closing.first);
-    for (final connection in closing) {
-      connection.removeListener(_connectionChanged);
-    }
-    setState(() {
-      _connections.removeWhere(closing.contains);
-      if (_connections.isEmpty) {
-        _activeIndex = -1;
-      } else if (activeBefore != null && _connections.contains(activeBefore)) {
-        _activeIndex = _connections.indexOf(activeBefore);
-      } else {
-        _activeIndex = firstIndex.clamp(0, _connections.length - 1);
-      }
-      _replaceTabController();
-    });
-    await Future.wait(
-      closing.map((connection) async {
-        try {
-          await connection.close();
-        } finally {
-          connection.dispose();
-        }
-      }),
-    );
-    _focusActiveTerminal();
-  }
+      _hub.close(connection);
 
   Future<void> _openTunnel(
     TerminalConnection connection,
@@ -313,14 +221,15 @@ class _HomeState extends State<_Home>
       }
     }
     if (!mounted ||
-        !_connections.contains(connection) ||
+        !_hub.connections.contains(connection) ||
         !connection.isCurrentGeneration(generation)) {
       return;
     }
     final local = '127.0.0.1:${tunnel.localPort}';
+    final name = connection.host.value.name;
     final message = opened
-        ? '${connection.host.name}: $local → host 127.0.0.1:${tunnel.hostPort}'
-        : '${connection.host.name}: tunnel ready at $local; browser could not be opened.';
+        ? '$name: $local → host 127.0.0.1:${tunnel.hostPort}'
+        : '$name: tunnel ready at $local; browser could not be opened.';
     ScaffoldMessenger.of(context)
       ..hideCurrentSnackBar()
       ..showSnackBar(SnackBar(content: Text(message)));
@@ -366,11 +275,13 @@ class _HomeState extends State<_Home>
   }
 
   Future<void> _forget(SavedHost host) async {
-    final matching = _connections
-        .where((connection) => connection.host.nodeId == host.nodeId)
+    final matching = _hub.connections
+        .where((connection) => connection.host.value.nodeId == host.nodeId)
         .toList(growable: false);
     try {
-      await _closeConnections(matching);
+      for (final connection in matching) {
+        await _hub.close(connection);
+      }
     } finally {
       await widget.controller.remove(host);
     }
@@ -382,10 +293,10 @@ class _HomeState extends State<_Home>
 
   String _connectionName(TerminalConnection connection) =>
       widget.controller.hosts
-          .where((host) => host.nodeId == connection.host.nodeId)
+          .where((host) => host.nodeId == connection.host.value.nodeId)
           .map((host) => host.name)
           .firstOrNull ??
-      connection.host.name;
+      connection.host.value.name;
 
   @override
   Widget build(BuildContext context) => AnimatedBuilder(
@@ -406,16 +317,16 @@ class _HomeState extends State<_Home>
       );
       final hasSavedHosts = widget.controller.hosts.isNotEmpty;
       final active = _activeConnection;
-      final selected = active?.host;
+      final selected = active?.host.value;
       final sessionState =
-          active?.state ??
+          active?.state.value ??
           const SessionState.ended('Choose a saved host to open a terminal.');
       final sidebar = Sidebar(
         controller: widget.controller,
         terminalFontSize: terminalFontSize,
         selected: selected,
         sessionState: sessionState,
-        openConnectionCount: _connections.length,
+        openConnectionCount: _hub.connections.length,
         onPair: () => _pair(),
         onConnect: _openConnection,
         onDisconnect: active == null
@@ -453,11 +364,10 @@ class _HomeState extends State<_Home>
                           )
                   : Column(
                       children: [
-                        if (showConnectionTabs(_connections.length)) ...[
+                        if (showConnectionTabs(_hub.connections.length)) ...[
                           ConnectionTabStrip(
-                            controller: _tabController!,
-                            selectedIndex: _activeIndex,
-                            connections: _connections,
+                            selectedIndex: _hub.activeIndex,
+                            connections: _hub.connections,
                             labelFor: _connectionName,
                             onSelected: _selectConnectionAt,
                             onClose: (connection) =>
@@ -467,9 +377,9 @@ class _HomeState extends State<_Home>
                         ],
                         Expanded(
                           child: IndexedStack(
-                            index: _activeIndex,
+                            index: _hub.activeIndex,
                             children: [
-                              for (final connection in _connections)
+                              for (final connection in _hub.connections)
                                 Stack(
                                   key: ObjectKey(connection),
                                   fit: StackFit.expand,
@@ -499,16 +409,22 @@ class _HomeState extends State<_Home>
                                             unawaited(_openTerminalLink(link)),
                                       ),
                                     ),
-                                    if (!connection.state.isAttached)
-                                      SessionOverlay(
-                                        state: connection.state,
-                                        hasHost: true,
-                                        onReconnect: connection.reconnect,
-                                        onPair: () => _pair(),
-                                        onDisconnect: () => unawaited(
-                                          _closeConnection(connection),
-                                        ),
-                                      ),
+                                    ValueListenableBuilder<SessionState>(
+                                      valueListenable: connection.state,
+                                      builder: (context, state, _) =>
+                                          state.isAttached
+                                          ? const SizedBox.shrink()
+                                          : SessionOverlay(
+                                              state: state,
+                                              hasHost: true,
+                                              onReconnect:
+                                                  connection.reconnect,
+                                              onPair: () => _pair(),
+                                              onDisconnect: () => unawaited(
+                                                _closeConnection(connection),
+                                              ),
+                                            ),
+                                    ),
                                   ],
                                 ),
                             ],

@@ -138,8 +138,8 @@ void main() {
       sessions[0].emitState(const SessionState.attached('Alpha attached'));
       sessions[1].emitState(const SessionState.retrying('Beta retrying'));
 
-      expect(alpha.state.message, 'Alpha attached');
-      expect(beta.state.message, 'Beta retrying');
+      expect(alpha.state.value.message, 'Alpha attached');
+      expect(beta.state.value.message, 'Beta retrying');
       expect(sessions, hasLength(2));
     },
   );
@@ -170,7 +170,7 @@ void main() {
       old.emitState(const SessionState.failed('stale failure'));
 
       expect(old.closed, isTrue);
-      expect(connection.state.isAttached, isTrue);
+      expect(connection.state.value.isAttached, isTrue);
     },
   );
 
@@ -203,7 +203,7 @@ void main() {
 
     expect(connectedHosts, [_alpha, refreshed]);
     expect(sessions.first.closed, isTrue);
-    expect(connection.host, same(refreshed));
+    expect(connection.host.value, same(refreshed));
   });
 
   test('terminal input and resize route to the owning session', () async {
@@ -255,10 +255,9 @@ void main() {
       MaterialApp(
         home: Scaffold(
           body: ConnectionTabStrip(
-            controller: controller,
             selectedIndex: 0,
             connections: [alpha, beta],
-            labelFor: (connection) => connection.host.name,
+            labelFor: (connection) => connection.host.value.name,
             onSelected: selected.add,
             onClose: closed.add,
           ),
@@ -307,10 +306,9 @@ void main() {
             child: SizedBox(
               width: 320,
               child: ConnectionTabStrip(
-                controller: controller,
                 selectedIndex: 0,
                 connections: connections,
-                labelFor: (connection) => connection.host.name,
+                labelFor: (connection) => connection.host.value.name,
                 onSelected: (_) {},
                 onClose: (_) {},
               ),
@@ -335,10 +333,9 @@ void main() {
             child: SizedBox(
               width: 320,
               child: ConnectionTabStrip(
-                controller: controller,
                 selectedIndex: 5,
                 connections: connections,
-                labelFor: (connection) => connection.host.name,
+                labelFor: (connection) => connection.host.value.name,
                 onSelected: (_) {},
                 onClose: (_) {},
               ),

@@ -1,11 +1,9 @@
 import 'dart:async';
 import 'dart:convert';
 
-import 'package:flutter/foundation.dart' show ChangeNotifier;
-
 import 'package:flterm/flterm.dart';
 import 'package:flutter/services.dart';
-import 'package:flutter/widgets.dart' show FocusNode;
+import 'package:flutter/widgets.dart' show FocusNode, ValueNotifier;
 
 import 'model.dart';
 import 'session_state.dart';
@@ -42,14 +40,15 @@ Future<void> _writeSystemClipboard(String text) =>
 
 bool _inactiveClipboardSource() => false;
 
-final class TerminalConnection extends ChangeNotifier {
+final class TerminalConnection {
   TerminalConnection({
-    required this.host,
+    required SavedHost host,
     required this.connector,
     required this.onTunnel,
     bool Function()? isClipboardSourceActive,
     RemoteClipboardWriter? clipboardWriter,
-  }) : _isClipboardSourceActive =
+  }) : host = ValueNotifier(host),
+       _isClipboardSourceActive =
            isClipboardSourceActive ?? _inactiveClipboardSource,
        _clipboardWriter = clipboardWriter ?? _writeSystemClipboard,
        terminal = TerminalController() {
@@ -66,7 +65,7 @@ final class TerminalConnection extends ChangeNotifier {
     );
   }
 
-  SavedHost host;
+  final ValueNotifier<SavedHost> host;
   final TerminalConnector connector;
   final TerminalTunnelHandler onTunnel;
   final bool Function() _isClipboardSourceActive;
@@ -81,9 +80,10 @@ final class TerminalConnection extends ChangeNotifier {
   int _generation = 0;
   bool _acceptingIo = false;
   bool _closed = false;
-  bool _disposed = false;
 
-  SessionState state = const SessionState.connecting();
+  final ValueNotifier<SessionState> state = ValueNotifier(
+    const SessionState.connecting(),
+  );
   TerminalGeometry geometry = const TerminalGeometry(80, 24, 0, 0);
 
   bool isCurrentGeneration(int generation) =>
@@ -112,15 +112,14 @@ final class TerminalConnection extends ChangeNotifier {
 
   Future<void> updateHost(SavedHost host) async {
     if (_closed) return;
-    if (host.nodeId != this.host.nodeId) {
+    if (host.nodeId != this.host.value.nodeId) {
       throw ArgumentError.value(host.nodeId, 'host.nodeId', 'must not change');
     }
-    final ticketChanged = host.ticket != this.host.ticket;
-    this.host = host;
+    final current = this.host.value;
+    final ticketChanged = host.ticket != current.ticket;
+    this.host.value = host;
     if (ticketChanged) {
       await reconnect();
-    } else {
-      _notify();
     }
   }
 
@@ -128,13 +127,12 @@ final class TerminalConnection extends ChangeNotifier {
     if (_closed) return;
     final generation = ++_generation;
     final previous = _detachSession();
-    state = const SessionState.connecting();
-    _notify();
+    state.value = const SessionState.connecting();
     await previous.close();
     if (!isCurrentGeneration(generation)) return;
 
     try {
-      final active = connector(host, geometry);
+      final active = connector(host.value, geometry);
       if (!isCurrentGeneration(generation)) {
         await active.close();
         return;
@@ -152,21 +150,18 @@ final class TerminalConnection extends ChangeNotifier {
           return;
         }
         _acceptingIo = next.isAttached;
-        state = next;
-        _notify();
+        state.value = next;
       });
       _tunnelSubscription = active.tunnels.listen((tunnel) {
         if (isCurrentGeneration(generation) && identical(_session, active)) {
           onTunnel(this, tunnel, generation);
         }
       });
-      _notify();
     } on Object {
       if (!isCurrentGeneration(generation)) return;
-      state = const SessionState.failed(
+      state.value = const SessionState.failed(
         'Could not start this session. Check the host and try again.',
       );
-      _notify();
     }
   }
 
@@ -175,8 +170,7 @@ final class TerminalConnection extends ChangeNotifier {
     _closed = true;
     _generation++;
     final previous = _detachSession();
-    state = const SessionState.ended('Connection closed.');
-    _notify();
+    state.value = const SessionState.ended('Connection closed.');
     await previous.close();
   }
 
@@ -195,18 +189,13 @@ final class TerminalConnection extends ChangeNotifier {
     return detached;
   }
 
-  void _notify() {
-    if (!_disposed) notifyListeners();
-  }
-
-  @override
   void dispose() {
     _closed = true;
-    _disposed = true;
     _generation++;
     focusNode.dispose();
     terminal.dispose();
-    super.dispose();
+    host.dispose();
+    state.dispose();
   }
 }
 

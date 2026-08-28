@@ -57,7 +57,7 @@ void main() {
 
     session.emitState(const SessionState.rejected('access revoked'));
     await Future<void>.delayed(Duration.zero);
-    expect(connection.state.recovery, SessionRecovery.rePair);
+    expect(connection.state.value.recovery, SessionRecovery.rePair);
     expect(connections, 1);
   });
 
@@ -111,7 +111,7 @@ void main() {
       );
       sessions.single.emitOutput('rejected-output');
       await Future<void>.delayed(Duration.zero);
-      expect(connection.state.message, contains('malformed frame'));
+      expect(connection.state.value.message, contains('malformed frame'));
       expect(_terminalText(connection), isNot(contains('rejected-output')));
 
       final old = sessions.single;

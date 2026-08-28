@@ -7,8 +7,9 @@ import 'storage.dart';
 import 'transport.dart';
 import 'transport_factory.dart';
 
-final class AppController extends ChangeNotifier {
-  AppController._(this._store, this._state, this.transport);
+final class AppController extends ValueNotifier<ClientState> {
+  AppController._(this._store, ClientState state, this.transport)
+    : super(state);
 
   @visibleForTesting
   factory AppController.forTesting({
@@ -18,24 +19,23 @@ final class AppController extends ChangeNotifier {
   }) => AppController._(store, state, transport);
 
   final ClientStateStore _store;
-  ClientState _state;
   final ClientTransport transport;
   Future<void> _saveTail = Future.value();
   bool busy = false;
   String status = 'Ready to connect';
 
-  Uint8List get clientKey => Uint8List.fromList(_state.clientKey);
-  List<SavedHost> get hosts => _state.hosts;
-  AppThemePreference get theme => _state.theme;
-  AppInterfaceSize get interfaceSize => _state.interfaceSize;
-  double get terminalFontSize => _state.terminalFontSize;
-  bool get terminalFontSizeCustomized => _state.terminalFontSizeCustomized;
-  bool get showAdditionalKeys => _state.showAdditionalKeys;
+  Uint8List get clientKey => Uint8List.fromList(value.clientKey);
+  List<SavedHost> get hosts => value.hosts;
+  AppThemePreference get theme => value.theme;
+  AppInterfaceSize get interfaceSize => value.interfaceSize;
+  double get terminalFontSize => value.terminalFontSize;
+  bool get terminalFontSizeCustomized => value.terminalFontSizeCustomized;
+  bool get showAdditionalKeys => value.showAdditionalKeys;
 
-  bool get touchSelectionEnabled => _state.touchSelectionEnabled;
+  bool get touchSelectionEnabled => value.touchSelectionEnabled;
 
-  bool get keyboardOnTap => _state.keyboardOnTap;
-  String get clientName => _state.clientName ?? 'device';
+  bool get keyboardOnTap => value.keyboardOnTap;
+  String get clientName => value.clientName ?? 'device';
   String get clientLabel => clientAuthorizationLabel(clientName, clientKey);
 
   static Future<AppController> create() async {
@@ -153,10 +153,9 @@ final class AppController extends ChangeNotifier {
 
   Future<void> _commit(ClientState Function(ClientState state) update) {
     final operation = _saveTail.then((_) async {
-      final next = update(_state);
+      final next = update(value);
       await _store.save(next);
-      _state = next;
-      notifyListeners();
+      value = next;
     });
     _saveTail = operation.catchError((_) {});
     return operation;
