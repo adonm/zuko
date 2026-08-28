@@ -22,15 +22,6 @@ class TerminalAccessory extends StatefulWidget {
 class _TerminalAccessoryState extends State<TerminalAccessory> {
   TerminalController get controller => widget.controller;
 
-  final PageController _pageController = PageController();
-  int _page = 0;
-
-  @override
-  void dispose() {
-    _pageController.dispose();
-    super.dispose();
-  }
-
   void _showClipboardMessage(BuildContext context, String message) {
     if (!context.mounted) return;
     ScaffoldMessenger.of(context)
@@ -93,6 +84,7 @@ class _TerminalAccessoryState extends State<TerminalAccessory> {
       final colors = Theme.of(context).colorScheme;
       final metrics = ZukoMetrics.of(context);
       final rowHeight = metrics.terminalAccessoryHeight;
+      final itemWidth = metrics.terminalAccessoryItemWidth;
       return Material(
         color: colors.surfaceContainerLow,
         child: DecoratedBox(
@@ -103,36 +95,91 @@ class _TerminalAccessoryState extends State<TerminalAccessory> {
             top: false,
             child: SizedBox(
               height: rowHeight,
-              child: Stack(
+              child: ListView(
+                scrollDirection: Axis.horizontal,
+                padding: EdgeInsets.symmetric(horizontal: metrics.size(6)),
                 children: [
-                  PageView(
-                    controller: _pageController,
-                    onPageChanged: (page) => setState(() => _page = page),
-                    children: [
-                      _MainKeyRow(
-                        controller: controller,
-                        onCopy: () => _copy(context),
-                        onPaste: () => _paste(context),
-                      ),
-                      _PunctuationKeyRow(controller: controller),
-                      _ExtendedKeyRow(controller: controller),
-                    ],
+                  _AccessoryKey(
+                    width: itemWidth,
+                    height: rowHeight,
+                    label: 'Esc',
+                    onPressed: () => controller.sendKey(Key.escape),
                   ),
-                  Align(
-                    alignment: Alignment.topRight,
-                    child: Padding(
-                      padding: const EdgeInsets.only(top: 2, right: 6),
-                      child: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          for (var index = 0; index < 3; index++) ...[
-                            _PageDot(active: index == _page),
-                            if (index < 2) const SizedBox(width: 4),
-                          ],
-                        ],
-                      ),
+                  _AccessoryKey(
+                    width: itemWidth,
+                    height: rowHeight,
+                    label: 'Tab',
+                    onPressed: () => controller.sendKey(Key.tab),
+                  ),
+                  SizedBox(width: metrics.terminalAccessoryGroupSpacing),
+                  _AccessoryKey(
+                    width: itemWidth,
+                    height: rowHeight,
+                    label: 'Ctrl',
+                    selected: controller.virtualMods.hasCtrl,
+                    onPressed: () => controller.toggleMod(const Mods.ctrl()),
+                  ),
+                  _AccessoryKey(
+                    width: itemWidth,
+                    height: rowHeight,
+                    label: 'Alt',
+                    selected: controller.virtualMods.hasAlt,
+                    onPressed: () => controller.toggleMod(const Mods.alt()),
+                  ),
+                  SizedBox(width: metrics.terminalAccessoryGroupSpacing),
+                  for (final item in terminalArrowKeys)
+                    _RepeatableAccessoryIcon(
+                      width: itemWidth,
+                      height: rowHeight,
+                      tooltip: item.label,
+                      icon: terminalArrowIcon(item.key),
+                      onPressed: () => controller.sendKey(item.key),
                     ),
+                  SizedBox(width: metrics.terminalAccessoryGroupSpacing),
+                  _AccessoryIcon(
+                    width: itemWidth,
+                    height: rowHeight,
+                    tooltip: controller.hasSelection
+                        ? 'Copy selected text'
+                        : 'Paste',
+                    icon: controller.hasSelection
+                        ? YaruFreedesktopIcons.edit_copy.icon
+                        : YaruFreedesktopIcons.edit_paste.icon,
+                    onPressed: controller.hasSelection
+                        ? () => _copy(context)
+                        : () => _paste(context),
                   ),
+                  _AccessoryIcon(
+                    width: itemWidth,
+                    height: rowHeight,
+                    tooltip: 'Select all',
+                    icon: YaruFreedesktopIcons.edit_select_all.icon,
+                    onPressed: controller.selectAll,
+                  ),
+                  SizedBox(width: metrics.terminalAccessoryGroupSpacing),
+                  for (final char in terminalPunctuationKeys)
+                    _AccessoryKey(
+                      width: itemWidth,
+                      height: rowHeight,
+                      label: char,
+                      onPressed: () => controller.sendText(char),
+                    ),
+                  SizedBox(width: metrics.terminalAccessoryGroupSpacing),
+                  for (final item in terminalNavigationKeys)
+                    _AccessoryKey(
+                      width: itemWidth,
+                      height: rowHeight,
+                      label: item.label,
+                      onPressed: () => controller.sendKey(item.key),
+                    ),
+                  SizedBox(width: metrics.terminalAccessoryGroupSpacing),
+                  for (final item in terminalFunctionKeys)
+                    _AccessoryKey(
+                      width: itemWidth,
+                      height: rowHeight,
+                      label: item.label,
+                      onPressed: () => controller.sendKey(item.key),
+                    ),
                 ],
               ),
             ),
@@ -326,165 +373,6 @@ class _AccessoryButtonState extends State<_AccessoryButton> {
           ),
         ),
       ),
-    );
-  }
-}
-
-class _PageDot extends StatelessWidget {
-  const _PageDot({required this.active});
-
-  final bool active;
-
-  @override
-  Widget build(BuildContext context) {
-    final colors = Theme.of(context).colorScheme;
-    return Container(
-      width: 6,
-      height: 6,
-      decoration: BoxDecoration(
-        shape: BoxShape.circle,
-        color: active
-            ? colors.primary
-            : colors.onSurfaceVariant.withValues(alpha: 0.4),
-      ),
-    );
-  }
-}
-
-class _MainKeyRow extends StatelessWidget {
-  const _MainKeyRow({
-    required this.controller,
-    required this.onCopy,
-    required this.onPaste,
-  });
-
-  final TerminalController controller;
-  final VoidCallback onCopy;
-  final VoidCallback onPaste;
-
-  @override
-  Widget build(BuildContext context) {
-    final metrics = ZukoMetrics.of(context);
-    final itemWidth = metrics.terminalAccessoryItemWidth;
-    final rowHeight = metrics.terminalAccessoryHeight;
-    return ListView(
-      scrollDirection: Axis.horizontal,
-      padding: EdgeInsets.symmetric(horizontal: metrics.size(6)),
-      children: [
-        _AccessoryKey(
-          width: itemWidth,
-          height: rowHeight,
-          label: 'Esc',
-          onPressed: () => controller.sendKey(Key.escape),
-        ),
-        _AccessoryKey(
-          width: itemWidth,
-          height: rowHeight,
-          label: 'Tab',
-          onPressed: () => controller.sendKey(Key.tab),
-        ),
-        SizedBox(width: metrics.terminalAccessoryGroupSpacing),
-        _AccessoryKey(
-          width: itemWidth,
-          height: rowHeight,
-          label: 'Ctrl',
-          selected: controller.virtualMods.hasCtrl,
-          onPressed: () => controller.toggleMod(const Mods.ctrl()),
-        ),
-        _AccessoryKey(
-          width: itemWidth,
-          height: rowHeight,
-          label: 'Alt',
-          selected: controller.virtualMods.hasAlt,
-          onPressed: () => controller.toggleMod(const Mods.alt()),
-        ),
-        SizedBox(width: metrics.terminalAccessoryGroupSpacing),
-        for (final item in terminalArrowKeys)
-          _RepeatableAccessoryIcon(
-            width: itemWidth,
-            height: rowHeight,
-            tooltip: item.label,
-            icon: terminalArrowIcon(item.key),
-            onPressed: () => controller.sendKey(item.key),
-          ),
-        SizedBox(width: metrics.terminalAccessoryGroupSpacing),
-        _AccessoryIcon(
-          width: itemWidth,
-          height: rowHeight,
-          tooltip: controller.hasSelection ? 'Copy selected text' : 'Paste',
-          icon: controller.hasSelection
-              ? YaruFreedesktopIcons.edit_copy.icon
-              : YaruFreedesktopIcons.edit_paste.icon,
-          onPressed: controller.hasSelection ? onCopy : onPaste,
-        ),
-        _AccessoryIcon(
-          width: itemWidth,
-          height: rowHeight,
-          tooltip: 'Select all',
-          icon: YaruFreedesktopIcons.edit_select_all.icon,
-          onPressed: controller.selectAll,
-        ),
-      ],
-    );
-  }
-}
-
-class _PunctuationKeyRow extends StatelessWidget {
-  const _PunctuationKeyRow({required this.controller});
-
-  final TerminalController controller;
-
-  @override
-  Widget build(BuildContext context) {
-    final metrics = ZukoMetrics.of(context);
-    final itemWidth = metrics.terminalAccessoryItemWidth;
-    final rowHeight = metrics.terminalAccessoryHeight;
-    return ListView(
-      scrollDirection: Axis.horizontal,
-      padding: EdgeInsets.symmetric(horizontal: metrics.size(6)),
-      children: [
-        for (final char in terminalPunctuationKeys)
-          _AccessoryKey(
-            width: itemWidth,
-            height: rowHeight,
-            label: char,
-            onPressed: () => controller.sendText(char),
-          ),
-      ],
-    );
-  }
-}
-
-class _ExtendedKeyRow extends StatelessWidget {
-  const _ExtendedKeyRow({required this.controller});
-
-  final TerminalController controller;
-
-  @override
-  Widget build(BuildContext context) {
-    final metrics = ZukoMetrics.of(context);
-    final itemWidth = metrics.terminalAccessoryItemWidth;
-    final rowHeight = metrics.terminalAccessoryHeight;
-    return ListView(
-      scrollDirection: Axis.horizontal,
-      padding: EdgeInsets.symmetric(horizontal: metrics.size(6)),
-      children: [
-        for (final item in terminalNavigationKeys)
-          _AccessoryKey(
-            width: itemWidth,
-            height: rowHeight,
-            label: item.label,
-            onPressed: () => controller.sendKey(item.key),
-          ),
-        SizedBox(width: metrics.terminalAccessoryGroupSpacing),
-        for (final item in terminalFunctionKeys)
-          _AccessoryKey(
-            width: itemWidth,
-            height: rowHeight,
-            label: item.label,
-            onPressed: () => controller.sendKey(item.key),
-          ),
-      ],
     );
   }
 }

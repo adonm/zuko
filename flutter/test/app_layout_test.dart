@@ -11,6 +11,7 @@ import 'package:zuko/src/extended_key_palette.dart';
 import 'package:zuko/src/repeatable_action.dart';
 import 'package:zuko/src/sidebar.dart';
 import 'package:zuko/src/terminal_key_lists.dart';
+import 'package:zuko/src/accessory_bar.dart';
 import 'package:zuko/src/app.dart';
 import 'package:zuko/src/app_controller.dart';
 import 'package:zuko/src/model.dart';
@@ -584,7 +585,7 @@ void _accessoryWidgetTests() {
     debugDefaultTargetPlatformOverride = null;
   });
 
-  testWidgets('accessory swipes to the extended keys page', (tester) async {
+  testWidgets('accessory holds every key group in one strip', (tester) async {
     _setAccessorySurface(tester, size: const Size(1200, 800));
     _setAccessoryPlatform(TargetPlatform.android);
     final controller = await _accessoryTestController();
@@ -596,18 +597,26 @@ void _accessoryWidgetTests() {
     await tester.tap(find.text('Home server'));
     await _pumpFrames(tester);
 
-    // Jump to the punctuation page and the navigation/function page of the
-    // accessory's PageView and verify their contents.
-    final pageView = tester.widget<PageView>(find.byType(PageView));
-    pageView.controller!.jumpToPage(1);
-    await tester.pump();
-    expect(find.text('|'), findsOneWidget);
-    expect(find.text('~'), findsOneWidget);
-
-    pageView.controller!.jumpToPage(2);
-    await tester.pump();
-    expect(find.text('Home'), findsOneWidget);
-    expect(find.text('F1'), findsOneWidget);
+    // One horizontally scrolling strip: core keys, punctuation, navigation,
+    // and function keys. The ListView lazily builds off-screen children, so
+    // assert the delegate's item count covers every group.
+    final list = tester.widget<ListView>(
+      find.descendant(
+        of: find.byType(TerminalAccessory),
+        matching: find.byType(ListView),
+      ),
+    );
+    final count = list.childrenDelegate.estimatedChildCount;
+    expect(
+      count,
+      4 + // Esc, Tab, Ctrl, Alt
+          4 + // arrows
+          2 + // copy/paste and select-all
+          terminalPunctuationKeys.length +
+          terminalNavigationKeys.length +
+          terminalFunctionKeys.length +
+          6, // group spacers
+    );
     debugDefaultTargetPlatformOverride = null;
   });
 
