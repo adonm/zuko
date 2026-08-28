@@ -4,10 +4,20 @@ This page starts from a fresh clone and names each build's output. The shared
 Flutter client targets Android, iOS, macOS, web, Linux, and Windows. Run commands
 from the repository root unless noted.
 
-## Recommended Ubuntu 24.04 Distrobox
+## Ubuntu 24.04 environment
 
-The primary x86_64 Linux development environment is a version-pinned Ubuntu
-24.04 Distrobox. Create it on the host, then run repository commands inside it:
+Ubuntu 24.04 is the local and CI baseline; a distrobox is not required. On a
+host, install [mise](https://mise.jdx.dev/getting-started.html) (the installer
+activates it in new shells), then:
+
+```sh
+mise trust
+mise bootstrap   # repository tools plus GTK3, libsecret, CMake, Ninja, …
+just check
+```
+
+On a different host distro, run the same commands inside a version-pinned
+Ubuntu 24.04 distrobox:
 
 ```sh
 distrobox create \
@@ -16,27 +26,17 @@ distrobox create \
 distrobox enter flutter-dev
 ```
 
+Inside the box, `mise bootstrap` as above; activation is explicit because
+Distrobox shares the host's shell startup files, so run
+`eval "$(mise activate bash)"` once in each plain shell. When Zuko is checked
+out through the `flutter-dev` workspace, its `just devbox-enter` command starts
+with Mise already active.
+
 Do not use an unversioned `latest` image. Distrobox shares the host checkout,
 display, GPU, devices, network, and home by default; it is a convenient mutable
 development environment rather than a security boundary. Ubuntu 26.04 and
 Fedora are useful additional compatibility checks, but Ubuntu 24.04 remains the
 local and CI baseline.
-
-Inside the box, install [mise](https://mise.jdx.dev/getting-started.html) if it
-is not already available through the shared home, then bootstrap the native
-toolchain and activate Mise for the current shell:
-
-```sh
-mise trust
-mise bootstrap
-eval "$(mise activate bash)"
-just check
-```
-
-Activation is explicit because Distrobox shares the host's shell startup files
-by default. Run the `eval` once in each plain shell. When Zuko is checked out
-through the `flutter-dev` workspace, its `just devbox-enter` command starts
-with Mise already active.
 
 ## Hermetic Flutter compile recipes
 
@@ -99,9 +99,14 @@ Apple/Windows work on those operating systems. On Linux, a missing CMake or
 Android SDK is a signal to finish provisioning the Distrobox or use the
 container recipes, not a reason to skip the corresponding compile gate.
 
-The shared client pins flterm and libghostty to the same immutable commit of
-the `adonm/libghostty` monorepo. `flutter pub get` resolves both package paths
-from one Git checkout.
+The shared client pins flterm and libghostty to one shared commit of the
+`adonm/libghostty` fork: libghostty there is exactly upstream main, and flterm
+carries only the three patches still in review upstream (accessible semantics,
+layout-aware keyboard input, tap-to-present keyboard; PRs #102 and #104).
+ptyx, the integration-test PTY bridge, comes straight from upstream
+`elias8/libghostty`. `scripts/check-flutter-config.py` fails closed when any
+of these pins drifts. Hosted packages with prebuilt binaries become possible
+once upstream releases the reorganized libghostty API and the flterm patches.
 
 Every platform installs the official Flutter beta archive through Mise's
 `http:flutter` backend at framework revision

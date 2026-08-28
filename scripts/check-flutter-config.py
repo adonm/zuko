@@ -45,18 +45,29 @@ def forbid_text(path: str, value: str) -> None:
 
 def validate_terminal_dependency_pin() -> None:
     pubspec = content("flutter/pubspec.yaml")
+    # flterm and libghostty both come from the fork because upstream has not
+    # released the reorganized API yet (hosted 0.0.12 predates it) or the few
+    # flterm patches still in review. Both must share one fork ref so they
+    # cannot drift; ptyx (integration tests only) comes from upstream
+    # elias8/libghostty at the fork's base commit.
     refs = re.findall(r'^      ref: "?([0-9a-f]{40})"?[ \t]*$', pubspec, re.MULTILINE)
-    if len(refs) != 2 or len(set(refs)) != 1:
-        raise SystemExit("Flutter config: terminal packages must share one Git ref")
+    if refs != [
+        "2a1e3e2b12882ee8a0e4c6dd39656378a0062012",  # flterm fork pin
+        "2a1e3e2b12882ee8a0e4c6dd39656378a0062012",  # libghostty fork override
+        "d6dd31017ff9975faa126c0c515ad540b5d3925d",  # ptyx upstream pin
+    ]:
+        raise SystemExit("Flutter config: terminal package refs drifted")
     if pubspec.count("url: https://github.com/adonm/libghostty.git") != 2:
-        raise SystemExit("Flutter config: terminal packages must use the monorepo fork")
-    for package in ["packages/flterm", "packages/libghostty"]:
+        raise SystemExit("Flutter config: flterm and libghostty must use the monorepo fork")
+    if pubspec.count("url: https://github.com/elias8/libghostty.git") != 1:
+        raise SystemExit("Flutter config: ptyx must use upstream elias8/libghostty")
+    for package in ["packages/flterm", "packages/libghostty", "packages/ptyx"]:
         if f"path: {package}" not in pubspec:
             raise SystemExit(f"Flutter config: missing package path {package}")
     lock = content("flutter/pubspec.lock")
     resolved = re.findall(
         r'^      resolved-ref: "?([0-9a-f]{40})"?[ \t]*\n'
-        r'      url: "?https://github\.com/adonm/libghostty\.git"?[ \t]*$',
+        r'      url: "?https://github\.com/(?:adonm|elias8)/libghostty\.git"?[ \t]*$',
         lock,
         re.MULTILINE,
     )

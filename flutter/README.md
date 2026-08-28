@@ -3,9 +3,18 @@
 One shared client targets Android, iOS, macOS, web, Linux, and Windows. The Core
 host and CLI remain in `../src/`.
 
-The terminal widget and Dart bindings are immutable Git package dependencies
-from [`adonm/libghostty`](https://github.com/adonm/libghostty). Both resolve
-from the same commit so flterm and libghostty cannot drift independently.
+The terminal widget and Dart bindings come from the
+[`adonm/libghostty`](https://github.com/adonm/libghostty) fork at one shared
+commit: libghostty there is exactly upstream `elias8/libghostty` main, and
+flterm adds only three commits — accessible terminal semantics, layout-aware
+keyboard input, and tap-to-present keyboard — all submitted upstream
+(PRs [#102](https://github.com/elias8/libghostty/pull/102) and
+[#104](https://github.com/elias8/libghostty/pull/104)). When upstream releases
+the reorganized libghostty API plus these flterm patches, the client switches
+to the hosted packages and their prebuilt release binaries (no Zig compile);
+until then `source: compile` is required because the published 0.0.12
+binaries predate the API. ptyx (integration tests only) comes straight from
+upstream `elias8/libghostty`.
 
 Fresh-clone prerequisites, platform commands, and output paths are documented
 in [`../docs/building-clients.md`](../docs/building-clients.md). In particular,
@@ -20,6 +29,17 @@ the complete web, Android, and Linux compile gate, or the focused
 `container-web`, `container-android`, and `container-linux-build` recipes,
 when you need their pinned build-only inputs. The builder supplies CMake, GTK,
 JDK 17, the Android SDK/NDK, and Wasm tooling.
+
+A distrobox is not required. On a Linux host, `mise bootstrap` installs the
+system packages and `mise install` the toolchain; the curl installer activates
+mise in your shell, so run recipes directly:
+
+    just flutter-integration
+
+It drives the real app against real local PTYs under Xvfb — pairing, accessory
+keys, settings toggles, disconnect, and a btop TUI through flterm — swapping
+only the network transport for `integration_test/local_host_transport.dart`.
+CI runs the same recipe in the Linux candidate job.
 
 Architecture:
 
