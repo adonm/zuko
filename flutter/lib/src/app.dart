@@ -9,7 +9,6 @@ import 'package:url_launcher/url_launcher.dart';
 
 import 'accessory_bar.dart';
 import 'app_controller.dart';
-import 'command_palette.dart';
 import 'connection_hub.dart';
 import 'model.dart';
 import 'pairing_screen.dart';
@@ -94,13 +93,6 @@ class _Home extends StatefulWidget {
   @override
   State<_Home> createState() => _HomeState();
 }
-
-bool _isMobilePlatform() =>
-    !kIsWeb &&
-    switch (defaultTargetPlatform) {
-      TargetPlatform.android || TargetPlatform.iOS => true,
-      _ => false,
-    };
 
 class _HomeState extends State<_Home>
     with WidgetsBindingObserver, TickerProviderStateMixin {
@@ -393,30 +385,6 @@ class _HomeState extends State<_Home>
                                   key: ObjectKey(connection),
                                   fit: StackFit.expand,
                                   children: [
-                                    if (_isMobilePlatform())
-                                      Positioned(
-                                        right: 8,
-                                        bottom: 8,
-                                        child: FloatingActionButton.small(
-                                          heroTag: 'command-palette',
-                                          tooltip: 'Command search',
-                                          onPressed: () => unawaited(
-                                            showCommandPalette(
-                                              context,
-                                              controller: connection.terminal,
-                                              connection: connection,
-                                              onDisconnect: () => unawaited(
-                                                _closeConnection(connection),
-                                              ),
-                                              onPair: () => _pair(),
-                                            ),
-                                          ),
-                                          child: const Icon(
-                                            Icons.terminal,
-                                            size: 18,
-                                          ),
-                                        ),
-                                      ),
                                     TerminalView(
                                       controller: connection.terminal,
                                       focusNode: connection.focusNode,
