@@ -417,8 +417,7 @@ class _HomeState extends State<_Home>
                                           : SessionOverlay(
                                               state: state,
                                               hasHost: true,
-                                              onReconnect:
-                                                  connection.reconnect,
+                                              onReconnect: connection.reconnect,
                                               onPair: () => _pair(),
                                               onDisconnect: () => unawaited(
                                                 _closeConnection(connection),
