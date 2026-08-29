@@ -161,8 +161,8 @@ def enable_source_compile() -> None:
         fail("unexpected hooks block in flutter/pubspec.yaml")
     replace_once(
         pubspec_path,
-        "dependencies:\n",
-        f"{hooks}\ndependencies:\n",
+        "dependencies:\n  flutter:\n",
+        f"{hooks}\ndependencies:\n  flutter:\n",
     )
 
 
