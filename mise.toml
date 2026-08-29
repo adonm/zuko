@@ -6,7 +6,6 @@
 [tools]
 # Rust toolchain for the CLI and host; edition 2024 needs 1.85+.
 rust = { version = "1.96.1", components = "clippy,rustfmt" }
-zig = "0.16.0" # libghostty compiles the Ghostty vt core with Zig
 just = "1.55.1" # local task runner (`just check`)
 lychee = "0.24.2" # lints documentation links (`just lint-md`)
 actionlint = "1.7.12" # lints GitHub Actions workflows (`just lint-ci`)

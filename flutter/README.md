@@ -3,18 +3,13 @@
 One shared client targets Android, iOS, macOS, web, Linux, and Windows. The Core
 host and CLI remain in `../src/`.
 
-The terminal widget and Dart bindings come from the
-[`adonm/libghostty`](https://github.com/adonm/libghostty) fork at one shared
-commit: libghostty there is exactly upstream `elias8/libghostty` main, and
-flterm adds only three commits — accessible terminal semantics, layout-aware
-keyboard input, and tap-to-present keyboard — all submitted upstream
-(PRs [#102](https://github.com/elias8/libghostty/pull/102) and
-[#104](https://github.com/elias8/libghostty/pull/104)). When upstream releases
-the reorganized libghostty API plus these flterm patches, the client switches
-to the hosted packages and their prebuilt release binaries (no Zig compile);
-until then `source: compile` is required because the published 0.0.12
-binaries predate the API. ptyx (integration tests only) comes straight from
-upstream `elias8/libghostty`.
+The terminal widget is the upstream-hosted
+[`flterm`](https://pub.dev/packages/flterm) 0.0.5 on
+[`libghostty`](https://pub.dev/packages/libghostty) 0.0.12. libghostty's hook
+downloads its SHA256-pinned prebuilt release binaries, so no Zig or native
+compilation is needed. Terminal content semantics and layout-aware keyboard
+handling land with the next upstream release (elias8/libghostty PRs #102 and
+#104); until then the app supplies the terminal's accessibility label itself.
 
 Fresh-clone prerequisites, platform commands, and output paths are documented
 in [`../docs/building-clients.md`](../docs/building-clients.md). In particular,

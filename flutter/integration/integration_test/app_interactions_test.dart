@@ -155,11 +155,12 @@ void main() {
     await _pairThroughUi(tester, controller);
 
     // Give btop time to draw frames; flterm must receive ANSI escape
-    // sequences and TUI content from the PTY.
+    // sequences and TUI content from the PTY. The first paint can be slow on
+    // cold machines, so poll generously.
     await _waitFor(
       tester,
       () => transport.receivedBytes.contains(0x1b),
-      tries: 40,
+      tries: 60,
     );
     expect(transport.receivedBytes.contains(0x1b), isTrue);
     expect(transport.receivedBytes.length, greaterThan(100));

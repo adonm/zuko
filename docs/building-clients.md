@@ -99,14 +99,14 @@ Apple/Windows work on those operating systems. On Linux, a missing CMake or
 Android SDK is a signal to finish provisioning the Distrobox or use the
 container recipes, not a reason to skip the corresponding compile gate.
 
-The shared client pins flterm and libghostty to one shared commit of the
-`adonm/libghostty` fork: libghostty there is exactly upstream main, and flterm
-carries only the three patches still in review upstream (accessible semantics,
-layout-aware keyboard input, tap-to-present keyboard; PRs #102 and #104).
-ptyx, the integration-test PTY bridge, comes straight from upstream
-`elias8/libghostty`. `scripts/check-flutter-config.py` fails closed when any
-of these pins drifts. Hosted packages with prebuilt binaries become possible
-once upstream releases the reorganized libghostty API and the flterm patches.
+The shared client uses the upstream-hosted `flterm` 0.0.5 and `libghostty`
+0.0.12 from pub.dev. libghostty's hook downloads its SHA256-pinned prebuilt
+release binaries — no Zig toolchain, no source compile. The few flterm
+improvements zuko needs (terminal content semantics, layout-aware keyboard
+input) are in review upstream (PRs #102 and #104) and arrive with the next
+release. ptyx, the integration-test PTY bridge, comes from upstream
+`elias8/libghostty` and is declared only by the `flutter/integration` package.
+`scripts/check-flutter-config.py` fails closed when any of these pins drifts.
 
 Every platform installs the official Flutter beta archive through Mise's
 `http:flutter` backend at framework revision

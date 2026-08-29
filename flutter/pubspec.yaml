@@ -6,35 +6,19 @@ version: 0.10.23+1800010023
 environment:
   sdk: ^3.12.2
 
-hooks:
-  user_defines:
-    libghostty:
-      source: compile
-      download: tarball
 
 dependencies:
   flutter:
     sdk: flutter
   crypto: 3.0.7
-  flterm:
-    git:
-      url: https://github.com/adonm/libghostty.git
-      ref: 2a1e3e2b12882ee8a0e4c6dd39656378a0062012
-      path: packages/flterm
+  flterm: 0.0.5
   flutter_secure_storage: 10.3.1
   iroh_flutter: 1.0.3
-  libghostty: ^0.0.12
+  libghostty: 0.0.12
   mobile_scanner: 7.4.0
   pointycastle: 4.0.0
   url_launcher: 6.3.2
   yaru: 10.2.0
-
-dependency_overrides:
-  libghostty:
-    git:
-      url: https://github.com/adonm/libghostty.git
-      ref: 2a1e3e2b12882ee8a0e4c6dd39656378a0062012
-      path: packages/libghostty
 
 dev_dependencies:
   flutter_test:

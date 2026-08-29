@@ -164,11 +164,10 @@ packages:
   flterm:
     dependency: "direct main"
     description:
-      path: "packages/flterm"
-      ref: "2a1e3e2b12882ee8a0e4c6dd39656378a0062012"
-      resolved-ref: "2a1e3e2b12882ee8a0e4c6dd39656378a0062012"
-      url: "https://github.com/adonm/libghostty.git"
-    source: git
+      name: flterm
+      sha256: "41c4dff517de37abcff66b5ee1481d838b5f2952c02d547c7b6db1cf3ff25c14"
+      url: "https://pub.dev"
+    source: hosted
     version: "0.0.5"
   flutter:
     dependency: "direct main"
@@ -371,11 +370,10 @@ packages:
   libghostty:
     dependency: "direct main"
     description:
-      path: "packages/libghostty"
-      ref: "2a1e3e2b12882ee8a0e4c6dd39656378a0062012"
-      resolved-ref: "2a1e3e2b12882ee8a0e4c6dd39656378a0062012"
-      url: "https://github.com/adonm/libghostty.git"
-    source: git
+      name: libghostty
+      sha256: "1f09c91ec45559d8e660906121bee6ef4a83bc67f2e8141ee9070388d63e5bd2"
+      url: "https://pub.dev"
+    source: hosted
     version: "0.0.12"
   lints:
     dependency: transitive

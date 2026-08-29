@@ -6,33 +6,14 @@ version: 0.0.0
 environment:
   sdk: ^3.12.2
 
-# Native libghostty is compiled from source at the same fork ref the app
-# pins; the integration package is its own root package, so hooks are not
-# inherited from the zuko path dependency.
-hooks:
-  user_defines:
-    libghostty:
-      source: compile
-      download: tarball
 
 dependencies:
   flutter:
     sdk: flutter
   zuko:
     path: ..
-  flterm:
-    git:
-      url: https://github.com/adonm/libghostty.git
-      ref: 2a1e3e2b12882ee8a0e4c6dd39656378a0062012
-      path: packages/flterm
-  libghostty: ^0.0.12
-
-dependency_overrides:
-  libghostty:
-    git:
-      url: https://github.com/adonm/libghostty.git
-      ref: 2a1e3e2b12882ee8a0e4c6dd39656378a0062012
-      path: packages/libghostty
+  flterm: 0.0.5
+  libghostty: 0.0.12
 
 dev_dependencies:
   flutter_test:

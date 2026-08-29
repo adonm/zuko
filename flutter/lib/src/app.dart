@@ -385,29 +385,42 @@ class _HomeState extends State<_Home>
                                   key: ObjectKey(connection),
                                   fit: StackFit.expand,
                                   children: [
-                                    TerminalView(
-                                      controller: connection.terminal,
-                                      focusNode: connection.focusNode,
-                                      autofocus: identical(connection, active),
-                                      showKeyboard:
-                                          widget.controller.keyboardOnTap,
-                                      theme: terminalTheme,
-                                      gestureSettings: terminalGestureSettings(
-                                        touchSelectionEnabled: widget
-                                            .controller
-                                            .touchSelectionEnabled,
-                                      ),
-                                      semanticsLabel:
+                                    // Upstream flterm 0.0.5 has no terminal
+                                    // semantics support yet; merge the label
+                                    // and hint into the terminal's own
+                                    // semantics node until the upstreamed
+                                    // flterm patches release.
+                                    Semantics(
+                                      container: false,
+                                      label:
                                           '${_connectionName(connection)} remote terminal',
-                                      semanticsHint:
+                                      hint:
                                           'Activate to focus remote terminal input',
-                                      linkSettings: LinkSettings(
-                                        types: const {
-                                          LinkType.osc8,
-                                          LinkType.text,
-                                        },
-                                        onActivate: (link) =>
-                                            unawaited(_openTerminalLink(link)),
+                                      child: TerminalView(
+                                        controller: connection.terminal,
+                                        focusNode: connection.focusNode,
+                                        autofocus: identical(
+                                          connection,
+                                          active,
+                                        ),
+                                        showKeyboard:
+                                            widget.controller.keyboardOnTap,
+                                        theme: terminalTheme,
+                                        gestureSettings:
+                                            terminalGestureSettings(
+                                              touchSelectionEnabled: widget
+                                                  .controller
+                                                  .touchSelectionEnabled,
+                                            ),
+                                        linkSettings: LinkSettings(
+                                          types: const {
+                                            LinkType.osc8,
+                                            LinkType.text,
+                                          },
+                                          onActivate: (link) => unawaited(
+                                            _openTerminalLink(link),
+                                          ),
+                                        ),
                                       ),
                                     ),
                                     ValueListenableBuilder<SessionState>(

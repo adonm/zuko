@@ -73,7 +73,7 @@ jobs:
       - uses: jdx/mise-action@e6a8b3978addb5a52f2b4cd9d91eafa7f0ab959d # v4.2.0
         with:
           cache: true
-          install_args: rust zig just http:flutter
+          install_args: rust just http:flutter
 
 
       - name: Build locked Flutter Windows release

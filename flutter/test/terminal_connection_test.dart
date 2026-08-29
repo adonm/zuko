@@ -5,7 +5,7 @@ import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:libghostty/libghostty.dart'
-    show ClipboardContent, ClipboardLocation, ClipboardWrite;
+    show ClipboardLocation, ClipboardWrite;
 import 'package:zuko/src/connection_tab_strip.dart';
 import 'package:zuko/src/model.dart';
 import 'package:zuko/src/session_state.dart';
@@ -31,11 +31,9 @@ void main() {
     ClipboardWrite request(
       List<int> data, {
       ClipboardLocation location = ClipboardLocation.standard,
-    }) => ClipboardWrite(
+    }) => (
       location: location,
-      contents: [
-        ClipboardContent(mime: 'text/plain', data: Uint8List.fromList(data)),
-      ],
+      contents: [(mime: 'text/plain', data: Uint8List.fromList(data))],
     );
 
     expect(decodeRemoteClipboardWrite(request('hello'.codeUnits)), 'hello');
@@ -53,12 +51,10 @@ void main() {
     final oversized = Uint8List(maxRemoteClipboardBytes + 3);
 
     expect(
-      decodeRemoteClipboardWrite(
-        ClipboardWrite(
-          location: ClipboardLocation.standard,
-          contents: [ClipboardContent(mime: 'text/plain', data: oversized)],
-        ),
-      ),
+      decodeRemoteClipboardWrite((
+        location: ClipboardLocation.standard,
+        contents: [(mime: 'text/plain', data: oversized)],
+      )),
       isNull,
     );
   });

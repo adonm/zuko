@@ -45,19 +45,18 @@ def forbid_text(path: str, value: str) -> None:
 
 def validate_terminal_dependency_pin() -> None:
     app = content("flutter/pubspec.yaml")
-    # flterm and libghostty come from the fork because upstream has not
-    # released the reorganized API yet (hosted 0.0.12 predates it) or the few
-    # flterm patches still in review. Both must share one fork ref so they
-    # cannot drift.
-    fork_ref = "2a1e3e2b12882ee8a0e4c6dd39656378a0062012"
-    app_refs = re.findall(r'^      ref: "?([0-9a-f]{40})"?[ \t]*$', app, re.MULTILINE)
-    if app_refs != [fork_ref] * 2:
-        raise SystemExit("Flutter config: flterm and libghostty refs drifted")
-    if app.count("url: https://github.com/adonm/libghostty.git") != 2:
-        raise SystemExit("Flutter config: flterm and libghostty must use the monorepo fork")
-    for package in ["packages/flterm", "packages/libghostty"]:
-        if f"path: {package}" not in app:
-            raise SystemExit(f"Flutter config: missing package path {package}")
+    # flterm and libghostty are the upstream-hosted pub.dev releases; the
+    # libghostty hook then downloads its SHA256-pinned prebuilt binaries, so
+    # no Zig toolchain and no source compile. Neither package may be pinned
+    # to a git ref or forced to compile from source.
+    if "flterm: 0.0.5" not in app:
+        raise SystemExit("Flutter config: flterm must be the hosted 0.0.5 pin")
+    if "libghostty: 0.0.12" not in app:
+        raise SystemExit("Flutter config: libghostty must be the hosted 0.0.12 pin")
+    if "github.com" in app:
+        raise SystemExit("Flutter config: terminal packages must not use git pins")
+    if "source: compile" in app:
+        raise SystemExit("Flutter config: libghostty must use prebuilt release binaries")
     # integration_test and ptyx must NOT live in the app pubspec: ptyx's
     # native-asset hook fails iOS builds and integration_test breaks the
     # Android release registrant. They belong to the standalone integration
@@ -66,36 +65,56 @@ def validate_terminal_dependency_pin() -> None:
         raise SystemExit("Flutter config: integration_test and ptyx must stay in flutter/integration")
 
     integration = content("flutter/integration/pubspec.yaml")
+    ptyx_ref = "d6dd31017ff9975faa126c0c515ad540b5d3925d"
     integration_refs = re.findall(
         r'^      ref: "?([0-9a-f]{40})"?[ \t]*$', integration, re.MULTILINE
     )
-    ptyx_ref = "d6dd31017ff9975faa126c0c515ad540b5d3925d"
-    if integration_refs != [fork_ref, fork_ref, ptyx_ref]:
+    if integration_refs != [ptyx_ref]:
         raise SystemExit("Flutter config: integration package refs drifted")
-    if integration.count("url: https://github.com/adonm/libghostty.git") != 2:
-        raise SystemExit("Flutter config: integration flterm and libghostty must use the monorepo fork")
+    if "flterm: 0.0.5" not in integration or "libghostty: 0.0.12" not in integration:
+        raise SystemExit("Flutter config: integration package must use the hosted terminal pins")
+    if "source: compile" in integration:
+        raise SystemExit("Flutter config: integration package must use prebuilt release binaries")
     if integration.count("url: https://github.com/elias8/libghostty.git") != 1:
         raise SystemExit("Flutter config: ptyx must use upstream elias8/libghostty")
     if "integration_test:\n    sdk: flutter" not in integration:
         raise SystemExit("Flutter config: integration package must depend on integration_test")
 
     app_lock = content("flutter/pubspec.lock")
-    app_resolved = re.findall(
-        r'^      resolved-ref: "?([0-9a-f]{40})"?[ \t]*\n'
-        r'      url: "?https://github\.com/adonm/libghostty\.git"?[ \t]*$',
+    if not re.search(
+        r'^  flterm:\n'
+        r'    dependency: "direct main"\n'
+        r'    description:\n'
+        r'      name: flterm\n'
+        r'      sha256: "?[0-9a-f]+"?\n'
+        r'      url: "https://pub\.dev"\n'
+        r'    source: hosted\n'
+        r'    version: "0\.0\.5"\n',
         app_lock,
         re.MULTILINE,
-    )
-    if app_resolved != [fork_ref] * 2:
-        raise SystemExit("Flutter config: terminal lock refs differ from pubspec")
+    ):
+        raise SystemExit("Flutter config: lockfile must pin hosted flterm 0.0.5")
+    if not re.search(
+        r'^  libghostty:\n'
+        r'    dependency: "direct main"\n'
+        r'    description:\n'
+        r'      name: libghostty\n'
+        r'      sha256: "?[0-9a-f]+"?\n'
+        r'      url: "https://pub\.dev"\n'
+        r'    source: hosted\n'
+        r'    version: "0\.0\.12"\n',
+        app_lock,
+        re.MULTILINE,
+    ):
+        raise SystemExit("Flutter config: lockfile must pin hosted libghostty 0.0.12")
     integration_lock = content("flutter/integration/pubspec.lock")
-    integration_resolved = re.findall(
+    resolved = re.findall(
         r'^      resolved-ref: "?([0-9a-f]{40})"?[ \t]*\n'
-        r'      url: "?https://github\.com/(?:adonm|elias8)/libghostty\.git"?[ \t]*$',
+        r'      url: "?https://github\.com/elias8/libghostty\.git"?[ \t]*$',
         integration_lock,
         re.MULTILINE,
     )
-    if integration_resolved != [fork_ref, fork_ref, ptyx_ref]:
+    if resolved != [ptyx_ref]:
         raise SystemExit("Flutter config: integration lock refs differ from its pubspec")
 
 
