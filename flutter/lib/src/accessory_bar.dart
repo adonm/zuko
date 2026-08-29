@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flterm/flterm.dart';
+import 'package:flutter/foundation.dart' show defaultTargetPlatform;
 import 'package:flutter/material.dart' hide Key;
 import 'package:flutter/services.dart';
 import 'package:yaru/yaru.dart';
@@ -157,7 +158,9 @@ class _TerminalAccessoryState extends State<TerminalAccessory> {
                     onPressed: controller.selectAll,
                   ),
                   SizedBox(width: metrics.terminalAccessoryGroupSpacing),
-                  for (final char in terminalPunctuationKeys)
+                  for (final char in terminalPunctuationKeysFor(
+                    defaultTargetPlatform,
+                  ))
                     _AccessoryKey(
                       width: itemWidth,
                       height: rowHeight,

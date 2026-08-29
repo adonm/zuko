@@ -82,3 +82,12 @@ const terminalPunctuationKeys = <String>[
   ',',
   '.',
 ];
+
+/// Punctuation keys shown in the accessory for [platform]. Touch soft
+/// keyboards (iOS and Android) already provide every one of these characters
+/// on their number and symbol layers, so the group is omitted there to keep
+/// the strip short.
+List<String> terminalPunctuationKeysFor(TargetPlatform platform) =>
+    platform == TargetPlatform.iOS || platform == TargetPlatform.android
+    ? const []
+    : terminalPunctuationKeys;

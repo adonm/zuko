@@ -585,9 +585,11 @@ void _accessoryWidgetTests() {
     debugDefaultTargetPlatformOverride = null;
   });
 
-  testWidgets('accessory holds every key group in one strip', (tester) async {
+  testWidgets('desktop accessory holds every key group in one strip', (
+    tester,
+  ) async {
     _setAccessorySurface(tester, size: const Size(1200, 800));
-    _setAccessoryPlatform(TargetPlatform.android);
+    _setAccessoryPlatform(TargetPlatform.linux);
     final controller = await _accessoryTestController();
     addTearDown(controller.dispose);
 
@@ -618,6 +620,53 @@ void _accessoryWidgetTests() {
           6, // group spacers
     );
     debugDefaultTargetPlatformOverride = null;
+  });
+
+  testWidgets('touch accessory omits keys the soft keyboard provides', (
+    tester,
+  ) async {
+    for (final platform in [TargetPlatform.android, TargetPlatform.iOS]) {
+      _setAccessorySurface(tester, size: const Size(1200, 800));
+      _setAccessoryPlatform(platform);
+      final controller = await _accessoryTestController();
+      addTearDown(controller.dispose);
+
+      await tester.pumpWidget(ZukoApp(controller: controller));
+      await _pumpFrames(tester);
+
+      await tester.tap(find.text('Home server'));
+      await _pumpFrames(tester);
+
+      // Core keys stay; the punctuation group is covered by the soft
+      // keyboard's number and symbol layers.
+      expect(find.text('Esc'), findsOneWidget);
+      expect(find.text('Ctrl'), findsOneWidget);
+      expect(find.byTooltip('Up'), findsOneWidget);
+      expect(find.byTooltip('Select all'), findsOneWidget);
+      expect(find.text('|'), findsNothing);
+      expect(find.text('~'), findsNothing);
+      expect(find.text('>'), findsNothing);
+      expect(find.text('Home'), findsOneWidget);
+
+      final list = tester.widget<ListView>(
+        find.descendant(
+          of: find.byType(TerminalAccessory),
+          matching: find.byType(ListView),
+        ),
+      );
+      expect(
+        list.childrenDelegate.estimatedChildCount,
+        4 + // Esc, Tab, Ctrl, Alt
+            4 + // arrows
+            2 + // copy/paste and select-all
+            terminalNavigationKeys.length +
+            terminalFunctionKeys.length +
+            6, // group spacers
+      );
+
+      debugDefaultTargetPlatformOverride = null;
+      await tester.pumpWidget(const SizedBox.shrink());
+    }
   });
 
   testWidgets('desktop accessory keeps the fixed key row', (tester) async {
