@@ -6,8 +6,11 @@ host and CLI remain in `../src/`.
 The terminal widget is the upstream-hosted
 [`flterm`](https://pub.dev/packages/flterm) 0.0.5 on
 [`libghostty`](https://pub.dev/packages/libghostty) 0.0.12. libghostty's hook
-downloads its SHA256-pinned prebuilt release binaries, so no Zig or native
-compilation is needed. Terminal content semantics and layout-aware keyboard
+downloads its SHA256-pinned prebuilt release binaries, so normal builds and CI
+need no Zig or native compilation. The one exception is the Codemagic App
+Store build: App Store Connect rejects Zig-produced iOS dylibs, so
+`scripts/prepare-libghostty-ios-static.py` compiles Ghostty there and relinks
+it with Apple clang. Terminal content semantics and layout-aware keyboard
 handling land with the next upstream release (elias8/libghostty PRs #102 and
 #104); until then the app supplies the terminal's accessibility label itself.
 

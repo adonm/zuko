@@ -22,7 +22,7 @@ import urllib.parse
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 PACKAGE_CONFIG = ROOT / "flutter/.dart_tool/package_config.json"
-GHOSTTY_COMMIT = "b97b17f06b1ffd694f80edd3df5dd2134a0bcb9e"
+GHOSTTY_COMMIT = "15484b607eb5a518dedf1548247c923b8abaae7c"
 
 
 def fail(message: str) -> None:
@@ -142,7 +142,32 @@ def patch_ios_apple_link() -> None:
     )
 
 
+def enable_source_compile() -> None:
+    # The App Store build must compile Ghostty with Zig and relink with Apple
+    # clang; the app's default prebuilt flow is not App Store compatible.
+    # Codemagic checks out the immutable tag in a throwaway workspace, so
+    # mutating the root pubspec here is safe and never committed.
+    pubspec_path = ROOT / "flutter/pubspec.yaml"
+    hooks = (
+        "hooks:\n"
+        "  user_defines:\n"
+        "    libghostty:\n"
+        "      source: compile\n"
+        "      download: tarball\n"
+    )
+    if hooks in pubspec_path.read_text():
+        return
+    if "hooks:" in pubspec_path.read_text():
+        fail("unexpected hooks block in flutter/pubspec.yaml")
+    replace_once(
+        pubspec_path,
+        "dependencies:\n",
+        f"{hooks}\ndependencies:\n",
+    )
+
+
 def main() -> None:
+    enable_source_compile()
     patch_flutter_native_assets()
     patch_ios_apple_link()
 
