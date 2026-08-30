@@ -1,6 +1,6 @@
 // Screenshot generation for the pair/connect flow.
 //
-// This test renders the real Zuko UI (Yaru themes, bundled fonts, window
+// This test renders the real Zuko UI (Material themes, bundled fonts, window
 // frame, terminal widget) into PNG images under `docs/images/` for the
 // mdBook pairing flow page. It only
 // writes files when requested, so the normal gate stays fast and hermetic:

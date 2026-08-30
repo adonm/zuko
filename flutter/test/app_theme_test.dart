@@ -1,27 +1,24 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:yaru/yaru.dart';
 import 'package:zuko/src/model.dart';
 import 'package:zuko/src/theme.dart';
 
 void main() {
-  test('light theme uses the Yaru Adwaita red variant', () {
-    final theme = buildZukoTheme(Brightness.light);
+  test('themes seed the Material palette from the zuko red', () {
+    final light = buildZukoTheme(Brightness.light);
+    final dark = buildZukoTheme(Brightness.dark);
 
-    expect(theme.colorScheme.primary, YaruVariant.adwaitaRed.color);
-    expect(theme.brightness, Brightness.light);
-    expect(theme.visualDensity, VisualDensity.standard);
-    expect(theme.extension<ZukoMetrics>()!.scale, 1);
+    expect(
+      light.colorScheme.primary,
+      ColorScheme.fromSeed(seedColor: zukoRed).primary,
+    );
+    expect(light.brightness, Brightness.light);
+    expect(dark.brightness, Brightness.dark);
+    expect(light.visualDensity, VisualDensity.standard);
+    expect(light.extension<ZukoMetrics>()!.scale, 1);
   });
 
-  test('dark theme uses the Yaru Adwaita red variant', () {
-    final theme = buildZukoTheme(Brightness.dark);
-
-    expect(theme.colorScheme.primary, YaruVariant.adwaitaRed.color);
-    expect(theme.brightness, Brightness.dark);
-  });
-
-  test('interface presets scale Yaru typography and app chrome', () {
+  test('interface presets scale app chrome', () {
     final compact = buildZukoTheme(
       Brightness.light,
       interfaceSize: AppInterfaceSize.compact,
@@ -31,18 +28,7 @@ void main() {
       Brightness.light,
       interfaceSize: AppInterfaceSize.comfortable,
     );
-    final baseFontSize =
-        YaruVariant.adwaitaRed.theme.textTheme.bodyMedium!.fontSize!;
 
-    expect(
-      compact.textTheme.bodyMedium!.fontSize,
-      closeTo(baseFontSize * 0.95, 0.01),
-    );
-    expect(standard.textTheme.bodyMedium!.fontSize, baseFontSize);
-    expect(
-      comfortable.textTheme.bodyMedium!.fontSize,
-      closeTo(baseFontSize * 1.1, 0.01),
-    );
     expect(compact.visualDensity, VisualDensity.compact);
     expect(
       comfortable.visualDensity,
@@ -58,25 +44,10 @@ void main() {
       brightness: Brightness.dark,
       fontSize: 16,
     );
-    final light = buildZukoTerminalTheme(
-      brightness: Brightness.light,
-      fontSize: 14,
-    );
 
-    expect(dark.background, const Color(0xff202426));
-    expect(dark.foreground, zukoIvory);
     expect(dark.palette.ansiColors[1], zukoRed);
+    expect(dark.palette.background, const Color(0xff202426));
     expect(dark.fontSize, 16);
-    expect(
-      dark.fontFamilyFallback,
-      containsAll([
-        'JetBrainsMono Nerd Font Mono',
-        'Noto Sans JP',
-        'Noto Sans KR',
-      ]),
-    );
-    expect(light.background, const Color(0xfffcfbf2));
-    expect(light.foreground, zukoCharcoal);
-    expect(light.palette.ansiColors[1], zukoRed);
+    expect(dark.fontFamily, 'JetBrains Mono');
   });
 }

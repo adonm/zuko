@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:yaru/yaru.dart';
 
 import 'package:flutter/services.dart'
     show Clipboard, ClipboardData, PlatformException;
@@ -21,7 +20,7 @@ class NoOpenConnections extends StatelessWidget {
         mainAxisSize: MainAxisSize.min,
         children: [
           Icon(
-            YaruIcons.terminal,
+            Icons.terminal,
             size: 48,
             color: Theme.of(context).colorScheme.primary,
           ),
@@ -203,7 +202,7 @@ class _Command extends StatelessWidget {
         visualDensity: VisualDensity.compact,
         tooltip: 'Copy command',
         onPressed: () => onCopy(command),
-        icon: Icon(YaruFreedesktopIcons.edit_copy.icon, size: 18),
+        icon: Icon(Icons.copy, size: 18),
       ),
     ],
   );

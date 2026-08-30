@@ -2,7 +2,6 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:yaru/yaru.dart';
 
 import 'app_controller.dart';
 import 'model.dart';
@@ -336,7 +335,7 @@ class Sidebar extends StatelessWidget {
         if (controller.hosts.isEmpty)
           const Card(
             margin: EdgeInsets.zero,
-            child: YaruListTile(
+            child: ListTile(
               leading: Icon(Icons.computer_outlined),
               title: Text('No saved hosts'),
               subtitle: Text('Pair your first host from the welcome screen.'),
@@ -439,7 +438,7 @@ class Sidebar extends StatelessWidget {
                 ),
               ),
               const Divider(indent: 42),
-              YaruSwitchListTile(
+              SwitchListTile(
                 secondary: const Icon(Icons.keyboard_alt_outlined, size: 20),
                 title: const Text('Open keyboard on tap'),
                 subtitle: const Text(
@@ -456,8 +455,8 @@ class Sidebar extends StatelessWidget {
         const SectionLabel('Connection'),
         const SizedBox(height: 8),
         Card(
-          child: YaruListTile(
-            leading: const Icon(YaruIcons.computer, size: 20),
+          child: ListTile(
+            leading: const Icon(Icons.computer, size: 20),
             title: const Text('This device name'),
             subtitle: Text(
               '${controller.clientName}\n'
@@ -477,7 +476,7 @@ class Sidebar extends StatelessWidget {
               'Connection status: '
               '${selected == null ? controller.status : sessionState.message}',
           child: Card(
-            child: YaruListTile(
+            child: ListTile(
               leading: Icon(
                 selected == null
                     ? Icons.info_outline
@@ -556,7 +555,7 @@ class _SavedHostListState extends State<SavedHostList> {
               hintText: 'Search hosts',
               isDense: true,
               contentPadding: const EdgeInsets.symmetric(vertical: 8),
-              prefixIcon: const Icon(YaruIcons.search, size: 18),
+              prefixIcon: const Icon(Icons.search, size: 18),
               prefixIconConstraints: const BoxConstraints(minWidth: 36),
               suffixIcon: _search.text.isEmpty
                   ? null
@@ -568,7 +567,7 @@ class _SavedHostListState extends State<SavedHostList> {
                         minWidth: 36,
                         minHeight: 36,
                       ),
-                      icon: const Icon(YaruIcons.edit_clear, size: 18),
+                      icon: const Icon(Icons.close, size: 18),
                     ),
               suffixIconConstraints: const BoxConstraints(minWidth: 36),
             ),
@@ -649,40 +648,34 @@ class _SavedHostTile extends StatelessWidget {
     final metrics = ZukoMetrics.of(context);
     final showLabel =
         host.name.trim().toLowerCase() != host.label.trim().toLowerCase();
-    // YaruSelectableContainer animates a BoxDecoration that compares by
-    // identity, so every rebuild restarts its animation and keeps a frame
-    // scheduled forever. A static tint keeps the same visual feedback.
-    return DecoratedBox(
-      decoration: BoxDecoration(
+    // The selected host gets a Material 3 tint; the rounded shape keeps the
+    // same look the GNOME-style sidebar had.
+    return ListTile(
+      selected: selected,
+      selectedTileColor: Theme.of(
+        context,
+      ).colorScheme.primary.withValues(alpha: 0.14),
+      shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(metrics.size(6)),
-        color: selected
-            ? Theme.of(context).colorScheme.primary.withValues(alpha: 0.14)
-            : null,
       ),
-      child: YaruListTile(
-        title: Text(host.name, maxLines: 1, overflow: TextOverflow.ellipsis),
-        subtitle: showLabel
-            ? Text(host.label, maxLines: 1, overflow: TextOverflow.ellipsis)
-            : null,
-        leading: Icon(
-          selected ? YaruIcons.computer_filled : YaruIcons.computer,
-          size: metrics.size(18),
-        ),
-        contentPadding: EdgeInsetsDirectional.only(start: metrics.size(10)),
-        horizontalGap: metrics.size(8),
-        onTap: onTap,
-        trailing: PopupMenuButton<String>(
-          tooltip: 'Manage ${host.name}',
-          padding: EdgeInsets.zero,
-          iconSize: metrics.size(18),
-          icon: const Icon(YaruIcons.view_more),
-          onSelected: onAction,
-          itemBuilder: (context) => const [
-            PopupMenuItem(value: 'details', child: Text('Details')),
-            PopupMenuItem(value: 'rename', child: Text('Rename')),
-            PopupMenuItem(value: 'forget', child: Text('Forget')),
-          ],
-        ),
+      title: Text(host.name, maxLines: 1, overflow: TextOverflow.ellipsis),
+      subtitle: showLabel
+          ? Text(host.label, maxLines: 1, overflow: TextOverflow.ellipsis)
+          : null,
+      leading: Icon(Icons.computer, size: metrics.size(18)),
+      contentPadding: EdgeInsetsDirectional.only(start: metrics.size(10)),
+      onTap: onTap,
+      trailing: PopupMenuButton<String>(
+        tooltip: 'Manage ${host.name}',
+        padding: EdgeInsets.zero,
+        iconSize: metrics.size(18),
+        icon: const Icon(Icons.more_vert),
+        onSelected: onAction,
+        itemBuilder: (context) => const [
+          PopupMenuItem(value: 'details', child: Text('Details')),
+          PopupMenuItem(value: 'rename', child: Text('Rename')),
+          PopupMenuItem(value: 'forget', child: Text('Forget')),
+        ],
       ),
     );
   }
@@ -706,7 +699,7 @@ class SectionLabel extends StatelessWidget {
   );
 }
 
-/// A GNOME-style option selector: a [YaruListTile] row showing the current
+/// A GNOME-style option selector: a [ListTile] row showing the current
 /// value with a trailing arrow that opens a checked menu of alternatives.
 class OptionTile<T> extends StatelessWidget {
   const OptionTile({
@@ -764,7 +757,7 @@ class OptionTile<T> extends StatelessWidget {
   }
 
   @override
-  Widget build(BuildContext context) => YaruListTile(
+  Widget build(BuildContext context) => ListTile(
     leading: Icon(icon, size: 20),
     title: Text(label),
     trailing: Row(
@@ -777,7 +770,7 @@ class OptionTile<T> extends StatelessWidget {
           ),
         ),
         const SizedBox(width: 4),
-        const Icon(YaruIcons.pan_end, size: 16),
+        const Icon(Icons.chevron_right, size: 16),
       ],
     ),
     onTap: () => unawaited(_open(context)),

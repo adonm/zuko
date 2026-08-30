@@ -65,7 +65,18 @@ class ZukoApp extends StatelessWidget {
         interfaceSize: controller.interfaceSize,
       ),
       home: _Home(controller: controller),
-      builder: (context, child) => ZukoWindowFrame(child: child),
+      builder: (context, child) => MediaQuery(
+        data: MediaQuery.of(context).copyWith(
+          textScaler: TextScaler.linear(
+            switch (controller.interfaceSize) {
+              AppInterfaceSize.compact => 0.95,
+              AppInterfaceSize.standard => 1.0,
+              AppInterfaceSize.comfortable => 1.1,
+            },
+          ),
+        ),
+        child: child ?? const SizedBox.shrink(),
+      ),
     ),
   );
 }

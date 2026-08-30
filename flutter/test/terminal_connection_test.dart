@@ -225,7 +225,7 @@ void main() {
     expect(session.resizes.single.rows, 40);
   });
 
-  testWidgets('Yaru connection tabs select and close independently', (
+  testWidgets('connection tabs select and close independently', (
     tester,
   ) async {
     final alpha = TerminalConnection(

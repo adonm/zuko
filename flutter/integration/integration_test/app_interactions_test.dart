@@ -128,10 +128,18 @@ void main() {
     expect(controller.keyboardOnTap, isTrue);
 
     // --- Disconnect from the sidebar closes the session and kills the PTY. ---
-    // The button sits at the bottom of the sidebar list; drag the list up.
-    await tester.drag(find.text('Appearance'), const Offset(0, -220));
-    await _settle(tester);
-    await _waitFor(tester, () => find.text('Disconnect').evaluate().isNotEmpty);
+    // The button sits at the bottom of the sidebar list; drag the sidebar up
+    // until it builds.
+    for (var attempt = 0;
+        attempt < 10 &&
+            find
+                .widgetWithText(OutlinedButton, 'Disconnect')
+                .evaluate()
+                .isEmpty;
+        attempt++) {
+      await tester.dragFrom(const Offset(150, 480), const Offset(0, -120));
+      await _settle(tester);
+    }
     await tester.tap(find.widgetWithText(OutlinedButton, 'Disconnect'));
     await _settle(tester);
     await tester.pump(const Duration(milliseconds: 500));

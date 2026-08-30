@@ -2,7 +2,6 @@ import 'dart:async';
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
-import 'package:yaru/yaru.dart';
 
 import 'model.dart';
 import 'session_state.dart';
@@ -116,18 +115,16 @@ class _ConnectionTabStripState extends State<ConnectionTabStrip>
             constraints.maxWidth,
             widget.connections.length * metrics.size(128),
           );
-          return YaruScrollViewUndershoot(
+          return SingleChildScrollView(
             controller: _scrollController,
             scrollDirection: Axis.horizontal,
-            child: SingleChildScrollView(
-              controller: _scrollController,
-              scrollDirection: Axis.horizontal,
+            child: SizedBox(
+              width: width,
               child: SizedBox(
-                width: width,
-                child: YaruTabBar(
-                  tabController: _tabController,
+                height: metrics.tabBarHeight,
+                child: TabBar(
+                  controller: _tabController,
                   onTap: _selected,
-                  height: metrics.tabBarHeight,
                   tabs: [
                     for (final connection in widget.connections)
                       Tab(
@@ -159,10 +156,7 @@ class _ConnectionTabStripState extends State<ConnectionTabStrip>
                             IconButton(
                               tooltip: 'Close ${widget.labelFor(connection)}',
                               onPressed: () => widget.onClose(connection),
-                              icon: Icon(
-                                YaruIcons.window_close,
-                                size: metrics.size(14),
-                              ),
+                              icon: Icon(Icons.close, size: metrics.size(14)),
                               padding: EdgeInsets.zero,
                               constraints: BoxConstraints.tightFor(
                                 width: metrics.size(28),

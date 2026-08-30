@@ -136,13 +136,12 @@ the implementation changes.
   across the friendly name, original label, and node ID.
 - The selected host uses both icon treatment and row state; selection must not
   rely on color alone.
-- Opening a saved host creates a closable Yaru tab with its own terminal,
+- Opening a saved host creates a closable tab with its own terminal,
   transport session, geometry, status, and reconnect lifecycle. Other host
   tabs remain connected when selection changes. Selecting an already-open host
   focuses its existing tab, matching the protocol's single resumable PTY per
   client/host identity.
-- The tab strip scrolls horizontally and shows Yaru undershoot indicators when
-  all open hosts do not fit.
+- The tab strip scrolls horizontally when all open hosts do not fit.
 - **This device name** is suggested from a non-secret descriptive property,
   can be edited, and is persisted in protected client state. New host labels
   use `zuko-<device-name>-<identity-suffix>`.
@@ -232,7 +231,7 @@ Before implementing a Flutter interaction, write down:
 7. the smallest automated and physical-device evidence that demonstrates the
    result.
 
-Prefer an existing Flutter, Material, Yaru, or `flterm` affordance over a new
+Prefer an existing Flutter, Material, or `flterm` affordance over a new
 dependency. A package is justified by a required capability and supported
 target matrix, not by a single convenient widget.
 

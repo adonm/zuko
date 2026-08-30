@@ -4,7 +4,6 @@ import 'package:flterm/flterm.dart';
 import 'package:flutter/foundation.dart' show defaultTargetPlatform;
 import 'package:flutter/material.dart' hide Key;
 import 'package:flutter/services.dart';
-import 'package:yaru/yaru.dart';
 
 import 'terminal_key_lists.dart';
 import 'repeatable_action.dart';
@@ -144,8 +143,8 @@ class _TerminalAccessoryState extends State<TerminalAccessory> {
                         ? 'Copy selected text'
                         : 'Paste',
                     icon: controller.hasSelection
-                        ? YaruFreedesktopIcons.edit_copy.icon
-                        : YaruFreedesktopIcons.edit_paste.icon,
+                        ? Icons.copy
+                        : Icons.content_paste,
                     onPressed: controller.hasSelection
                         ? () => _copy(context)
                         : () => _paste(context),
@@ -154,7 +153,7 @@ class _TerminalAccessoryState extends State<TerminalAccessory> {
                     width: itemWidth,
                     height: rowHeight,
                     tooltip: 'Select all',
-                    icon: YaruFreedesktopIcons.edit_select_all.icon,
+                    icon: Icons.select_all,
                     onPressed: controller.selectAll,
                   ),
                   SizedBox(width: metrics.terminalAccessoryGroupSpacing),
@@ -305,7 +304,7 @@ class _AccessoryButtonState extends State<_AccessoryButton> {
   Widget build(BuildContext context) {
     final colors = Theme.of(context).colorScheme;
     final metrics = ZukoMetrics.of(context);
-    final radius = BorderRadius.circular(kYaruButtonRadius);
+    final radius = BorderRadius.circular(kZukoButtonRadius);
     final foreground = widget.selected == true
         ? colors.primary
         : colors.onSurface.withValues(alpha: 0.8);
@@ -355,7 +354,7 @@ class _AccessoryButtonState extends State<_AccessoryButton> {
           foregroundDecoration: BoxDecoration(
             border: Border.all(
               color: _focused ? colors.primary : Colors.transparent,
-              width: kYaruFocusBorderWidth,
+              width: kZukoFocusBorderWidth,
             ),
             borderRadius: radius,
           ),
@@ -365,7 +364,7 @@ class _AccessoryButtonState extends State<_AccessoryButton> {
             child: IconTheme(
               data: IconThemeData(
                 color: foreground,
-                size: metrics.size(kYaruIconSize),
+                size: metrics.size(kZukoIconSize),
               ),
               child: DefaultTextStyle(
                 style: Theme.of(context).textTheme.labelSmall!.copyWith(

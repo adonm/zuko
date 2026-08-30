@@ -5,7 +5,7 @@ clients: installing the host, claiming a one-time share code, and opening
 the terminal session.
 
 The screenshots are rendered deterministically from the real widget tree
-(Yaru themes, bundled fonts, and the terminal widget) by
+(Material themes, bundled fonts, and the terminal widget) by
 `flutter/test/screenshot_flow_test.dart`. Regenerate them with
 `just screenshots` whenever the pairing or connection UI changes.
 

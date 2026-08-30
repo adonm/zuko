@@ -1,6 +1,5 @@
 import 'package:flterm/flterm.dart';
 import 'package:flutter/material.dart';
-import 'package:yaru/yaru.dart';
 
 import 'model.dart';
 
@@ -9,18 +8,23 @@ const zukoCharcoal = Color(0xff323639);
 const zukoRed = Color(0xffc5404a);
 const _darkAccent = Color(0xffe06b73);
 
+/// Accessory key chrome, sized to match the standard Adwaita row.
+const kZukoButtonRadius = 8.0;
+const kZukoFocusBorderWidth = 2.0;
+const kZukoIconSize = 20.0;
+const kZukoAccessoryRowHeight = 34.0;
+
 ThemeData buildZukoTheme(
   Brightness brightness, {
   AppInterfaceSize interfaceSize = AppInterfaceSize.standard,
 }) {
-  final base = brightness == Brightness.dark
-      ? YaruVariant.adwaitaRed.darkTheme
-      : YaruVariant.adwaitaRed.theme;
-  final textScale = switch (interfaceSize) {
-    AppInterfaceSize.compact => 0.95,
-    AppInterfaceSize.standard => 1.0,
-    AppInterfaceSize.comfortable => 1.1,
-  };
+  final scheme = ColorScheme.fromSeed(
+    seedColor: zukoRed,
+    brightness: brightness,
+  );
+  // Interface size scales text at the app level through a TextScaler; the
+  // Material 3 typography stays default (null-based, resolved by
+  // DefaultTextStyle) so no TextTheme.apply is needed.
   final visualDensity = switch (interfaceSize) {
     AppInterfaceSize.compact => VisualDensity.compact,
     AppInterfaceSize.standard => VisualDensity.standard,
@@ -30,13 +34,10 @@ ThemeData buildZukoTheme(
     ),
   };
 
-  return base.copyWith(
+  return ThemeData(
+    colorScheme: scheme,
     visualDensity: visualDensity,
-    textTheme: base.textTheme.apply(fontSizeFactor: textScale),
-    extensions: [
-      ...base.extensions.values,
-      ZukoMetrics.forInterfaceSize(interfaceSize),
-    ],
+    extensions: [ZukoMetrics.forInterfaceSize(interfaceSize)],
   );
 }
 
@@ -65,8 +66,8 @@ class ZukoMetrics extends ThemeExtension<ZukoMetrics> {
   double get sidebarHeaderHeight => size(52);
   double get tabBarHeight => size(42);
   double get tabHeight => size(32);
-  double get terminalAccessoryHeight => size(kYaruButtonHeight);
-  double get terminalAccessoryItemWidth => size(kYaruButtonHeight);
+  double get terminalAccessoryHeight => size(kZukoAccessoryRowHeight);
+  double get terminalAccessoryItemWidth => size(kZukoAccessoryRowHeight);
   double get terminalAccessoryGroupSpacing => size(6);
   double get wideLayoutBreakpoint => sidebarWidth + minimumMainPaneWidth;
 

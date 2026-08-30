@@ -369,11 +369,7 @@ void main() {
     }
   });
 
-  test('Linux always uses the integrated Yaru window title bar', () {
-    expect(
-      usesYaruWindowTitleBar(platform: TargetPlatform.linux, isWeb: false),
-      isTrue,
-    );
+  test('Linux always uses the Flutter app bar', () {
     for (final width in [390.0, 1280.0]) {
       expect(
         usesIntegratedDesktopHeader(
@@ -381,7 +377,7 @@ void main() {
           platform: TargetPlatform.linux,
           isWeb: false,
         ),
-        isTrue,
+        isFalse,
       );
     }
   });
@@ -408,10 +404,6 @@ void main() {
   });
 
   test('web and mobile layouts keep the Flutter app bar', () {
-    expect(
-      usesYaruWindowTitleBar(platform: TargetPlatform.linux, isWeb: true),
-      isFalse,
-    );
     expect(
       usesIntegratedDesktopHeader(
         wideLayout: true,
