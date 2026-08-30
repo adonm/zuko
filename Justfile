@@ -88,9 +88,9 @@ flutter-app-check: flutter-get
 flutter-integration: flutter-get
     cd flutter/integration && flutter pub get --enforce-lockfile
     cd flutter/integration && xvfb-run -a flutter test integration_test/app_interactions_test.dart -d linux --no-pub | tee /tmp/zuko-flutter-integration.log
-    grep -qE "All tests passed|tests passed" /tmp/zuko-flutter-integration.log
+    grep -qE "All tests passed|test[s]* passed" /tmp/zuko-flutter-integration.log
     cd flutter/integration && xvfb-run -a flutter test integration_test/touch_pad_test.dart -d linux --no-pub --dart-define=ZUKO_FORCE_TOUCH_PAD=true | tee /tmp/zuko-flutter-touch.log
-    grep -qE "All tests passed|tests passed" /tmp/zuko-flutter-touch.log
+    grep -qE "All tests passed|test[s]* passed" /tmp/zuko-flutter-touch.log
 
 # Regenerate the pair/connect flow screenshots under docs/images. The main
 # set renders through the real engine via flutter drive; the camera screen
