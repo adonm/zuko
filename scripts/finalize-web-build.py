@@ -6,10 +6,8 @@ from __future__ import annotations
 import hashlib
 import json
 import pathlib
-import shutil
 import subprocess
 import sys
-import urllib.parse
 
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
@@ -18,6 +16,11 @@ PACKAGE_CONFIG = ROOT / "flutter/.dart_tool/package_config.json"
 GHOSTTY_WASM_NAME = "libghostty-wasm32-freestanding.wasm"
 GHOSTTY_WASM_OUTPUT = (
     OUTPUT / "assets/packages/libghostty/assets" / GHOSTTY_WASM_NAME
+)
+# SHA-256 of the prebuilt WASM published in libghostty 0.0.12's release
+# assets (asset_hashes.dart). Fail closed when upstream replaces it.
+GHOSTTY_WASM_SHA256 = (
+    "f6233fc8f4d723451660504959cac5eff80851eabc63578b0e218ce3669d1b8b"
 )
 LOADER_DEBUG = 'console.debug("Injecting <script> tag. Using callback.")'
 FLUTTER_SOURCE_MAP = "//# sourceMappingURL=flutter.js.map"
@@ -76,47 +79,6 @@ def sha256(path: pathlib.Path) -> str:
     return digest.hexdigest()
 
 
-def libghostty_package_root() -> pathlib.Path:
-    try:
-        config = json.loads(PACKAGE_CONFIG.read_text())
-    except (OSError, json.JSONDecodeError) as error:
-        fail(f"cannot read {PACKAGE_CONFIG}: {error}")
-    package = next(
-        (entry for entry in config["packages"] if entry["name"] == "libghostty"),
-        None,
-    )
-    if package is None:
-        fail("libghostty is absent from Flutter's package resolution")
-    root_uri = urllib.parse.urlparse(package["rootUri"])
-    if root_uri.scheme != "file":
-        fail(f"expected a libghostty file URI, got {package['rootUri']}")
-    return pathlib.Path(urllib.parse.unquote(root_uri.path))
-
-
-def build_ghostty_wasm() -> pathlib.Path:
-    package = libghostty_package_root()
-    dart = shutil.which("dart")
-    if dart is None:
-        fail("dart is absent from PATH")
-    result = subprocess.run(
-        [dart, "run", "tool/build_wasm.dart"],
-        cwd=package,
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    if result.returncode != 0:
-        fail(
-            "libghostty WASM compilation failed:\n"
-            f"stdout: {result.stdout}\n"
-            f"stderr: {result.stderr}"
-        )
-    wasm = package / "lib/src/wasm/libghostty.wasm"
-    if not wasm.is_file() or wasm.read_bytes()[:4] != b"\0asm":
-        fail(f"libghostty did not produce a WebAssembly module at {wasm}")
-    return wasm
-
-
 def quiet_flutter_loader() -> None:
     for name in ("flutter.js", "flutter_bootstrap.js"):
         path = OUTPUT / name
@@ -159,6 +121,11 @@ def validate_source_map(path: pathlib.Path) -> None:
 
 
 def validate(expected_ghostty_sha256: str) -> None:
+    if not GHOSTTY_WASM_OUTPUT.is_file():
+        fail(
+            f"{GHOSTTY_WASM_OUTPUT} is missing; the libghostty hook should "
+            "have downloaded the prebuilt WASM during `flutter build web`"
+        )
     if GHOSTTY_WASM_OUTPUT.read_bytes()[:4] != b"\0asm":
         fail(f"{GHOSTTY_WASM_OUTPUT} is not a WebAssembly module")
     if sha256(GHOSTTY_WASM_OUTPUT) != expected_ghostty_sha256:
@@ -228,13 +195,11 @@ def main() -> None:
     if not OUTPUT.is_dir():
         fail("run `flutter build web` first")
 
-    ghostty_wasm = build_ghostty_wasm()
-    ghostty_sha256 = sha256(ghostty_wasm)
-    GHOSTTY_WASM_OUTPUT.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copyfile(ghostty_wasm, GHOSTTY_WASM_OUTPUT)
+    # The libghostty hook downloads the SHA256-pinned prebuilt WASM during
+    # `flutter build web`; the build no longer compiles it from source.
     quiet_flutter_loader()
     avoid_deprecated_webgl_extension()
-    validate(ghostty_sha256)
+    validate(GHOSTTY_WASM_SHA256)
     print(f"web build finalization: validated {OUTPUT}")
 
 
