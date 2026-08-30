@@ -36,6 +36,7 @@ const _generate = bool.fromEnvironment('SCREENSHOTS');
 // only exists on camera-capable targets; set SCREENSHOT_CAMERA_ONLY to
 // regenerate just that one from the widget tree.
 const _cameraOnly = bool.fromEnvironment('SCREENSHOT_CAMERA_ONLY');
+const _touchOnly = bool.fromEnvironment('SCREENSHOT_TOUCH_ONLY');
 
 const _desktop = Size(1400, 900);
 const _portrait = Size(440, 900);
@@ -60,9 +61,14 @@ void main() {
     addTearDown(() => debugDefaultTargetPlatformOverride = null);
   }
 
+  void useAndroidPlatform() {
+    debugDefaultTargetPlatformOverride = TargetPlatform.android;
+    addTearDown(() => debugDefaultTargetPlatformOverride = null);
+  }
+
   group('pair and connect flow screenshots', () {
     testWidgets('welcome screen', (tester) async {
-      if (!_generate || _cameraOnly) return;
+      if (!_generate || _cameraOnly || _touchOnly) return;
       useLinuxPlatform();
       await _setSurface(tester, _desktop, 2.0);
       final controller = await _controller(_FakeTransport());
@@ -74,7 +80,7 @@ void main() {
     });
 
     testWidgets('manual pairing screen', (tester) async {
-      if (!_generate || _cameraOnly) return;
+      if (!_generate || _cameraOnly || _touchOnly) return;
       useLinuxPlatform();
       await _setSurface(tester, _portrait, 2.0);
       await tester.pumpWidget(
@@ -112,7 +118,7 @@ void main() {
     });
 
     testWidgets('pairing success confirmation', (tester) async {
-      if (!_generate || _cameraOnly) return;
+      if (!_generate || _cameraOnly || _touchOnly) return;
       useLinuxPlatform();
       await _setSurface(tester, _portrait, 2.0);
       final gate = Completer<SavedHost>();
@@ -134,7 +140,7 @@ void main() {
     });
 
     testWidgets('connecting to a saved host', (tester) async {
-      if (!_generate || _cameraOnly) return;
+      if (!_generate || _cameraOnly || _touchOnly) return;
       useLinuxPlatform();
       await _setSurface(tester, _desktop, 2.0);
       final transport = _FakeTransport();
@@ -154,7 +160,7 @@ void main() {
     });
 
     testWidgets('automatic retry countdown', (tester) async {
-      if (!_generate || _cameraOnly) return;
+      if (!_generate || _cameraOnly || _touchOnly) return;
       useLinuxPlatform();
       await _setSurface(tester, _desktop, 2.0);
       final transport = _FakeTransport();
@@ -180,8 +186,40 @@ void main() {
       debugDefaultTargetPlatformOverride = null;
     });
 
+    testWidgets('touch terminal with the floating pad', (tester) async {
+      if (!_generate && !_touchOnly) return;
+      useAndroidPlatform();
+      await _setSurface(tester, _portrait, 2.0);
+      final transport = _FakeTransport();
+      final controller = await _controller(transport, hosts: const [_host]);
+      await controller.setTheme(AppThemePreference.dark);
+      await tester.pumpWidget(_shot(ZukoApp(controller: controller)));
+      await tester.tap(find.byTooltip('Open sidebar'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('workstation'));
+      await _pumpFrames(tester, 6);
+      await _capture(tester, 'touch-terminal');
+      await _unmount(tester, controller);
+      debugDefaultTargetPlatformOverride = null;
+    });
+
+    testWidgets('touch drawer over the terminal', (tester) async {
+      if (!_generate && !_touchOnly) return;
+      useAndroidPlatform();
+      await _setSurface(tester, _portrait, 2.0);
+      final transport = _FakeTransport();
+      final controller = await _controller(transport, hosts: const [_host]);
+      await controller.setTheme(AppThemePreference.dark);
+      await tester.pumpWidget(_shot(ZukoApp(controller: controller)));
+      await tester.tap(find.byTooltip('Open sidebar'));
+      await tester.pumpAndSettle();
+      await _capture(tester, 'touch-drawer');
+      await _unmount(tester, controller);
+      debugDefaultTargetPlatformOverride = null;
+    });
+
     testWidgets('attached terminal session', (tester) async {
-      if (!_generate || _cameraOnly) return;
+      if (!_generate || _cameraOnly || _touchOnly) return;
       useLinuxPlatform();
       await _setSurface(tester, _desktop, 2.0);
       final transport = _FakeTransport();

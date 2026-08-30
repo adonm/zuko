@@ -339,13 +339,17 @@ class _HomeState extends State<_Home>
         TargetPlatform.iOS || TargetPlatform.android => true,
         _ => false,
       };
+      // Integration tests opt into the touch shell on desktop so the pad,
+      // drawer logo, and top-bar-free layout can be exercised on CI.
+      const forceTouchPad = bool.fromEnvironment('ZUKO_FORCE_TOUCH_PAD');
+      final touchShell = touchPlatform || forceTouchPad;
       // Touch devices have no top bar: the floating pad's logo opens the
       // sidebar instead.
       final toggleSidebar = wide
           ? _toggleSidebar
           : () => Scaffold.of(context).openDrawer();
       return Scaffold(
-        appBar: integratedDesktopHeader || touchPlatform
+        appBar: integratedDesktopHeader || touchShell
             ? null
             : AppBar(title: const ZukoAppTitle()),
         drawer: wide ? null : Drawer(child: SafeArea(child: sidebar)),
@@ -354,7 +358,7 @@ class _HomeState extends State<_Home>
         // touch devices where no app bar covers the status area. Bottom
         // belongs to the accessory's own SafeArea.
         body: SafeArea(
-          top: touchPlatform,
+          top: touchShell,
           bottom: false,
           child: Row(
             children: [
@@ -373,7 +377,7 @@ class _HomeState extends State<_Home>
               Expanded(
                 child: LayoutBuilder(
                   builder: (context, constraints) {
-                    final showPad = touchPlatform && active != null;
+                    final showPad = touchShell && active != null;
                     final paneSize = Size(
                       constraints.maxWidth,
                       constraints.maxHeight,
@@ -499,7 +503,7 @@ class _HomeState extends State<_Home>
                                       // On touch the floating pad's logo opens
                                       // the sidebar; the accessory logo serves
                                       // wide desktop layouts only.
-                                      showSidebarToggle: wide && !touchPlatform,
+                                      showSidebarToggle: wide && !touchShell,
                                       onToggleSidebar: toggleSidebar,
                                     ),
                                   ],
@@ -519,7 +523,7 @@ class _HomeState extends State<_Home>
                         // Before any terminal opens on narrow touch layouts
                         // there is no accessory or pad to hold the logo; a
                         // floating corner logo keeps the sidebar reachable.
-                        if (touchPlatform && !wide && active == null)
+                        if (touchShell && !wide && active == null)
                           Positioned(
                             left: metrics.size(12),
                             top: metrics.size(8),

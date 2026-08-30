@@ -50,10 +50,14 @@ attempt; *Retry now* reconnects immediately.
 
 An attached session brings up the terminal with the compact accessory bar;
 on touch devices a translucent floating pad (arrows, PgUp/PgDn, Home/End,
-hold-drag scrolling, and a logo that opens the sidebar) floats over the
+drag-to-scroll, and a logo that opens the sidebar) floats over the
 terminal and can be dragged anywhere.
 
 ![Attached session](images/connected.png)
+
+![Touch terminal with the floating pad](images/touch-terminal.png)
+
+![Touch drawer](images/touch-drawer.png)
 
 ## Re-pairing and revocation
 

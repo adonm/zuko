@@ -6,6 +6,7 @@ import 'package:flutter/foundation.dart'
     show TargetPlatform, debugDefaultTargetPlatformOverride;
 import 'package:flutter/gestures.dart' show PointerDeviceKind;
 import 'package:flutter/material.dart' hide Key;
+import 'package:flutter/services.dart' show SystemChannels;
 import 'package:flutter_test/flutter_test.dart';
 import 'package:zuko/src/floating_terminal_pad.dart';
 import 'package:zuko/src/repeatable_action.dart';
@@ -619,6 +620,48 @@ void _accessoryWidgetTests() {
       return true;
     });
     expect(focusedInsideTerminal, isTrue);
+    debugDefaultTargetPlatformOverride = null;
+  });
+
+  testWidgets('multiline paste asks before sending', (tester) async {
+    _setAccessorySurface(tester, size: const Size(1200, 800));
+    _setAccessoryPlatform(TargetPlatform.linux);
+    final controller = await _accessoryTestController();
+    addTearDown(controller.dispose);
+
+    await tester.pumpWidget(ZukoApp(controller: controller));
+    await _pumpFrames(tester);
+    await _expandSidebar(tester);
+    await tester.tap(find.text('Home server'));
+    await _pumpFrames(tester);
+
+    final messenger = tester.binding.defaultBinaryMessenger;
+    messenger.setMockMethodCallHandler(SystemChannels.platform, (call) async {
+      if (call.method == 'Clipboard.getData') {
+        return <String, dynamic>{
+          'text': 'ls -la\nrm -rf /tmp/zuko-paste-test\n',
+        };
+      }
+      return null;
+    });
+    addTearDown(
+      () => messenger.setMockMethodCallHandler(SystemChannels.platform, null),
+    );
+
+    // Cancel keeps the guarded paste off the wire.
+    await tester.tap(find.byTooltip('Paste'));
+    await _pumpFrames(tester);
+    expect(find.text('Paste potentially unsafe text?'), findsOneWidget);
+    await tester.tap(find.text('Cancel'));
+    await _pumpFrames(tester);
+    expect(find.text('Paste potentially unsafe text?'), findsNothing);
+
+    // Confirming sends the guarded paste.
+    await tester.tap(find.byTooltip('Paste'));
+    await _pumpFrames(tester);
+    await tester.tap(find.widgetWithText(FilledButton, 'Paste'));
+    await _pumpFrames(tester);
+    expect(find.text('Paste potentially unsafe text?'), findsNothing);
     debugDefaultTargetPlatformOverride = null;
   });
 
