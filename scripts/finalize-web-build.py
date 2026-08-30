@@ -22,6 +22,10 @@ GHOSTTY_WASM_OUTPUT = (
 GHOSTTY_WASM_SHA256 = (
     "f6233fc8f4d723451660504959cac5eff80851eabc63578b0e218ce3669d1b8b"
 )
+GHOSTTY_WASM_URL = (
+    "https://github.com/elias8/libghostty/releases/download/"
+    "libghostty-v0.0.12/libghostty-wasm32-freestanding.wasm"
+)
 LOADER_DEBUG = 'console.debug("Injecting <script> tag. Using callback.")'
 FLUTTER_SOURCE_MAP = "//# sourceMappingURL=flutter.js.map"
 DEPRECATED_WEBGL_EXTENSION = "WEBGL_debug_renderer_info"
@@ -191,12 +195,40 @@ def validate(expected_ghostty_sha256: str) -> None:
         fail("web output still contains the ZXing scanner runtime")
 
 
+def download_ghostty_wasm() -> None:
+    # The libghostty 0.0.12 hook predates upstream's web WASM plumbing, so
+    # fetch the SHA256-pinned prebuilt from the release assets.
+    GHOSTTY_WASM_OUTPUT.parent.mkdir(parents=True, exist_ok=True)
+    temporary = GHOSTTY_WASM_OUTPUT.with_suffix(".wasm.tmp")
+    try:
+        subprocess.run(
+            [
+                "curl",
+                "--fail",
+                "--silent",
+                "--show-error",
+                "--location",
+                "--proto",
+                "=https",
+                "--tlsv1.2",
+                "--output",
+                str(temporary),
+                GHOSTTY_WASM_URL,
+            ],
+            check=True,
+        )
+        if sha256(temporary) != GHOSTTY_WASM_SHA256:
+            fail(f"{GHOSTTY_WASM_NAME} download has an unexpected SHA-256")
+        temporary.replace(GHOSTTY_WASM_OUTPUT)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
 def main() -> None:
     if not OUTPUT.is_dir():
         fail("run `flutter build web` first")
 
-    # The libghostty hook downloads the SHA256-pinned prebuilt WASM during
-    # `flutter build web`; the build no longer compiles it from source.
+    download_ghostty_wasm()
     quiet_flutter_loader()
     avoid_deprecated_webgl_extension()
     validate(GHOSTTY_WASM_SHA256)
