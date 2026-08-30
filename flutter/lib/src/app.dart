@@ -310,109 +310,121 @@ class _HomeState extends State<_Home>
             ? null
             : AppBar(title: const ZukoAppTitle()),
         drawer: wide ? null : Drawer(child: SafeArea(child: sidebar)),
-        body: Row(
-          children: [
-            if (wide)
-              DesktopSidebar(
-                expanded: _sidebarExpanded,
-                onToggle: _toggleSidebar,
-                onPair: () => _pair(),
-                showPairAction: hasSavedHosts,
-                child: sidebar,
-              ),
-            if (wide) const VerticalDivider(width: 1),
-            Expanded(
-              child: active == null
-                  ? hasSavedHosts
-                        ? NoOpenConnections(onPair: () => _pair())
-                        : Welcome(
-                            onScan: supportsQrScanning() ? () => _pair() : null,
-                            onEnterCode: () => _pair(manual: true),
-                          )
-                  : Column(
-                      children: [
-                        if (showConnectionTabs(_hub.connections.length)) ...[
-                          ConnectionTabStrip(
-                            selectedIndex: _hub.activeIndex,
-                            connections: _hub.connections,
-                            labelFor: _connectionName,
-                            onSelected: _selectConnectionAt,
-                            onClose: (connection) =>
-                                unawaited(_closeConnection(connection)),
-                          ),
-                          const Divider(height: 1),
-                        ],
-                        Expanded(
-                          child: IndexedStack(
-                            index: _hub.activeIndex,
-                            children: [
-                              for (final connection in _hub.connections)
-                                Stack(
-                                  key: ObjectKey(connection),
-                                  fit: StackFit.expand,
-                                  children: [
-                                    // Upstream flterm 0.0.5 has no terminal
-                                    // semantics support yet; merge the label
-                                    // and hint into the terminal's own
-                                    // semantics node until the upstreamed
-                                    // flterm patches release.
-                                    Semantics(
-                                      container: false,
-                                      label:
-                                          '${_connectionName(connection)} remote terminal',
-                                      hint:
-                                          'Activate to focus remote terminal input',
-                                      child: Scrollbar(
-                                        controller: connection.scrollController,
-                                        child: TerminalView(
-                                          controller: connection.terminal,
-                                          focusNode: connection.focusNode,
-                                          autofocus: identical(
-                                            connection,
-                                            active,
-                                          ),
-                                          showKeyboard:
-                                              widget.controller.keyboardOnTap,
-                                          theme: terminalTheme,
-                                          scrollController:
+        // Landscape Dynamic Island devices need left and right insets for
+        // the sidebar and terminal alike; portrait adds nothing on the
+        // sides. Top belongs to the AppBar, bottom to the accessory's own
+        // SafeArea.
+        body: SafeArea(
+          top: false,
+          bottom: false,
+          child: Row(
+            children: [
+              if (wide)
+                DesktopSidebar(
+                  expanded: _sidebarExpanded,
+                  onToggle: _toggleSidebar,
+                  onPair: () => _pair(),
+                  showPairAction: hasSavedHosts,
+                  child: sidebar,
+                ),
+              if (wide) const VerticalDivider(width: 1),
+              Expanded(
+                child: active == null
+                    ? hasSavedHosts
+                          ? NoOpenConnections(onPair: () => _pair())
+                          : Welcome(
+                              onScan: supportsQrScanning()
+                                  ? () => _pair()
+                                  : null,
+                              onEnterCode: () => _pair(manual: true),
+                            )
+                    : Column(
+                        children: [
+                          if (showConnectionTabs(_hub.connections.length)) ...[
+                            ConnectionTabStrip(
+                              selectedIndex: _hub.activeIndex,
+                              connections: _hub.connections,
+                              labelFor: _connectionName,
+                              onSelected: _selectConnectionAt,
+                              onClose: (connection) =>
+                                  unawaited(_closeConnection(connection)),
+                            ),
+                            const Divider(height: 1),
+                          ],
+                          Expanded(
+                            child: IndexedStack(
+                              index: _hub.activeIndex,
+                              children: [
+                                for (final connection in _hub.connections)
+                                  Stack(
+                                    key: ObjectKey(connection),
+                                    fit: StackFit.expand,
+                                    children: [
+                                      // Upstream flterm 0.0.5 has no terminal
+                                      // semantics support yet; merge the label
+                                      // and hint into the terminal's own
+                                      // semantics node until the upstreamed
+                                      // flterm patches release.
+                                      Semantics(
+                                        container: false,
+                                        label:
+                                            '${_connectionName(connection)} remote terminal',
+                                        hint:
+                                            'Activate to focus remote terminal input',
+                                        child: Scrollbar(
+                                          controller:
                                               connection.scrollController,
-                                          linkSettings: LinkSettings(
-                                            types: const {
-                                              LinkType.osc8,
-                                              LinkType.text,
-                                            },
-                                            onActivate: (link) => unawaited(
-                                              _openTerminalLink(link),
+                                          child: TerminalView(
+                                            controller: connection.terminal,
+                                            focusNode: connection.focusNode,
+                                            autofocus: identical(
+                                              connection,
+                                              active,
+                                            ),
+                                            showKeyboard:
+                                                widget.controller.keyboardOnTap,
+                                            theme: terminalTheme,
+                                            scrollController:
+                                                connection.scrollController,
+                                            linkSettings: LinkSettings(
+                                              types: const {
+                                                LinkType.osc8,
+                                                LinkType.text,
+                                              },
+                                              onActivate: (link) => unawaited(
+                                                _openTerminalLink(link),
+                                              ),
                                             ),
                                           ),
                                         ),
                                       ),
-                                    ),
-                                    ValueListenableBuilder<SessionState>(
-                                      valueListenable: connection.state,
-                                      builder: (context, state, _) =>
-                                          state.isAttached
-                                          ? const SizedBox.shrink()
-                                          : SessionOverlay(
-                                              state: state,
-                                              hasHost: true,
-                                              onReconnect: connection.reconnect,
-                                              onPair: () => _pair(),
-                                              onDisconnect: () => unawaited(
-                                                _closeConnection(connection),
+                                      ValueListenableBuilder<SessionState>(
+                                        valueListenable: connection.state,
+                                        builder: (context, state, _) =>
+                                            state.isAttached
+                                            ? const SizedBox.shrink()
+                                            : SessionOverlay(
+                                                state: state,
+                                                hasHost: true,
+                                                onReconnect:
+                                                    connection.reconnect,
+                                                onPair: () => _pair(),
+                                                onDisconnect: () => unawaited(
+                                                  _closeConnection(connection),
+                                                ),
                                               ),
-                                            ),
-                                    ),
-                                  ],
-                                ),
-                            ],
+                                      ),
+                                    ],
+                                  ),
+                              ],
+                            ),
                           ),
-                        ),
-                        TerminalAccessory(controller: active.terminal),
-                      ],
-                    ),
-            ),
-          ],
+                          TerminalAccessory(controller: active.terminal),
+                        ],
+                      ),
+              ),
+            ],
+          ),
         ),
       );
     },

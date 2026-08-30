@@ -214,7 +214,10 @@ class _AccessoryKey extends StatelessWidget {
     tooltip: label,
     selected: selected,
     onPressed: onPressed,
-    child: Text(label),
+    child: FittedBox(
+      fit: BoxFit.scaleDown,
+      child: Text(label, maxLines: 1, softWrap: false),
+    ),
   );
 }
 

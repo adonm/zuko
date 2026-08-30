@@ -1,7 +1,7 @@
 import 'dart:async';
 import 'dart:typed_data';
 
-import 'package:flterm/flterm.dart' show Key;
+import 'package:flterm/flterm.dart' show Key, TerminalView;
 import 'package:flutter/foundation.dart'
     show TargetPlatform, debugDefaultTargetPlatformOverride;
 import 'package:flutter/gestures.dart' show PointerDeviceKind;
@@ -41,10 +41,10 @@ void main() {
     expect(terminalNavigationKeys.map((item) => item.label), [
       'Home',
       'End',
-      'Page Up',
-      'Page Down',
-      'Insert',
-      'Delete',
+      'PgUp',
+      'PgDn',
+      'Ins',
+      'Del',
     ]);
     expect(terminalFunctionKeys.map((item) => item.label), [
       for (var index = 1; index <= 12; index++) 'F$index',
@@ -171,7 +171,7 @@ void main() {
       ),
     );
 
-    await tester.tap(find.text('Page Up'));
+    await tester.tap(find.text('PgUp'));
     await tester.tap(find.text('F12'));
 
     expect(keys, [Key.pageUp, Key.f12]);
@@ -541,6 +541,38 @@ Future<void> _pumpFrames(WidgetTester tester) async {
 }
 
 void _accessoryWidgetTests() {
+  testWidgets('landscape safe area insets the terminal for the island', (
+    tester,
+  ) async {
+    _setAccessorySurface(tester, size: const Size(844, 390));
+    _setAccessoryPlatform(TargetPlatform.iOS);
+    tester.view.padding = const FakeViewPadding(
+      left: 47,
+      top: 0,
+      right: 47,
+      bottom: 21,
+    );
+    addTearDown(tester.view.resetPadding);
+    final controller = await _accessoryTestController();
+    addTearDown(controller.dispose);
+
+    await tester.pumpWidget(ZukoApp(controller: controller));
+    await _pumpFrames(tester);
+
+    await tester.tap(find.text('Home server'));
+    await _pumpFrames(tester);
+
+    // The whole body row is inset on both sides like native apps in
+    // landscape: the wide sidebar starts past the left inset and the
+    // terminal ends before the right inset.
+    final topLeft = tester.getTopLeft(find.byType(TerminalView));
+    final bottomRight = tester.getBottomRight(find.byType(TerminalView));
+    expect(topLeft.dx, 47 + 300 + 1); // inset + sidebar + divider
+    expect(bottomRight.dx, 844 - 47);
+    expect(topLeft.dy, greaterThanOrEqualTo(0));
+    debugDefaultTargetPlatformOverride = null;
+  });
+
   testWidgets('accessory keeps the fixed key row on mobile', (tester) async {
     _setAccessorySurface(tester, size: const Size(1200, 800));
     _setAccessoryPlatform(TargetPlatform.android);

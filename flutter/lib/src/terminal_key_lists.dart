@@ -4,10 +4,10 @@ import 'package:libghostty/libghostty.dart';
 const terminalNavigationKeys = <({String label, Key key})>[
   (label: 'Home', key: Key.home),
   (label: 'End', key: Key.end),
-  (label: 'Page Up', key: Key.pageUp),
-  (label: 'Page Down', key: Key.pageDown),
-  (label: 'Insert', key: Key.insert),
-  (label: 'Delete', key: Key.delete),
+  (label: 'PgUp', key: Key.pageUp),
+  (label: 'PgDn', key: Key.pageDown),
+  (label: 'Ins', key: Key.insert),
+  (label: 'Del', key: Key.delete),
 ];
 const terminalFunctionKeys = <({String label, Key key})>[
   (label: 'F1', key: Key.f1),
