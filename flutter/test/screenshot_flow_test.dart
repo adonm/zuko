@@ -132,7 +132,7 @@ void main() {
     testWidgets('connecting to a saved host', (tester) async {
       if (!_generate) return;
       useLinuxPlatform();
-      await _setSurface(tester, _desktop, 1.0);
+      await _setSurface(tester, _desktop, 2.0);
       final transport = _FakeTransport();
       final controller = await _controller(transport, hosts: const [_host]);
       await controller.setTheme(AppThemePreference.dark);
@@ -152,7 +152,7 @@ void main() {
     testWidgets('automatic retry countdown', (tester) async {
       if (!_generate) return;
       useLinuxPlatform();
-      await _setSurface(tester, _desktop, 1.0);
+      await _setSurface(tester, _desktop, 2.0);
       final transport = _FakeTransport();
       final controller = await _controller(transport, hosts: const [_host]);
       await controller.setTheme(AppThemePreference.dark);
@@ -179,7 +179,7 @@ void main() {
     testWidgets('attached terminal session', (tester) async {
       if (!_generate) return;
       useLinuxPlatform();
-      await _setSurface(tester, _desktop, 1.0);
+      await _setSurface(tester, _desktop, 2.0);
       final transport = _FakeTransport();
       final controller = await _controller(transport, hosts: const [_host]);
       await controller.setTheme(AppThemePreference.dark);
@@ -277,27 +277,61 @@ Future<void> _unmount(WidgetTester tester, AppController controller) async {
   await controller.close();
 }
 
+String _flutterSdkRoot() {
+  final fromEnv = Platform.environment['FLUTTER_ROOT'];
+  if (fromEnv != null && fromEnv.isNotEmpty) return fromEnv;
+  // flutter_tester lives at $FLUTTER_ROOT/bin/cache/artifacts/engine/…,
+  // five directories below the SDK root.
+  var directory = File(Platform.resolvedExecutable).parent;
+  for (var level = 0; level < 5; level++) {
+    directory = directory.parent;
+  }
+  return directory.path;
+}
+
 Future<void> _loadFonts() async {
-  Future<void> load(String family, String asset) async {
+  Future<void> loadAsset(String family, String asset) async {
     final data = await rootBundle.load('assets/fonts/$asset');
     final loader = FontLoader(family)..addFont(Future.value(data));
     await loader.load();
   }
 
-  await load('JetBrains Mono', 'JetBrainsMono-Regular.ttf');
-  await load('JetBrains Mono', 'JetBrainsMono-Bold.ttf');
-  await load(
+  Future<void> loadFile(String family, String path) async {
+    final bytes = await File(path).readAsBytes();
+    final loader = FontLoader(
+      family,
+    )..addFont(Future.value(ByteData.view(bytes.buffer)));
+    await loader.load();
+  }
+
+  await loadAsset('JetBrains Mono', 'JetBrainsMono-Regular.ttf');
+  await loadAsset('JetBrains Mono', 'JetBrainsMono-Bold.ttf');
+  await loadAsset(
     'JetBrainsMono Nerd Font Mono',
     'JetBrainsMonoNerdFontMono-Regular.ttf',
   );
-  await load('Noto Sans Mono', 'NotoSansMono.ttf');
-  await load('Noto Emoji', 'NotoEmoji-Regular.ttf');
-  await load('Noto Sans Symbols 2', 'NotoSansSymbols2-Regular.ttf');
-  // Register UI families so interface text renders with real glyphs in
-  // the test environment instead of the blocky test font.
-  for (final family in ['Ubuntu', 'Roboto']) {
-    await load(family, 'NotoSansMono.ttf');
+  await loadAsset('Noto Sans Mono', 'NotoSansMono.ttf');
+  await loadAsset('Noto Emoji', 'NotoEmoji-Regular.ttf');
+  await loadAsset('Noto Sans Symbols 2', 'NotoSansSymbols2-Regular.ttf');
+  // UI text and Material icons come from the pinned SDK's fonts so the
+  // screenshots use proportional Roboto and real icon glyphs instead of the
+  // test font's boxes.
+  final materialFonts = Directory(
+    '${_flutterSdkRoot()}/bin/cache/artifacts/material_fonts',
+  );
+  if (!materialFonts.existsSync()) {
+    throw StateError(
+      'Flutter SDK material fonts are missing at ${materialFonts.path}; '
+      'run `flutter precache --universal` first.',
+    );
   }
+  for (final name in ['Roboto-Regular', 'Roboto-Medium', 'Roboto-Bold']) {
+    await loadFile('Roboto', '${materialFonts.path}/$name.ttf');
+  }
+  await loadFile(
+    'MaterialIcons',
+    '${materialFonts.path}/MaterialIcons-Regular.otf',
+  );
 }
 
 Future<AppController> _controller(
