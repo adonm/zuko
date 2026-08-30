@@ -545,6 +545,14 @@ void _accessoryWidgetTests() {
         home: Scaffold(
           body: Stack(
             children: [
+              Positioned.fill(
+                child: ListView.builder(
+                  controller: scroll,
+                  itemCount: 200,
+                  itemBuilder: (context, index) =>
+                      SizedBox(height: 24, child: Text('row $index')),
+                ),
+              ),
               Positioned(
                 left: 10,
                 top: 10,
@@ -579,9 +587,28 @@ void _accessoryWidgetTests() {
     );
     expect(dragged, isTrue);
     dragged = false;
+
+    // The center works like a joystick: holding a downward displacement
+    // scrolls the scrollback while frames tick, upward scrolls back, and
+    // the pad never moves.
     final center = tester.getCenter(find.byType(FloatingTerminalPad));
-    await tester.dragFrom(center, const Offset(30, 40));
+    final gesture = await tester.startGesture(center);
+    await tester.pump();
+    for (var step = 0; step < 6; step++) {
+      await gesture.moveBy(const Offset(0, 10));
+      await tester.pump(const Duration(milliseconds: 50));
+    }
+    final afterDown = scroll.offset;
+    expect(afterDown, greaterThan(0));
     expect(dragged, isFalse);
+    for (var step = 0; step < 6; step++) {
+      await gesture.moveBy(const Offset(0, -10));
+      await tester.pump(const Duration(milliseconds: 50));
+    }
+    expect(scroll.offset, lessThan(afterDown));
+    expect(dragged, isFalse);
+    await gesture.up();
+    await tester.pump();
   });
 
   testWidgets('terminal taps still reach flterm on touch with the pad', (

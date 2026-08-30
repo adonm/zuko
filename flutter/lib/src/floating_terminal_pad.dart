@@ -1,7 +1,6 @@
-import 'dart:async';
-
 import 'package:flterm/flterm.dart' show Key, TerminalController;
 import 'package:flutter/material.dart' hide Key;
+import 'package:flutter/scheduler.dart' show Ticker;
 
 import 'repeatable_action.dart';
 
@@ -32,7 +31,7 @@ class FloatingTerminalLogo extends StatelessWidget {
           onTap: onPressed,
           borderRadius: BorderRadius.circular(20),
           child: Material(
-            color: colors.surfaceContainerHighest.withValues(alpha: 0.55),
+            color: colors.surfaceContainerHighest.withValues(alpha: 0.44),
             borderRadius: BorderRadius.circular(20),
             child: Padding(
               padding: const EdgeInsets.all(10),
@@ -61,36 +60,20 @@ class FloatingTerminalPad extends StatelessWidget {
 
   void _sendKey(Key key) => controller.sendKey(key);
 
-  void _scrollBy(double delta) {
-    if (!scrollController.hasClients) return;
-    final position = scrollController.position;
-    final target = (position.pixels + delta).clamp(
-      position.minScrollExtent,
-      position.maxScrollExtent,
-    );
-    unawaited(
-      scrollController.animateTo(
-        target,
-        duration: const Duration(milliseconds: 100),
-        curve: Curves.easeOut,
-      ),
-    );
-  }
-
   @override
   Widget build(BuildContext context) {
     final colors = Theme.of(context).colorScheme;
-    const buttonSize = 44.0;
+    const buttonSize = 38.0;
     return Material(
-      color: colors.surfaceContainerHighest.withValues(alpha: 0.55),
-      borderRadius: BorderRadius.circular(14),
+      color: colors.surfaceContainerHighest.withValues(alpha: 0.44),
+      borderRadius: BorderRadius.circular(12),
       // The padded border ring repositions the pad; inner gestures stay
       // inside.
       child: GestureDetector(
         behavior: HitTestBehavior.opaque,
         onPanUpdate: (details) => onDragged(details.delta),
         child: Padding(
-          padding: const EdgeInsets.all(8),
+          padding: const EdgeInsets.all(6),
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
@@ -132,7 +115,7 @@ class FloatingTerminalPad extends StatelessWidget {
                   ),
                   _ScrollZone(
                     size: buttonSize,
-                    onScrollBy: _scrollBy,
+                    scrollController: scrollController,
                     onToggleSidebar: onToggleSidebar,
                   ),
                   _PadButton(
@@ -176,25 +159,82 @@ class FloatingTerminalPad extends StatelessWidget {
   }
 }
 
-/// The pad's center: holding and dragging here scrolls the terminal instead
-/// of repositioning the pad.
+/// The pad's center: dragging here scrolls the terminal like a joystick —
+/// the finger's displacement from where the drag started sets the scroll
+/// speed, applied every frame. A quick tap opens the sidebar.
 class _ScrollZone extends StatefulWidget {
   const _ScrollZone({
     required this.size,
-    required this.onScrollBy,
+    required this.scrollController,
     required this.onToggleSidebar,
   });
 
   final double size;
-  final ValueChanged<double> onScrollBy;
+  final ScrollController scrollController;
   final VoidCallback onToggleSidebar;
 
   @override
   State<_ScrollZone> createState() => _ScrollZoneState();
 }
 
-class _ScrollZoneState extends State<_ScrollZone> {
+class _ScrollZoneState extends State<_ScrollZone>
+    with SingleTickerProviderStateMixin {
+  /// Full joystick deflection in logical pixels.
+  static const _maxDisplacement = 110.0;
+
+  /// Scroll speed in pixels per second at full deflection.
+  static const _maxVelocity = 2400.0;
+
+  late final Ticker _ticker = createTicker(_onTick);
+  double _displacement = 0;
+  Offset _origin = Offset.zero;
+  Duration _lastElapsed = Duration.zero;
   bool _scrolling = false;
+
+  void _start(Offset position) {
+    _origin = position;
+    _displacement = 0;
+    _lastElapsed = Duration.zero;
+    setState(() => _scrolling = true);
+    _ticker.start();
+  }
+
+  void _update(Offset position) {
+    _displacement = (position.dy - _origin.dy).clamp(
+      -_maxDisplacement,
+      _maxDisplacement,
+    );
+  }
+
+  void _stop() {
+    _ticker.stop();
+    if (mounted) setState(() => _scrolling = false);
+  }
+
+  void _onTick(Duration elapsed) {
+    if (_displacement == 0 || !widget.scrollController.hasClients) {
+      _lastElapsed = elapsed;
+      return;
+    }
+    final position = widget.scrollController.position;
+    final velocity = _displacement / _maxDisplacement * _maxVelocity;
+    final dt = (elapsed - _lastElapsed).inMicroseconds / 1e6;
+    _lastElapsed = elapsed;
+    if (dt <= 0) return;
+    final target = (position.pixels + velocity * dt).clamp(
+      position.minScrollExtent,
+      position.maxScrollExtent,
+    );
+    // Jump directly instead of animating per event; the ticker cadence is
+    // what keeps the motion smooth.
+    if (target != position.pixels) position.jumpTo(target);
+  }
+
+  @override
+  void dispose() {
+    _ticker.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -208,22 +248,25 @@ class _ScrollZoneState extends State<_ScrollZone> {
         child: GestureDetector(
           behavior: HitTestBehavior.opaque,
           // Tap opens the sidebar (touch devices have no top bar); dragging
-          // scrolls the terminal. The pan recognizer here beats the pad's
+          // scrolls like a joystick. The pan recognizer here beats the pad's
           // border-drag recognizer for touches starting in the middle, so
           // scrolling never repositions the pad.
           onTap: widget.onToggleSidebar,
-          onPanStart: (_) => setState(() => _scrolling = true),
-          onPanUpdate: (details) => widget.onScrollBy(details.delta.dy * 2.2),
-          onPanEnd: (_) => setState(() => _scrolling = false),
-          onPanCancel: () => setState(() => _scrolling = false),
+          onPanStart: (details) {
+            _start(details.globalPosition);
+            _update(details.globalPosition);
+          },
+          onPanUpdate: (details) => _update(details.globalPosition),
+          onPanEnd: (_) => _stop(),
+          onPanCancel: _stop,
           child: SizedBox(
             width: widget.size,
             height: widget.size,
             child: Center(
               child: Image.asset(
                 'assets/zuko-logo.png',
-                width: 22,
-                height: 22,
+                width: 18,
+                height: 18,
                 color: _scrolling ? colors.primary : null,
               ),
             ),
