@@ -175,5 +175,20 @@ void main() {
     // The terminal widget is alive and connected to a controller.
     final terminal = tester.widget<TerminalView>(find.byType(TerminalView));
     expect(terminal.controller, isNotNull);
+
+    // A real click on the TUI must reach the PTY as an SGR mouse report
+    // (ESC [ < …M), proving terminal clicks pass through flterm unchanged.
+    final terminalRect = tester.getRect(find.byType(TerminalView));
+    final before = transport.sentBytes.length;
+    await tester.tapAt(
+      Offset(
+        terminalRect.left + terminalRect.width / 2,
+        terminalRect.top + terminalRect.height / 2,
+      ),
+    );
+    await _settle(tester);
+    final clickBytes = transport.sentBytes.sublist(before);
+    expect(clickBytes, contains(0x1b));
+    expect(clickBytes, contains(0x3c)); // SGR mouse '<'
   });
 }

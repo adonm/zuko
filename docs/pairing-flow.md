@@ -4,10 +4,11 @@ This page walks through the end-to-end pairing experience in the Zuko
 clients: installing the host, claiming a one-time share code, and opening
 the terminal session.
 
-The screenshots are rendered deterministically from the real widget tree
-(Material themes, bundled fonts, and the terminal widget) by
-`flutter/test/screenshot_flow_test.dart`. Regenerate them with
-`just screenshots` whenever the pairing or connection UI changes.
+The main screenshots are captured from the real Linux app (real engine,
+bundled fonts) by `flutter/integration/integration_test/screenshot_flow_test.dart`;
+the camera screen, which only exists on camera-capable targets, renders from
+the widget tree instead. Regenerate everything with `just screenshots`
+whenever the pairing or connection UI changes.
 
 ## 1. First run
 

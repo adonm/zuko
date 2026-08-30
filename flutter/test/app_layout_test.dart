@@ -537,6 +537,7 @@ void _accessoryWidgetTests() {
     controller.onOutput = (bytes) => sent.addAll(bytes);
     final scroll = ScrollController();
     var dragged = false;
+    var toggled = false;
 
     await tester.pumpWidget(
       MaterialApp(
@@ -550,7 +551,7 @@ void _accessoryWidgetTests() {
                   controller: controller,
                   scrollController: scroll,
                   onDragged: (_) => dragged = true,
-                  onToggleSidebar: () {},
+                  onToggleSidebar: () => toggled = true,
                 ),
               ),
             ],
@@ -562,6 +563,8 @@ void _accessoryWidgetTests() {
     await tester.tap(find.byTooltip('Up arrow'));
     // ESC [ A escape sequence reaches the terminal input.
     expect(sent, [0x1b, 0x5b, 0x41]);
+    await tester.tap(find.byTooltip('Drag to scroll, tap for menu'));
+    expect(toggled, isTrue);
     await tester.tap(find.byTooltip('Home'));
     // ESC [ H escape sequence for the Home key.
     expect(sent, [0x1b, 0x5b, 0x41, 0x1b, 0x5b, 0x48]);
@@ -578,6 +581,45 @@ void _accessoryWidgetTests() {
     final center = tester.getCenter(find.byType(FloatingTerminalPad));
     await tester.dragFrom(center, const Offset(30, 40));
     expect(dragged, isFalse);
+  });
+
+  testWidgets('terminal taps still reach flterm on touch with the pad', (
+    tester,
+  ) async {
+    _setAccessorySurface(tester, size: const Size(390, 844));
+    _setAccessoryPlatform(TargetPlatform.android);
+    final controller = await _accessoryTestController();
+    addTearDown(controller.dispose);
+
+    await tester.pumpWidget(ZukoApp(controller: controller));
+    await _pumpFrames(tester);
+
+    await tester.tap(find.byTooltip('Open sidebar'));
+    // The drawer slides in on fake time; settle it before tapping the host.
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Home server'));
+    await _pumpFrames(tester);
+
+    // Tap the terminal far from the pad: the tap must focus the terminal,
+    // proving the pad does not swallow terminal clicks.
+    final terminalRect = tester.getRect(find.byType(TerminalView));
+    await tester.tapAt(
+      Offset(terminalRect.right - 20, terminalRect.bottom - 20),
+    );
+    await _pumpFrames(tester);
+    final focused = FocusManager.instance.primaryFocus?.context;
+    expect(focused, isNotNull);
+    final terminalElement = find.byType(TerminalView).evaluate().single;
+    var focusedInsideTerminal = false;
+    focused!.visitAncestorElements((ancestor) {
+      if (identical(ancestor, terminalElement)) {
+        focusedInsideTerminal = true;
+        return false;
+      }
+      return true;
+    });
+    expect(focusedInsideTerminal, isTrue);
+    debugDefaultTargetPlatformOverride = null;
   });
 
   testWidgets('narrow touch opens the drawer from the floating logo', (
@@ -654,7 +696,10 @@ void _accessoryWidgetTests() {
     // Arrows moved to the floating pad on touch platforms.
     expect(find.byTooltip('Up'), findsNothing);
     expect(find.byTooltip('Up arrow'), findsOneWidget);
-    expect(find.byTooltip('Toggle sidebar'), findsOneWidget);
+    // The accessory logo is desktop-only; on touch the pad's center logo
+    // opens the sidebar.
+    expect(find.byTooltip('Toggle sidebar'), findsNothing);
+    expect(find.byTooltip('Drag to scroll, tap for menu'), findsOneWidget);
     debugDefaultTargetPlatformOverride = null;
   });
 
@@ -725,7 +770,8 @@ void _accessoryWidgetTests() {
       expect(find.text('Home'), findsNothing);
       expect(find.byTooltip('Home'), findsOneWidget);
       expect(find.byTooltip('Up arrow'), findsOneWidget);
-      expect(find.byTooltip('Hold and drag to scroll'), findsOneWidget);
+      expect(find.byTooltip('Drag to scroll, tap for menu'), findsOneWidget);
+      expect(find.byTooltip('Toggle sidebar'), findsNothing);
 
       final list = tester.widget<ListView>(
         find.descendant(
@@ -735,11 +781,10 @@ void _accessoryWidgetTests() {
       );
       expect(
         list.childrenDelegate.estimatedChildCount,
-        1 + // sidebar logo
-            4 + // Esc, Tab, Ctrl, Alt
+        4 + // Esc, Tab, Ctrl, Alt
             2 + // copy/paste and select-all
             terminalFunctionKeys.length +
-            5, // group spacers
+            4, // group spacers
       );
 
       debugDefaultTargetPlatformOverride = null;

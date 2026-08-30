@@ -32,6 +32,10 @@ import 'package:zuko/src/transport.dart';
 import 'package:zuko/src/wire.dart';
 
 const _generate = bool.fromEnvironment('SCREENSHOTS');
+// The real-app drive run covers everything except the camera screen, which
+// only exists on camera-capable targets; set SCREENSHOT_CAMERA_ONLY to
+// regenerate just that one from the widget tree.
+const _cameraOnly = bool.fromEnvironment('SCREENSHOT_CAMERA_ONLY');
 
 const _desktop = Size(1400, 900);
 const _portrait = Size(440, 900);
@@ -58,7 +62,7 @@ void main() {
 
   group('pair and connect flow screenshots', () {
     testWidgets('welcome screen', (tester) async {
-      if (!_generate) return;
+      if (!_generate || _cameraOnly) return;
       useLinuxPlatform();
       await _setSurface(tester, _desktop, 2.0);
       final controller = await _controller(_FakeTransport());
@@ -70,7 +74,7 @@ void main() {
     });
 
     testWidgets('manual pairing screen', (tester) async {
-      if (!_generate) return;
+      if (!_generate || _cameraOnly) return;
       useLinuxPlatform();
       await _setSurface(tester, _portrait, 2.0);
       await tester.pumpWidget(
@@ -87,7 +91,7 @@ void main() {
     });
 
     testWidgets('camera pairing screen', (tester) async {
-      if (!_generate) return;
+      if (!_generate && !_cameraOnly) return;
       useLinuxPlatform();
       await _setSurface(tester, _portrait, 2.0);
       await tester.pumpWidget(
@@ -108,7 +112,7 @@ void main() {
     });
 
     testWidgets('pairing success confirmation', (tester) async {
-      if (!_generate) return;
+      if (!_generate || _cameraOnly) return;
       useLinuxPlatform();
       await _setSurface(tester, _portrait, 2.0);
       final gate = Completer<SavedHost>();
@@ -130,7 +134,7 @@ void main() {
     });
 
     testWidgets('connecting to a saved host', (tester) async {
-      if (!_generate) return;
+      if (!_generate || _cameraOnly) return;
       useLinuxPlatform();
       await _setSurface(tester, _desktop, 2.0);
       final transport = _FakeTransport();
@@ -150,7 +154,7 @@ void main() {
     });
 
     testWidgets('automatic retry countdown', (tester) async {
-      if (!_generate) return;
+      if (!_generate || _cameraOnly) return;
       useLinuxPlatform();
       await _setSurface(tester, _desktop, 2.0);
       final transport = _FakeTransport();
@@ -177,7 +181,7 @@ void main() {
     });
 
     testWidgets('attached terminal session', (tester) async {
-      if (!_generate) return;
+      if (!_generate || _cameraOnly) return;
       useLinuxPlatform();
       await _setSurface(tester, _desktop, 2.0);
       final transport = _FakeTransport();
@@ -298,9 +302,8 @@ Future<void> _loadFonts() async {
 
   Future<void> loadFile(String family, String path) async {
     final bytes = await File(path).readAsBytes();
-    final loader = FontLoader(
-      family,
-    )..addFont(Future.value(ByteData.view(bytes.buffer)));
+    final loader = FontLoader(family)
+      ..addFont(Future.value(ByteData.view(bytes.buffer)));
     await loader.load();
   }
 

@@ -90,10 +90,15 @@ flutter-integration: flutter-get
     cd flutter/integration && xvfb-run -a flutter test integration_test -d linux --no-pub | tee /tmp/zuko-flutter-integration.log
     grep -qE "All tests passed|tests passed" /tmp/zuko-flutter-integration.log
 
-# Regenerate the pair/connect flow screenshots under docs/images.
+# Regenerate the pair/connect flow screenshots under docs/images. The main
+# set renders through the real engine via flutter drive; the camera screen
+# only exists on camera-capable targets, so that one falls back to the widget
+# tree renderer.
 [group('flutter')]
 screenshots: flutter-get
-    cd flutter && flutter test test/screenshot_flow_test.dart --dart-define=SCREENSHOTS=true --no-pub
+    cd flutter/integration && flutter pub get --enforce-lockfile
+    cd flutter/integration && xvfb-run -a flutter test integration_test/screenshot_flow_test.dart -d linux --no-pub
+    cd flutter && flutter test test/screenshot_flow_test.dart --dart-define=SCREENSHOTS=true --dart-define=SCREENSHOT_CAMERA_ONLY=true --no-pub
 
 [group('flutter')]
 flutter-check: flutter-app-check

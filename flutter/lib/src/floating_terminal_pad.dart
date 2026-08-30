@@ -200,22 +200,22 @@ class _ScrollZoneState extends State<_ScrollZone> {
   Widget build(BuildContext context) {
     final colors = Theme.of(context).colorScheme;
     return Tooltip(
-      message: 'Hold and drag to scroll',
+      triggerMode: TooltipTriggerMode.manual,
+      message: 'Drag to scroll, tap for menu',
       child: Semantics(
         button: true,
-        label: 'Zuko menu, hold and drag to scroll the terminal',
+        label: 'Zuko menu, drag to scroll the terminal',
         child: GestureDetector(
           behavior: HitTestBehavior.opaque,
-          // The zuko logo opens the sidebar (touch devices have no top
-          // bar); holding and dragging here scrolls the terminal instead
-          // of repositioning the pad, and quick pans are swallowed so the
-          // pad only moves from its border ring.
-          onPanUpdate: (_) {},
+          // Tap opens the sidebar (touch devices have no top bar); dragging
+          // scrolls the terminal. The pan recognizer here beats the pad's
+          // border-drag recognizer for touches starting in the middle, so
+          // scrolling never repositions the pad.
           onTap: widget.onToggleSidebar,
-          onLongPressStart: (_) => setState(() => _scrolling = true),
-          onLongPressMoveUpdate: (details) =>
-              widget.onScrollBy(details.offsetFromOrigin.dy * 2.2),
-          onLongPressEnd: (_) => setState(() => _scrolling = false),
+          onPanStart: (_) => setState(() => _scrolling = true),
+          onPanUpdate: (details) => widget.onScrollBy(details.delta.dy * 2.2),
+          onPanEnd: (_) => setState(() => _scrolling = false),
+          onPanCancel: () => setState(() => _scrolling = false),
           child: SizedBox(
             width: widget.size,
             height: widget.size,

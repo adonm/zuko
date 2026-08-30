@@ -431,6 +431,7 @@ class _HomeState extends State<_Home>
                                                     controller: connection
                                                         .scrollController,
                                                     child: TerminalView(
+                                                      padding: EdgeInsets.zero,
                                                       controller:
                                                           connection.terminal,
                                                       focusNode:
@@ -495,7 +496,10 @@ class _HomeState extends State<_Home>
                                     ),
                                     TerminalAccessory(
                                       controller: active.terminal,
-                                      showSidebarToggle: wide || touchPlatform,
+                                      // On touch the floating pad's logo opens
+                                      // the sidebar; the accessory logo serves
+                                      // wide desktop layouts only.
+                                      showSidebarToggle: wide && !touchPlatform,
                                       onToggleSidebar: toggleSidebar,
                                     ),
                                   ],
