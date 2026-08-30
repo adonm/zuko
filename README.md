@@ -24,7 +24,7 @@ Rust CLI, explicit device authorization, and short reconnects.
 Install the CLI on a Linux or macOS host:
 
 ```sh
-curl --proto '=https' --tlsv1.2 -LsSf https://zuko.adonm.dev/install.sh | sh
+curl -fsSL https://zuko.adonm.dev/install.sh | sh
 # Relaunch your shell here if the installer asks.
 zuko install
 ```

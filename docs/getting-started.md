@@ -9,7 +9,7 @@ The installer detects or bootstraps [mise](https://mise.jdx.dev/), configures
 activation for Bash, Zsh, or Fish, and installs Zuko as a global mise tool:
 
 ```sh
-curl --proto '=https' --tlsv1.2 -LsSf https://zuko.adonm.dev/install.sh | sh
+curl -fsSL https://zuko.adonm.dev/install.sh | sh
 # Relaunch your shell here if the installer asks.
 zuko --version
 ```
@@ -22,8 +22,7 @@ upgrades an existing mise-managed Zuko installation. To inspect the script
 before running it:
 
 ```sh
-curl --proto '=https' --tlsv1.2 -fsSLo /tmp/zuko-install.sh \
-  https://zuko.adonm.dev/install.sh
+curl -fsSLo /tmp/zuko-install.sh https://zuko.adonm.dev/install.sh
 less /tmp/zuko-install.sh
 sh /tmp/zuko-install.sh
 ```
@@ -32,8 +31,7 @@ Optional settings:
 
 ```sh
 # Install one release rather than latest.
-curl --proto '=https' --tlsv1.2 -LsSf https://zuko.adonm.dev/install.sh |
-  ZUKO_VERSION=0.12.0 sh
+curl -fsSL https://zuko.adonm.dev/install.sh | ZUKO_VERSION=0.12.0 sh
 ```
 
 Update with `zuko upgrade` or `mise upgrade github:adonm/zuko`. Restarting the

@@ -47,7 +47,7 @@ requirements and troubleshooting.
 Run these commands in Ubuntu, not PowerShell:
 
 ```sh
-curl --proto '=https' --tlsv1.2 -LsSf https://zuko.adonm.dev/install.sh | sh
+curl -fsSL https://zuko.adonm.dev/install.sh | sh
 # Exit and reopen Ubuntu here if the installer requests it.
 zuko install
 zuko doctor
