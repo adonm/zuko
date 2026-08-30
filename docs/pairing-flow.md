@@ -47,8 +47,10 @@ attempt; *Retry now* reconnects immediately.
 
 ![Reconnect countdown](images/retrying.png)
 
-An attached session brings up the terminal with the accessory bar for
-touch devices and extended keys.
+An attached session brings up the terminal with the compact accessory bar;
+on touch devices a translucent floating pad (arrows, PgUp/PgDn, Home/End,
+hold-drag scrolling, and a logo that opens the sidebar) floats over the
+terminal and can be dragged anywhere.
 
 ![Attached session](images/connected.png)
 

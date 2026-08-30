@@ -50,6 +50,12 @@ jobs:
 
       - uses: ./.github/actions/cache-flutter
 
+      # The Rust WASM bridge and mdbook output live under target/; restoring
+      # them makes the web client build incremental across docs deploys.
+      - uses: ./.github/actions/cache-rust
+        with:
+          partition: docs
+
       - name: Lint markdown links
         # Gate the deploy on link health (config in .lychee.toml). GITHUB_TOKEN
         # lifts GitHub rate limits.

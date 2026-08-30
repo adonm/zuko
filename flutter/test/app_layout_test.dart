@@ -1,13 +1,12 @@
 import 'dart:async';
 import 'dart:typed_data';
 
-import 'package:flterm/flterm.dart' show Key, TerminalController, TerminalView;
+import 'package:flterm/flterm.dart' show TerminalController, TerminalView;
 import 'package:flutter/foundation.dart'
     show TargetPlatform, debugDefaultTargetPlatformOverride;
 import 'package:flutter/gestures.dart' show PointerDeviceKind;
 import 'package:flutter/material.dart' hide Key;
 import 'package:flutter_test/flutter_test.dart';
-import 'package:zuko/src/extended_key_palette.dart';
 import 'package:zuko/src/floating_terminal_pad.dart';
 import 'package:zuko/src/repeatable_action.dart';
 import 'package:zuko/src/sidebar.dart';
@@ -162,22 +161,6 @@ void main() {
     await tester.tap(find.text('Save'));
     await tester.pumpAndSettle();
     expect(result, 'office-ipad');
-  });
-
-  testWidgets('extended key palette sends typed terminal keys', (tester) async {
-    final keys = <Key>[];
-    await tester.pumpWidget(
-      MaterialApp(
-        home: Scaffold(body: TerminalExtendedKeyPalette(onKey: keys.add)),
-      ),
-    );
-
-    await tester.tap(find.text('PgUp'));
-    await tester.tap(find.text('F12'));
-
-    expect(keys, [Key.pageUp, Key.f12]);
-    expect(find.byType(FilledButton), findsNWidgets(18));
-    expect(find.byType(OutlinedButton), findsNothing);
   });
 
   testWidgets('held terminal actions repeat after a deliberate delay', (

@@ -12,7 +12,6 @@ import sys
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 OUTPUT = ROOT / "target/book/web"
-PACKAGE_CONFIG = ROOT / "flutter/.dart_tool/package_config.json"
 GHOSTTY_WASM_NAME = "libghostty-wasm32-freestanding.wasm"
 GHOSTTY_WASM_OUTPUT = (
     OUTPUT / "assets/packages/libghostty/assets" / GHOSTTY_WASM_NAME

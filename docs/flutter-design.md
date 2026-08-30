@@ -91,11 +91,11 @@ Do not reduce spacing merely to show more inactive chrome.
 ### Adapt layout and input, not product meaning
 
 - Narrow layouts use a drawer and the main pane for the current task.
-- Wide layouts keep a persistent, collapsible connection sidebar.
+- Wide layouts keep a collapsible sidebar rail that expands into the full
+  panel from the logo in the terminal accessory row.
 - Phones may use bottom sheets where desktops use anchored menus or popovers.
-- Touch dragging scrolls by default. Touch text selection must be enabled from
-  the terminal accessory row and then starts with long press. Mouse and
-  keyboard selection retain desktop conventions.
+- Touch gestures follow flterm defaults: drags scroll, long presses select,
+  and mouse drags select. Keyboard selection retains desktop conventions.
 - Terminal keys must go through `flterm`'s typed `Key` API, not handwritten
   escape sequences.
 
@@ -152,14 +152,15 @@ the implementation changes.
 
 - `flterm` and `libghostty` own terminal parsing, rendering, selection, and
   key encoding. Zuko should not create a parallel terminal behavior layer.
-- The accessory row is currently 24 logical pixels high, with width-aware
-  28–36 pixel slots. These are tested compact-mode constraints, not a general
-  recommendation for all controls.
-- Copy and paste are contextual; less common actions live in overflow.
-- The overflow opens Home, End, Page Up, Page Down, Insert, Delete, and F1–F12
-  in a phone bottom sheet or compact desktop popover. Arrow buttons repeat
-  after a deliberate hold delay instead of requiring rapid tapping, and use
-  the predictable Up, Down, Left, Right order.
+- The accessory row is currently 34 logical pixels high with matching slots.
+  These are tested compact-mode constraints, not a general recommendation for
+  all controls.
+- Copy and paste are contextual. On desktop the accessory carries arrows and
+  navigation keys; on touch platforms those move to the translucent floating
+  pad (arrows, PgUp/PgDn, Home/End, and a hold-drag scroll center) that can be
+  dragged anywhere over the terminal. Arrow keys repeat after a deliberate
+  hold delay instead of requiring rapid tapping, and use the predictable
+  Up, Down, Left, Right order.
 - Multiline paste remains guarded. Supported terminal links are limited to
   absolute HTTP and HTTPS URLs.
 - Remote OSC 52 output may write UTF-8 text to the system clipboard only from
@@ -168,8 +169,8 @@ the implementation changes.
   1 MiB are ignored.
 - Touch and stylus positions follow alternate-screen scroll conversion so
   mouse-aware programs receive wheel events at the intended terminal cell.
-  Touch selection is off by default; while enabled, long press gives platform
-  feedback when selection becomes armed.
+  Long press selects on touch and gives platform feedback when selection
+  becomes armed.
 - Terminal output exposes a readable visible viewport and focus action to
   assistive technology, but continuous output is not a live region because
   announcement spam would make the client unusable.

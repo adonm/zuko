@@ -155,7 +155,7 @@ Mise-managed install:
 ```sh
 zuko upgrade --check
 zuko upgrade
-zuko upgrade --version 0.10.13
+zuko upgrade --version 0.12.0
 zuko upgrade --no-restart
 ```
 

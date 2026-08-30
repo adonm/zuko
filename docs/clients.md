@@ -70,14 +70,17 @@ targets unless a platform note below says otherwise:
 - rename, inspect, and forget saved hosts, including the host-side revocation
   command when its authorized-client label is known;
 - render a resizable `flterm`/`libghostty` terminal with scrollback, selection,
-  copy, guarded multi-line paste, desktop keyboard/IME input, and mobile
-  accessory keys, plus a screen-reader-readable visible viewport and terminal
-  focus action;
+  copy, guarded multi-line paste, desktop keyboard/IME input, a compact
+  accessory row, and — on touch platforms — a draggable floating pad with
+  arrows, PgUp/PgDn, Home/End, and hold-drag scrolling, plus a
+  screen-reader-readable visible viewport and terminal focus action;
 - persist system/light/dark theme and terminal font-size preferences.
 
-The shell uses a Material 3 theme seeded from the zuko red and keeps each
-platform's native window chrome. The Linux client uses the standard Flutter
-app bar.
+The shell uses a Material 3 theme seeded from the zuko red with a compact
+density pass. Wide desktop layouts collapse the connection sidebar to a rail
+(expanded from the logo in the accessory row) and drop the app bar in favor of
+native window chrome; narrow and touch layouts keep the app bar or the floating
+pad's logo for sidebar access.
 
 This is a remote shell client, not a durable session manager: it has no output
 replay, and forgetting a host locally does not revoke that client on the host.

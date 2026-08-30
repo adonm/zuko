@@ -80,8 +80,9 @@ include:
 - improve accessibility semantics, API documentation, diagnostics, examples,
   and release hygiene so downstream Flutter clients can depend on behavior
   rather than implementation details;
-- upstream generally useful fixes in `flterm` first and pin Zuko to reviewed,
-  tested commits instead of carrying hidden application-only forks.
+- land generally useful fixes in upstream `flterm` first; Zuko consumes the
+  published releases (with the few remaining semantics and keyboard patches
+  tracked upstream in PRs #102 and #104).
 
 The first focused terminal-experience increment is clickable links. `flterm`
 detects OSC 8 hyperlinks and plain-text URLs, and Zuko wires supported web

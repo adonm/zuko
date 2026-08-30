@@ -55,8 +55,11 @@ resolution. It works around the published `iroh_flutter` 1.0.1 CMake FFI
 bundle path and Linux keyring handling in `flutter_secure_storage_linux` 3.0.1.
 The script fails closed when either package version changes.
 
-The pinned Flutter stable uses explicit Impeller enablement on Android, Linux,
-macOS, Windows, and web.
+The pinned Flutter stable SDK (3.47.1) uses explicit Impeller enablement on
+Android, Linux, macOS, Windows, and web. Touch platforms drop the top bar:
+a translucent floating pad (arrows, PgUp/PgDn, Home/End, hold-drag scroll,
+logo that opens the sidebar) floats over the terminal, and the wide layout
+collapses the sidebar to a rail so the terminal fills the window.
 
 CI analyzes and tests the shared Dart code, builds web plus all five native
 target families, and publishes only the channels documented in
