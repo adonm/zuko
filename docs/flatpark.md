@@ -17,7 +17,7 @@ zuko-linux-vX.Y.Z-x86_64.tar.gz.sha256
 
 The archive contains one top-level `bundle/` directory with the executable,
 Flutter data, and adjacent libraries. GitHub builds it on Ubuntu 24.04 with the
-checksum-pinned Mise Flutter beta SDK. `scripts/package-linux-release.sh` normalizes the archive,
+checksum-pinned Mise Flutter stable SDK. `scripts/package-linux-release.sh` normalizes the archive,
 rejects links, privileged files, and non-relocatable runtime paths, checks
 native linkage before and after extraction, and emits its checksum.
 

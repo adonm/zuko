@@ -43,7 +43,7 @@ local and CI baseline.
 The current full Linux-hostable compile matrix still uses the repository's
 pinned Ubuntu 24.04 builder image. These recipes require a healthy rootless
 Docker or Podman engine reachable from the development box. The image contains
-the checksum-pinned Flutter beta SDK, Rust, JDK 17, Android SDK/NDK/CMake, GTK3, and
+the checksum-pinned Flutter stable SDK, Rust, JDK 17, Android SDK/NDK/CMake, GTK3, and
 web Wasm tools. Source is copied from a read-only mount into an ephemeral
 workspace; only artifact and cache directories are written back.
 
@@ -108,10 +108,10 @@ release. ptyx, the integration-test PTY bridge, comes from upstream
 `elias8/libghostty` and is declared only by the `flutter/integration` package.
 `scripts/check-flutter-config.py` fails closed when any of these pins drifts.
 
-Every platform installs the official Flutter beta archive through Mise's
+Every platform installs the official Flutter stable archive through Mise's
 `http:flutter` backend at framework revision
-`ceb9a865625239789d86b31be0a8d04e4c5a5084` (version `3.48.0-0.1.pre`, Dart
-`3.14.0-95.1.beta`). Linux builds use the stock GTK3 embedder with Impeller;
+`6655482ec06e547f90abf8ae7590466f4415978d` (version `3.47.1`, Dart
+`3.13.1`). Linux builds use the stock GTK3 embedder with Impeller;
 no build job clones, deepens, patches, or precaches Flutter.
 
 ## Android
