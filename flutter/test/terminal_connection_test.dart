@@ -225,9 +225,7 @@ void main() {
     expect(session.resizes.single.rows, 40);
   });
 
-  testWidgets('connection tabs select and close independently', (
-    tester,
-  ) async {
+  testWidgets('connection tabs select and close independently', (tester) async {
     final alpha = TerminalConnection(
       host: _alpha,
       connector: (_, _) => _FakeTerminalSession(),

@@ -130,13 +130,12 @@ void main() {
     // --- Disconnect from the sidebar closes the session and kills the PTY. ---
     // The button sits at the bottom of the sidebar list; drag the sidebar up
     // until it builds.
-    for (var attempt = 0;
-        attempt < 10 &&
-            find
-                .widgetWithText(OutlinedButton, 'Disconnect')
-                .evaluate()
-                .isEmpty;
-        attempt++) {
+    for (
+      var attempt = 0;
+      attempt < 10 &&
+          find.widgetWithText(OutlinedButton, 'Disconnect').evaluate().isEmpty;
+      attempt++
+    ) {
       await tester.dragFrom(const Offset(150, 480), const Offset(0, -120));
       await _settle(tester);
     }
