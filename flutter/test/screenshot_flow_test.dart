@@ -132,12 +132,17 @@ void main() {
     testWidgets('connecting to a saved host', (tester) async {
       if (!_generate) return;
       useLinuxPlatform();
-      await _setSurface(tester, _desktop, 2.0);
+      await _setSurface(tester, _desktop, 1.0);
       final transport = _FakeTransport();
       final controller = await _controller(transport, hosts: const [_host]);
       await controller.setTheme(AppThemePreference.dark);
       await tester.pumpWidget(_shot(ZukoApp(controller: controller)));
-      await tester.tap(find.text('workstation'));
+      await tester.tap(find.byTooltip('Expand sidebar'));
+      await _pumpFrames(tester, 3);
+      final hostTile = find.widgetWithText(ListTile, 'workstation');
+      await tester.ensureVisible(hostTile);
+      tester.widget<ListTile>(hostTile).onTap!();
+      await _pumpFrames(tester, 1);
       await _pumpFrames(tester, 6);
       await _capture(tester, 'connecting');
       await _unmount(tester, controller);
@@ -147,12 +152,17 @@ void main() {
     testWidgets('automatic retry countdown', (tester) async {
       if (!_generate) return;
       useLinuxPlatform();
-      await _setSurface(tester, _desktop, 2.0);
+      await _setSurface(tester, _desktop, 1.0);
       final transport = _FakeTransport();
       final controller = await _controller(transport, hosts: const [_host]);
       await controller.setTheme(AppThemePreference.dark);
       await tester.pumpWidget(_shot(ZukoApp(controller: controller)));
-      await tester.tap(find.text('workstation'));
+      await tester.tap(find.byTooltip('Expand sidebar'));
+      await _pumpFrames(tester, 3);
+      final hostTile = find.widgetWithText(ListTile, 'workstation');
+      await tester.ensureVisible(hostTile);
+      tester.widget<ListTile>(hostTile).onTap!();
+      await _pumpFrames(tester, 1);
       await _pumpFrames(tester, 3);
       transport.sessions.single.emitState(
         const SessionState.retrying(
@@ -169,12 +179,17 @@ void main() {
     testWidgets('attached terminal session', (tester) async {
       if (!_generate) return;
       useLinuxPlatform();
-      await _setSurface(tester, _desktop, 2.0);
+      await _setSurface(tester, _desktop, 1.0);
       final transport = _FakeTransport();
       final controller = await _controller(transport, hosts: const [_host]);
       await controller.setTheme(AppThemePreference.dark);
       await tester.pumpWidget(_shot(ZukoApp(controller: controller)));
-      await tester.tap(find.text('workstation'));
+      await tester.tap(find.byTooltip('Expand sidebar'));
+      await _pumpFrames(tester, 3);
+      final hostTile = find.widgetWithText(ListTile, 'workstation');
+      await tester.ensureVisible(hostTile);
+      tester.widget<ListTile>(hostTile).onTap!();
+      await _pumpFrames(tester, 1);
       await _pumpFrames(tester, 3);
       final session = transport.sessions.single;
       session.emitState(const SessionState.attached());
@@ -219,8 +234,17 @@ Future<void> _setSurface(WidgetTester tester, Size size, double ratio) async {
 }
 
 Future<void> _pumpFrames(WidgetTester tester, int frames) async {
+  // Run one fake-async frame, then let real async work (ink ripples, drawer
+  // and implicit animations) settle on the real event loop. Settling first
+  // prevents flterm's idle compression task from being deferred forever by
+  // an in-flight animation, which would spin the scheduler's zero-delay
+  // event-loop callback until the test timed out.
   for (var index = 0; index < frames; index++) {
-    await tester.pump(const Duration(milliseconds: 100));
+    await tester.pump();
+    await tester.runAsync(
+      () => Future<void>.delayed(const Duration(milliseconds: 400)),
+    );
+    await tester.pump();
   }
 }
 

@@ -37,6 +37,33 @@ ThemeData buildZukoTheme(
   return ThemeData(
     colorScheme: scheme,
     visualDensity: visualDensity,
+    // Keep the shell dense: Material 3 defaults add generous padding that
+    // suits touch apps more than a terminal client.
+    appBarTheme: const AppBarTheme(toolbarHeight: 44),
+    listTileTheme: const ListTileThemeData(
+      minVerticalPadding: 4,
+      minLeadingWidth: 36,
+      contentPadding: EdgeInsets.symmetric(horizontal: 12),
+    ),
+    inputDecorationTheme: const InputDecorationTheme(isDense: true),
+    filledButtonTheme: FilledButtonThemeData(
+      style: FilledButton.styleFrom(
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+        minimumSize: const Size(0, 34),
+      ),
+    ),
+    outlinedButtonTheme: OutlinedButtonThemeData(
+      style: OutlinedButton.styleFrom(
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+        minimumSize: const Size(0, 34),
+      ),
+    ),
+    textButtonTheme: TextButtonThemeData(
+      style: TextButton.styleFrom(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+        minimumSize: const Size(0, 32),
+      ),
+    ),
     extensions: [ZukoMetrics.forInterfaceSize(interfaceSize)],
   );
 }

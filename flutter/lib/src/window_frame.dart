@@ -8,7 +8,9 @@ bool usesIntegratedDesktopHeader({
     wideLayout &&
     !isWeb &&
     switch (platform) {
-      TargetPlatform.macOS || TargetPlatform.windows => true,
+      TargetPlatform.linux ||
+      TargetPlatform.macOS ||
+      TargetPlatform.windows => true,
       _ => false,
     };
 

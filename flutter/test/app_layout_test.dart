@@ -1,13 +1,14 @@
 import 'dart:async';
 import 'dart:typed_data';
 
-import 'package:flterm/flterm.dart' show Key, TerminalView;
+import 'package:flterm/flterm.dart' show Key, TerminalController, TerminalView;
 import 'package:flutter/foundation.dart'
     show TargetPlatform, debugDefaultTargetPlatformOverride;
 import 'package:flutter/gestures.dart' show PointerDeviceKind;
 import 'package:flutter/material.dart' hide Key;
 import 'package:flutter_test/flutter_test.dart';
 import 'package:zuko/src/extended_key_palette.dart';
+import 'package:zuko/src/floating_terminal_pad.dart';
 import 'package:zuko/src/repeatable_action.dart';
 import 'package:zuko/src/sidebar.dart';
 import 'package:zuko/src/terminal_key_lists.dart';
@@ -369,17 +370,23 @@ void main() {
     }
   });
 
-  test('Linux always uses the Flutter app bar', () {
-    for (final width in [390.0, 1280.0]) {
-      expect(
-        usesIntegratedDesktopHeader(
-          wideLayout: width >= 760,
-          platform: TargetPlatform.linux,
-          isWeb: false,
-        ),
-        isFalse,
-      );
-    }
+  test('Linux narrow layouts keep the app bar and wide ones integrate', () {
+    expect(
+      usesIntegratedDesktopHeader(
+        wideLayout: false,
+        platform: TargetPlatform.linux,
+        isWeb: false,
+      ),
+      isFalse,
+    );
+    expect(
+      usesIntegratedDesktopHeader(
+        wideLayout: true,
+        platform: TargetPlatform.linux,
+        isWeb: false,
+      ),
+      isTrue,
+    );
   });
 
   test('wide macOS and Windows layouts keep their native title bars', () {
@@ -514,6 +521,12 @@ void _setAccessorySurface(
   addTearDown(tester.view.resetPhysicalSize);
 }
 
+Future<void> _expandSidebar(WidgetTester tester) async {
+  await tester.tap(find.byTooltip('Expand sidebar'));
+  await tester.pump();
+  await tester.pump(const Duration(milliseconds: 300));
+}
+
 void _setAccessoryPlatform(TargetPlatform platform) {
   debugDefaultTargetPlatformOverride = platform;
   addTearDown(() => debugDefaultTargetPlatformOverride = null);
@@ -533,6 +546,75 @@ Future<void> _pumpFrames(WidgetTester tester) async {
 }
 
 void _accessoryWidgetTests() {
+  testWidgets('floating pad sends keys and drags from its border', (
+    tester,
+  ) async {
+    final controller = TerminalController();
+    final sent = <int>[];
+    controller.onOutput = (bytes) => sent.addAll(bytes);
+    final scroll = ScrollController();
+    var dragged = false;
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: Stack(
+            children: [
+              Positioned(
+                left: 10,
+                top: 10,
+                child: FloatingTerminalPad(
+                  controller: controller,
+                  scrollController: scroll,
+                  onDragged: (_) => dragged = true,
+                  onToggleSidebar: () {},
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+
+    await tester.tap(find.byTooltip('Up arrow'));
+    // ESC [ A escape sequence reaches the terminal input.
+    expect(sent, [0x1b, 0x5b, 0x41]);
+    await tester.tap(find.byTooltip('Home'));
+    // ESC [ H escape sequence for the Home key.
+    expect(sent, [0x1b, 0x5b, 0x41, 0x1b, 0x5b, 0x48]);
+
+    // Dragging from the padded border ring repositions; dragging the middle
+    // is scroll and must not move the pad.
+    final rect = tester.getRect(find.byType(FloatingTerminalPad));
+    await tester.dragFrom(
+      Offset(rect.right - 2, rect.center.dy),
+      const Offset(30, 40),
+    );
+    expect(dragged, isTrue);
+    dragged = false;
+    final center = tester.getCenter(find.byType(FloatingTerminalPad));
+    await tester.dragFrom(center, const Offset(30, 40));
+    expect(dragged, isFalse);
+  });
+
+  testWidgets('narrow touch opens the drawer from the floating logo', (
+    tester,
+  ) async {
+    _setAccessorySurface(tester, size: const Size(390, 844));
+    _setAccessoryPlatform(TargetPlatform.android);
+    final controller = await _accessoryTestController();
+    addTearDown(controller.dispose);
+
+    await tester.pumpWidget(ZukoApp(controller: controller));
+    await _pumpFrames(tester);
+
+    expect(find.byTooltip('Open sidebar'), findsOneWidget);
+    await tester.tap(find.byTooltip('Open sidebar'));
+    await _pumpFrames(tester);
+    expect(find.text('Home server'), findsOneWidget);
+    debugDefaultTargetPlatformOverride = null;
+  });
+
   testWidgets('landscape safe area insets the terminal for the island', (
     tester,
   ) async {
@@ -551,17 +633,20 @@ void _accessoryWidgetTests() {
     await tester.pumpWidget(ZukoApp(controller: controller));
     await _pumpFrames(tester);
 
+    await _expandSidebar(tester);
     await tester.tap(find.text('Home server'));
     await _pumpFrames(tester);
 
     // The whole body row is inset on both sides like native apps in
-    // landscape: the wide sidebar starts past the left inset and the
-    // terminal ends before the right inset.
+    // landscape: the expanded sidebar starts past the left inset and the
+    // terminal ends before the right inset. The floating pad is present on
+    // touch platforms.
     final topLeft = tester.getTopLeft(find.byType(TerminalView));
     final bottomRight = tester.getBottomRight(find.byType(TerminalView));
     expect(topLeft.dx, 47 + 300 + 1); // inset + sidebar + divider
     expect(bottomRight.dx, 844 - 47);
     expect(topLeft.dy, greaterThanOrEqualTo(0));
+    expect(find.byTooltip('Up arrow'), findsOneWidget);
     debugDefaultTargetPlatformOverride = null;
   });
 
@@ -574,6 +659,7 @@ void _accessoryWidgetTests() {
     await tester.pumpWidget(ZukoApp(controller: controller));
     await _pumpFrames(tester);
 
+    await _expandSidebar(tester);
     await tester.tap(find.text('Home server'));
     await _pumpFrames(tester);
 
@@ -581,9 +667,11 @@ void _accessoryWidgetTests() {
     expect(find.text('Tab'), findsOneWidget);
     expect(find.text('Ctrl'), findsOneWidget);
     expect(find.text('Alt'), findsOneWidget);
-    expect(find.byTooltip('Up'), findsOneWidget);
-    expect(find.byTooltip('Down'), findsOneWidget);
     expect(find.byTooltip('Select all'), findsOneWidget);
+    // Arrows moved to the floating pad on touch platforms.
+    expect(find.byTooltip('Up'), findsNothing);
+    expect(find.byTooltip('Up arrow'), findsOneWidget);
+    expect(find.byTooltip('Toggle sidebar'), findsOneWidget);
     debugDefaultTargetPlatformOverride = null;
   });
 
@@ -598,12 +686,13 @@ void _accessoryWidgetTests() {
     await tester.pumpWidget(ZukoApp(controller: controller));
     await _pumpFrames(tester);
 
+    await _expandSidebar(tester);
     await tester.tap(find.text('Home server'));
     await _pumpFrames(tester);
 
-    // One horizontally scrolling strip: core keys, punctuation, navigation,
-    // and function keys. The ListView lazily builds off-screen children, so
-    // assert the delegate's item count covers every group.
+    // One horizontally scrolling strip: logo, core keys, punctuation,
+    // navigation, and function keys. The ListView lazily builds off-screen
+    // children, so assert the delegate's item count covers every group.
     final list = tester.widget<ListView>(
       find.descendant(
         of: find.byType(TerminalAccessory),
@@ -613,13 +702,14 @@ void _accessoryWidgetTests() {
     final count = list.childrenDelegate.estimatedChildCount;
     expect(
       count,
-      4 + // Esc, Tab, Ctrl, Alt
+      1 + // sidebar logo
+          4 + // Esc, Tab, Ctrl, Alt
           4 + // arrows
           2 + // copy/paste and select-all
           terminalPunctuationKeys.length +
           terminalNavigationKeys.length +
           terminalFunctionKeys.length +
-          6, // group spacers
+          7, // group spacers
     );
     debugDefaultTargetPlatformOverride = null;
   });
@@ -636,19 +726,23 @@ void _accessoryWidgetTests() {
       await tester.pumpWidget(ZukoApp(controller: controller));
       await _pumpFrames(tester);
 
+      await _expandSidebar(tester);
       await tester.tap(find.text('Home server'));
       await _pumpFrames(tester);
 
-      // Core keys stay; the punctuation group is covered by the soft
-      // keyboard's number and symbol layers.
+      // Core keys stay; punctuation is covered by the soft keyboard's
+      // number and symbol layers, and arrows plus navigation keys moved to
+      // the floating pad.
       expect(find.text('Esc'), findsOneWidget);
       expect(find.text('Ctrl'), findsOneWidget);
-      expect(find.byTooltip('Up'), findsOneWidget);
       expect(find.byTooltip('Select all'), findsOneWidget);
       expect(find.text('|'), findsNothing);
       expect(find.text('~'), findsNothing);
       expect(find.text('>'), findsNothing);
-      expect(find.text('Home'), findsOneWidget);
+      expect(find.text('Home'), findsNothing);
+      expect(find.byTooltip('Home'), findsOneWidget);
+      expect(find.byTooltip('Up arrow'), findsOneWidget);
+      expect(find.byTooltip('Hold and drag to scroll'), findsOneWidget);
 
       final list = tester.widget<ListView>(
         find.descendant(
@@ -658,12 +752,11 @@ void _accessoryWidgetTests() {
       );
       expect(
         list.childrenDelegate.estimatedChildCount,
-        4 + // Esc, Tab, Ctrl, Alt
-            4 + // arrows
+        1 + // sidebar logo
+            4 + // Esc, Tab, Ctrl, Alt
             2 + // copy/paste and select-all
-            terminalNavigationKeys.length +
             terminalFunctionKeys.length +
-            6, // group spacers
+            5, // group spacers
       );
 
       debugDefaultTargetPlatformOverride = null;
@@ -680,6 +773,7 @@ void _accessoryWidgetTests() {
     await tester.pumpWidget(ZukoApp(controller: controller));
     await _pumpFrames(tester);
 
+    await _expandSidebar(tester);
     await tester.tap(find.text('Home server'));
     await _pumpFrames(tester);
 

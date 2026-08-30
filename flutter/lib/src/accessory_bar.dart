@@ -11,9 +11,16 @@ import 'package:libghostty/libghostty.dart' show pasteIsSafe;
 import 'theme.dart';
 
 class TerminalAccessory extends StatefulWidget {
-  const TerminalAccessory({super.key, required this.controller});
+  const TerminalAccessory({
+    super.key,
+    required this.controller,
+    this.showSidebarToggle = false,
+    this.onToggleSidebar,
+  });
 
   final TerminalController controller;
+  final bool showSidebarToggle;
+  final VoidCallback? onToggleSidebar;
 
   @override
   State<TerminalAccessory> createState() => _TerminalAccessoryState();
@@ -85,6 +92,12 @@ class _TerminalAccessoryState extends State<TerminalAccessory> {
       final metrics = ZukoMetrics.of(context);
       final rowHeight = metrics.terminalAccessoryHeight;
       final itemWidth = metrics.terminalAccessoryItemWidth;
+      // On touch platforms the floating pad carries arrows and navigation
+      // keys, so the accessory keeps only what the pad cannot.
+      final padCoversNavigation = switch (defaultTargetPlatform) {
+        TargetPlatform.iOS || TargetPlatform.android => true,
+        _ => false,
+      };
       return Material(
         color: colors.surfaceContainerLow,
         child: DecoratedBox(
@@ -99,6 +112,14 @@ class _TerminalAccessoryState extends State<TerminalAccessory> {
                 scrollDirection: Axis.horizontal,
                 padding: EdgeInsets.symmetric(horizontal: metrics.size(6)),
                 children: [
+                  if (widget.showSidebarToggle) ...[
+                    _AccessoryLogo(
+                      width: itemWidth,
+                      height: rowHeight,
+                      onPressed: widget.onToggleSidebar,
+                    ),
+                    SizedBox(width: metrics.terminalAccessoryGroupSpacing),
+                  ],
                   _AccessoryKey(
                     width: itemWidth,
                     height: rowHeight,
@@ -126,15 +147,17 @@ class _TerminalAccessoryState extends State<TerminalAccessory> {
                     selected: controller.virtualMods.hasAlt,
                     onPressed: () => controller.toggleMod(const Mods.alt()),
                   ),
-                  SizedBox(width: metrics.terminalAccessoryGroupSpacing),
-                  for (final item in terminalArrowKeys)
-                    _RepeatableAccessoryIcon(
-                      width: itemWidth,
-                      height: rowHeight,
-                      tooltip: item.label,
-                      icon: terminalArrowIcon(item.key),
-                      onPressed: () => controller.sendKey(item.key),
-                    ),
+                  if (!padCoversNavigation) ...[
+                    SizedBox(width: metrics.terminalAccessoryGroupSpacing),
+                    for (final item in terminalArrowKeys)
+                      _RepeatableAccessoryIcon(
+                        width: itemWidth,
+                        height: rowHeight,
+                        tooltip: item.label,
+                        icon: terminalArrowIcon(item.key),
+                        onPressed: () => controller.sendKey(item.key),
+                      ),
+                  ],
                   SizedBox(width: metrics.terminalAccessoryGroupSpacing),
                   _AccessoryIcon(
                     width: itemWidth,
@@ -166,14 +189,16 @@ class _TerminalAccessoryState extends State<TerminalAccessory> {
                       label: char,
                       onPressed: () => controller.sendText(char),
                     ),
-                  SizedBox(width: metrics.terminalAccessoryGroupSpacing),
-                  for (final item in terminalNavigationKeys)
-                    _AccessoryKey(
-                      width: itemWidth,
-                      height: rowHeight,
-                      label: item.label,
-                      onPressed: () => controller.sendKey(item.key),
-                    ),
+                  if (!padCoversNavigation) ...[
+                    SizedBox(width: metrics.terminalAccessoryGroupSpacing),
+                    for (final item in terminalNavigationKeys)
+                      _AccessoryKey(
+                        width: itemWidth,
+                        height: rowHeight,
+                        label: item.label,
+                        onPressed: () => controller.sendKey(item.key),
+                      ),
+                  ],
                   SizedBox(width: metrics.terminalAccessoryGroupSpacing),
                   for (final item in terminalFunctionKeys)
                     _AccessoryKey(
@@ -217,6 +242,27 @@ class _AccessoryKey extends StatelessWidget {
       fit: BoxFit.scaleDown,
       child: Text(label, maxLines: 1, softWrap: false),
     ),
+  );
+}
+
+class _AccessoryLogo extends StatelessWidget {
+  const _AccessoryLogo({
+    required this.width,
+    this.height,
+    required this.onPressed,
+  });
+
+  final double width;
+  final double? height;
+  final VoidCallback? onPressed;
+
+  @override
+  Widget build(BuildContext context) => _AccessoryButton(
+    width: width,
+    height: height,
+    tooltip: 'Toggle sidebar',
+    onPressed: onPressed,
+    child: Image.asset('assets/zuko-logo.png', width: 18, height: 18),
   );
 }
 

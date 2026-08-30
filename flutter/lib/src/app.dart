@@ -10,6 +10,7 @@ import 'package:url_launcher/url_launcher.dart';
 import 'accessory_bar.dart';
 import 'app_controller.dart';
 import 'connection_hub.dart';
+import 'floating_terminal_pad.dart';
 import 'model.dart';
 import 'pairing_screen.dart';
 import 'session_state.dart';
@@ -91,9 +92,29 @@ class _HomeState extends State<_Home>
     with WidgetsBindingObserver, TickerProviderStateMixin {
   late final ConnectionHub _hub;
   bool _isForeground = false;
-  bool _sidebarExpanded = true;
+  bool _sidebarExpanded = false;
 
   TerminalConnection? get _activeConnection => _hub.active;
+
+  // The floating pad's position inside the terminal pane; kept across tab
+  // switches. Dragging the pad updates it.
+  Offset _padPosition = const Offset(12, 64);
+
+  void _movePad(Offset delta, Size bounds) {
+    const padExtent = Size(148, 180);
+    setState(() {
+      _padPosition = Offset(
+        (_padPosition.dx + delta.dx).clamp(
+          0,
+          (bounds.width - padExtent.width).clamp(0, double.infinity),
+        ),
+        (_padPosition.dy + delta.dy).clamp(
+          0,
+          (bounds.height - padExtent.height).clamp(0, double.infinity),
+        ),
+      );
+    });
+  }
 
   @override
   void initState() {
@@ -314,20 +335,32 @@ class _HomeState extends State<_Home>
         brightness: Theme.of(context).brightness,
         fontSize: terminalFontSize,
       );
+      final touchPlatform = switch (defaultTargetPlatform) {
+        TargetPlatform.iOS || TargetPlatform.android => true,
+        _ => false,
+      };
+      // Touch devices have no top bar: the floating pad's logo opens the
+      // sidebar instead.
+      final toggleSidebar = wide
+          ? _toggleSidebar
+          : () => Scaffold.of(context).openDrawer();
       return Scaffold(
-        appBar: integratedDesktopHeader
+        appBar: integratedDesktopHeader || touchPlatform
             ? null
             : AppBar(title: const ZukoAppTitle()),
         drawer: wide ? null : Drawer(child: SafeArea(child: sidebar)),
         // Landscape Dynamic Island devices need left and right insets for
-        // the sidebar and terminal alike; portrait adds nothing on the
-        // sides. Top belongs to the AppBar, bottom to the accessory's own
-        // SafeArea.
+        // the sidebar and terminal alike; portrait keeps the top inset on
+        // touch devices where no app bar covers the status area. Bottom
+        // belongs to the accessory's own SafeArea.
         body: SafeArea(
-          top: false,
+          top: touchPlatform,
           bottom: false,
           child: Row(
             children: [
+              // Wide layouts keep the collapsed rail so the sidebar stays
+              // reachable before any terminal opens; the logo button in the
+              // accessory (and the pad's logo on touch) expands it.
               if (wide)
                 DesktopSidebar(
                   expanded: _sidebarExpanded,
@@ -338,99 +371,163 @@ class _HomeState extends State<_Home>
                 ),
               if (wide) const VerticalDivider(width: 1),
               Expanded(
-                child: active == null
-                    ? hasSavedHosts
-                          ? NoOpenConnections(onPair: () => _pair())
-                          : Welcome(
-                              onScan: supportsQrScanning()
-                                  ? () => _pair()
-                                  : null,
-                              onEnterCode: () => _pair(manual: true),
-                            )
-                    : Column(
-                        children: [
-                          if (showConnectionTabs(_hub.connections.length)) ...[
-                            ConnectionTabStrip(
-                              selectedIndex: _hub.activeIndex,
-                              connections: _hub.connections,
-                              labelFor: _connectionName,
-                              onSelected: _selectConnectionAt,
-                              onClose: (connection) =>
-                                  unawaited(_closeConnection(connection)),
-                            ),
-                            const Divider(height: 1),
-                          ],
-                          Expanded(
-                            child: IndexedStack(
-                              index: _hub.activeIndex,
-                              children: [
-                                for (final connection in _hub.connections)
-                                  Stack(
-                                    key: ObjectKey(connection),
-                                    fit: StackFit.expand,
-                                    children: [
-                                      // Upstream flterm 0.0.5 has no terminal
-                                      // semantics support yet; merge the label
-                                      // and hint into the terminal's own
-                                      // semantics node until the upstreamed
-                                      // flterm patches release.
-                                      Semantics(
-                                        container: false,
-                                        label:
-                                            '${_connectionName(connection)} remote terminal',
-                                        hint:
-                                            'Activate to focus remote terminal input',
-                                        child: Scrollbar(
-                                          controller:
-                                              connection.scrollController,
-                                          child: TerminalView(
-                                            controller: connection.terminal,
-                                            focusNode: connection.focusNode,
-                                            autofocus: identical(
-                                              connection,
-                                              active,
-                                            ),
-                                            showKeyboard:
-                                                widget.controller.keyboardOnTap,
-                                            theme: terminalTheme,
-                                            scrollController:
-                                                connection.scrollController,
-                                            linkSettings: LinkSettings(
-                                              types: const {
-                                                LinkType.osc8,
-                                                LinkType.text,
-                                              },
-                                              onActivate: (link) => unawaited(
-                                                _openTerminalLink(link),
-                                              ),
-                                            ),
-                                          ),
+                child: LayoutBuilder(
+                  builder: (context, constraints) {
+                    final showPad = touchPlatform && active != null;
+                    final paneSize = Size(
+                      constraints.maxWidth,
+                      constraints.maxHeight,
+                    );
+                    return Stack(
+                      children: [
+                        Positioned.fill(
+                          child: active == null
+                              ? hasSavedHosts
+                                    ? NoOpenConnections(onPair: () => _pair())
+                                    : Welcome(
+                                        onScan: supportsQrScanning()
+                                            ? () => _pair()
+                                            : null,
+                                        onEnterCode: () => _pair(manual: true),
+                                      )
+                              : Column(
+                                  children: [
+                                    if (showConnectionTabs(
+                                      _hub.connections.length,
+                                    )) ...[
+                                      ConnectionTabStrip(
+                                        selectedIndex: _hub.activeIndex,
+                                        connections: _hub.connections,
+                                        labelFor: _connectionName,
+                                        onSelected: _selectConnectionAt,
+                                        onClose: (connection) => unawaited(
+                                          _closeConnection(connection),
                                         ),
                                       ),
-                                      ValueListenableBuilder<SessionState>(
-                                        valueListenable: connection.state,
-                                        builder: (context, state, _) =>
-                                            state.isAttached
-                                            ? const SizedBox.shrink()
-                                            : SessionOverlay(
-                                                state: state,
-                                                hasHost: true,
-                                                onReconnect:
-                                                    connection.reconnect,
-                                                onPair: () => _pair(),
-                                                onDisconnect: () => unawaited(
-                                                  _closeConnection(connection),
-                                                ),
-                                              ),
-                                      ),
+                                      const Divider(height: 1),
                                     ],
-                                  ),
-                              ],
+                                    Expanded(
+                                      child: IndexedStack(
+                                        index: _hub.activeIndex,
+                                        children: [
+                                          for (final connection
+                                              in _hub.connections)
+                                            Stack(
+                                              key: ObjectKey(connection),
+                                              fit: StackFit.expand,
+                                              children: [
+                                                // Upstream flterm 0.0.5 has no terminal
+                                                // semantics support yet; merge the label
+                                                // and hint into the terminal's own
+                                                // semantics node until the upstreamed
+                                                // flterm patches release.
+                                                Semantics(
+                                                  container: false,
+                                                  label:
+                                                      '${_connectionName(connection)} remote terminal',
+                                                  hint:
+                                                      'Activate to focus remote terminal input',
+                                                  child: Scrollbar(
+                                                    controller: connection
+                                                        .scrollController,
+                                                    child: TerminalView(
+                                                      controller:
+                                                          connection.terminal,
+                                                      focusNode:
+                                                          connection.focusNode,
+                                                      autofocus: identical(
+                                                        connection,
+                                                        active,
+                                                      ),
+                                                      showKeyboard: widget
+                                                          .controller
+                                                          .keyboardOnTap,
+                                                      theme: terminalTheme,
+                                                      scrollController:
+                                                          connection
+                                                              .scrollController,
+                                                      linkSettings: LinkSettings(
+                                                        types: const {
+                                                          LinkType.osc8,
+                                                          LinkType.text,
+                                                        },
+                                                        onActivate: (link) =>
+                                                            unawaited(
+                                                              _openTerminalLink(
+                                                                link,
+                                                              ),
+                                                            ),
+                                                      ),
+                                                    ),
+                                                  ),
+                                                ),
+                                                ValueListenableBuilder<
+                                                  SessionState
+                                                >(
+                                                  valueListenable:
+                                                      connection.state,
+                                                  builder:
+                                                      (
+                                                        context,
+                                                        state,
+                                                        _,
+                                                      ) => state.isAttached
+                                                      ? const SizedBox.shrink()
+                                                      : SessionOverlay(
+                                                          state: state,
+                                                          hasHost: true,
+                                                          onReconnect:
+                                                              connection
+                                                                  .reconnect,
+                                                          onPair: () => _pair(),
+                                                          onDisconnect: () =>
+                                                              unawaited(
+                                                                _closeConnection(
+                                                                  connection,
+                                                                ),
+                                                              ),
+                                                        ),
+                                                ),
+                                              ],
+                                            ),
+                                        ],
+                                      ),
+                                    ),
+                                    TerminalAccessory(
+                                      controller: active.terminal,
+                                      showSidebarToggle: wide || touchPlatform,
+                                      onToggleSidebar: toggleSidebar,
+                                    ),
+                                  ],
+                                ),
+                        ),
+                        if (showPad)
+                          Positioned(
+                            left: _padPosition.dx,
+                            top: _padPosition.dy,
+                            child: FloatingTerminalPad(
+                              controller: active.terminal,
+                              scrollController: active.scrollController,
+                              onDragged: (delta) => _movePad(delta, paneSize),
+                              onToggleSidebar: toggleSidebar,
                             ),
                           ),
-                          TerminalAccessory(controller: active.terminal),
-                        ],
-                      ),
+                        // Before any terminal opens on narrow touch layouts
+                        // there is no accessory or pad to hold the logo; a
+                        // floating corner logo keeps the sidebar reachable.
+                        if (touchPlatform && !wide && active == null)
+                          Positioned(
+                            left: metrics.size(12),
+                            top: metrics.size(8),
+                            child: FloatingTerminalLogo(
+                              onPressed: () =>
+                                  Scaffold.of(context).openDrawer(),
+                            ),
+                          ),
+                      ],
+                    );
+                  },
+                ),
               ),
             ],
           ),

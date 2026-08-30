@@ -86,6 +86,8 @@ void main() {
 
     await tester.pumpWidget(ZukoApp(controller: controller));
     await tester.pump();
+    await tester.tap(find.byTooltip('Expand sidebar'));
+    await tester.pumpAndSettle();
     expect(find.text('Interface size'), findsOneWidget);
     expect(find.text('Comfortable'), findsOneWidget);
     final search = find.widgetWithText(TextField, 'Search hosts');
@@ -194,6 +196,8 @@ void main() {
 
     await tester.pumpWidget(ZukoApp(controller: controller));
     await tester.pump();
+    await tester.tap(find.byTooltip('Expand sidebar'));
+    await tester.pumpAndSettle();
     final manage = find.byTooltip('Manage Home server');
     await _focusWithTab(tester, manage);
     await tester.sendKeyEvent(LogicalKeyboardKey.enter);

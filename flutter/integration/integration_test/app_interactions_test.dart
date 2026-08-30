@@ -123,6 +123,10 @@ void main() {
     );
 
     // --- Sidebar settings toggles update controller state and UI. ---
+    // The wide sidebar starts as a collapsed rail; the accessory logo
+    // expands it.
+    await tester.tap(find.byTooltip('Toggle sidebar'));
+    await _settle(tester);
     await tester.tap(find.text('Open keyboard on tap'));
     await _settle(tester);
     expect(controller.keyboardOnTap, isTrue);
