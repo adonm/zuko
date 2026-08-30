@@ -343,11 +343,6 @@ class _HomeState extends State<_Home>
       // drawer logo, and top-bar-free layout can be exercised on CI.
       const forceTouchPad = bool.fromEnvironment('ZUKO_FORCE_TOUCH_PAD');
       final touchShell = touchPlatform || forceTouchPad;
-      // Touch devices have no top bar: the floating pad's logo opens the
-      // sidebar instead.
-      final toggleSidebar = wide
-          ? _toggleSidebar
-          : () => Scaffold.of(context).openDrawer();
       return Scaffold(
         appBar: integratedDesktopHeader || touchShell
             ? null
@@ -377,6 +372,11 @@ class _HomeState extends State<_Home>
               Expanded(
                 child: LayoutBuilder(
                   builder: (context, constraints) {
+                    // Built with a context below the Scaffold so the narrow
+                    // drawer path can resolve Scaffold.of.
+                    final toggleSidebar = wide
+                        ? _toggleSidebar
+                        : () => Scaffold.of(context).openDrawer();
                     final showPad = touchShell && active != null;
                     final paneSize = Size(
                       constraints.maxWidth,

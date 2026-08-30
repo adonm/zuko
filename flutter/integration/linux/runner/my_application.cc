@@ -1,6 +1,7 @@
 #include "my_application.h"
 
 #include <flutter_linux/flutter_linux.h>
+#include <glib.h>
 #ifdef GDK_WINDOWING_X11
 #include <gdk/gdkx.h>
 #endif
@@ -52,7 +53,26 @@ static void my_application_activate(GApplication* application) {
     gtk_window_set_title(window, "Zuko Integration");
   }
 
-  gtk_window_set_default_size(window, 1280, 720);
+  // The integration harness sizes the window from ZUKO_WINDOW_SIZE
+  // (WxH) so CI can exercise narrow touch layouts; defaults to a wide
+  // desktop window.
+  const gchar* size_env = g_getenv("ZUKO_WINDOW_SIZE");
+  gint width = 1280;
+  gint height = 720;
+  if (size_env != nullptr) {
+    g_autofree gchar* copy = g_strdup(size_env);
+    gchar** parts = g_strsplit(copy, "x", 2);
+    if (parts != nullptr && parts[0] != nullptr && parts[1] != nullptr) {
+      width = g_ascii_strtoll(parts[0], nullptr, 10);
+      height = g_ascii_strtoll(parts[1], nullptr, 10);
+      if (width < 320 || height < 240) {
+        width = 1280;
+        height = 720;
+      }
+    }
+    g_strfreev(parts);
+  }
+  gtk_window_set_default_size(window, width, height);
 
   g_autoptr(FlDartProject) project = fl_dart_project_new();
   fl_dart_project_set_dart_entrypoint_arguments(

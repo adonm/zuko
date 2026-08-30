@@ -692,6 +692,31 @@ void _accessoryWidgetTests() {
     debugDefaultTargetPlatformOverride = null;
   });
 
+  testWidgets('narrow pad center tap opens the drawer', (tester) async {
+    _setAccessorySurface(tester, size: const Size(390, 844));
+    _setAccessoryPlatform(TargetPlatform.android);
+    final controller = await _accessoryTestController();
+    addTearDown(controller.dispose);
+
+    await tester.pumpWidget(ZukoApp(controller: controller));
+    await _pumpFrames(tester);
+
+    // Open the host through the corner logo and the drawer.
+    await tester.tap(find.byTooltip('Open sidebar'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Home server'));
+    await _pumpFrames(tester);
+
+    // The pad's center logo opens the drawer on narrow touch layouts; this
+    // regressed when the toggle closure captured a context above the
+    // Scaffold. Frames are pumped explicitly because the open terminal's
+    // idle compression task never settles.
+    await tester.tap(find.byTooltip('Drag to scroll, tap for menu'));
+    await _pumpFrames(tester);
+    expect(find.textContaining('Saved hosts'), findsOneWidget);
+    debugDefaultTargetPlatformOverride = null;
+  });
+
   testWidgets('narrow touch opens the drawer from the floating logo', (
     tester,
   ) async {

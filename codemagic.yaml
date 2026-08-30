@@ -22,6 +22,8 @@ workflows:
         - $HOME/.cache/mise
         - $HOME/.local/share/mise
         - $HOME/.pub-cache
+        - $HOME/Library/Caches/CocoaPods
+        - flutter/ios/Pods
     scripts:
       - name: Verify immutable release identity
         script: |

@@ -91,6 +91,8 @@ flutter-integration: flutter-get
     grep -qE "All tests passed|test[s]* passed" /tmp/zuko-flutter-integration.log
     cd flutter/integration && xvfb-run -a flutter test integration_test/touch_pad_test.dart -d linux --no-pub --dart-define=ZUKO_FORCE_TOUCH_PAD=true | tee /tmp/zuko-flutter-touch.log
     grep -qE "All tests passed|test[s]* passed" /tmp/zuko-flutter-touch.log
+    cd flutter/integration && ZUKO_WINDOW_SIZE=390x844 xvfb-run -a flutter test integration_test/narrow_touch_test.dart -d linux --no-pub --dart-define=ZUKO_FORCE_TOUCH_PAD=true | tee /tmp/zuko-flutter-narrow.log
+    grep -qE "All tests passed|test[s]* passed" /tmp/zuko-flutter-narrow.log
 
 # Regenerate the pair/connect flow screenshots under docs/images. The main
 # set renders through the real engine via flutter drive; the camera screen

@@ -17,5 +17,8 @@ runs:
           flutter/.dart_tool
           flutter/build/test_cache
           flutter/integration/.dart_tool
+          ~/Library/Caches/CocoaPods
+          flutter/ios/Pods
+          flutter/macos/Pods
         key: zuko-flutter-${{ runner.os }}-${{ hashFiles('flutter/pubspec.lock', 'flutter/integration/pubspec.lock', 'mise.toml') }}
         restore-keys: zuko-flutter-${{ runner.os }}-
