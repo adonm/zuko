@@ -57,28 +57,6 @@ void main() {
     expect(showConnectionTabs(2), isTrue);
   });
 
-  test('touch scrolls until text selection is explicitly enabled', () {
-    final scrolling = terminalGestureSettings(touchSelectionEnabled: false);
-    final selecting = terminalGestureSettings(touchSelectionEnabled: true);
-
-    expect(scrolling.longPressSelection, isFalse);
-    expect(selecting.longPressSelection, isTrue);
-    expect(scrolling.dragSelection, isTrue);
-    expect(selecting.dragSelection, isTrue);
-  });
-
-  test('Linux routes touch-as-mouse drags to scrolling', () {
-    final linux = terminalGestureSettings(
-      touchSelectionEnabled: false,
-      platform: TargetPlatform.linux,
-    );
-    final android = terminalGestureSettings(touchSelectionEnabled: false);
-
-    expect(linux.dragSelection, isFalse);
-    expect(android.dragSelection, isTrue);
-    expect(linux.longPressSelection, android.longPressSelection);
-  });
-
   test('Linux scroll behavior accepts every pointer kind for dragging', () {
     const behavior = ZukoScrollBehavior();
     expect(behavior.dragDevices, contains(PointerDeviceKind.touch));

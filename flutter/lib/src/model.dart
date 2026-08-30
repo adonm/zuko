@@ -53,7 +53,7 @@ enum AppThemePreference { system, dark, light }
 enum AppInterfaceSize { compact, standard, comfortable }
 
 final class ClientState {
-  static const currentVersion = 7;
+  static const currentVersion = 8;
 
   ClientState({
     required Uint8List clientKey,
@@ -64,7 +64,6 @@ final class ClientState {
     double terminalFontSize = 10,
     this.terminalFontSizeCustomized = false,
     this.showAdditionalKeys = true,
-    this.touchSelectionEnabled = false,
     this.keyboardOnTap = false,
   }) : clientKey = Uint8List.fromList(clientKey),
        hosts = List.unmodifiable(hosts),
@@ -78,9 +77,6 @@ final class ClientState {
   final double terminalFontSize;
   final bool terminalFontSizeCustomized;
   final bool showAdditionalKeys;
-
-  /// Whether touch long-press selects terminal text on mobile.
-  final bool touchSelectionEnabled;
 
   /// Whether tapping the terminal presents the soft keyboard on mobile.
   final bool keyboardOnTap;
@@ -142,11 +138,13 @@ final class ClientState {
       if (showAdditionalKeys is! bool) {
         throw const FormatException('invalid additional keys preference');
       }
-      final touchSelectionEnabled = version >= 7
-          ? decoded['touchSelectionEnabled']
-          : false;
-      if (touchSelectionEnabled is! bool) {
-        throw const FormatException('invalid touch selection preference');
+      // Version 7 carried touchSelectionEnabled; it is intentionally dropped
+      // in version 8, which follows flterm's default touch gestures.
+      if (version == 7) {
+        final touchSelectionEnabled = decoded['touchSelectionEnabled'];
+        if (touchSelectionEnabled is! bool) {
+          throw const FormatException('invalid touch selection preference');
+        }
       }
       final keyboardOnTap = version >= 7 ? decoded['keyboardOnTap'] : false;
       if (keyboardOnTap is! bool) {
@@ -168,7 +166,6 @@ final class ClientState {
         terminalFontSize: (fontSize as num?)?.toDouble() ?? 10,
         terminalFontSizeCustomized: fontSizeCustomized,
         showAdditionalKeys: showAdditionalKeys,
-        touchSelectionEnabled: touchSelectionEnabled,
         keyboardOnTap: keyboardOnTap,
       );
     } on FormatException {
@@ -186,7 +183,6 @@ final class ClientState {
     double? terminalFontSize,
     bool? terminalFontSizeCustomized,
     bool? showAdditionalKeys,
-    bool? touchSelectionEnabled,
     bool? keyboardOnTap,
   }) => ClientState(
     clientKey: clientKey,
@@ -198,7 +194,6 @@ final class ClientState {
     terminalFontSizeCustomized:
         terminalFontSizeCustomized ?? this.terminalFontSizeCustomized,
     showAdditionalKeys: showAdditionalKeys ?? this.showAdditionalKeys,
-    touchSelectionEnabled: touchSelectionEnabled ?? this.touchSelectionEnabled,
     keyboardOnTap: keyboardOnTap ?? this.keyboardOnTap,
   );
 
@@ -212,7 +207,6 @@ final class ClientState {
     'terminalFontSize': terminalFontSize,
     'terminalFontSizeCustomized': terminalFontSizeCustomized,
     'showAdditionalKeys': showAdditionalKeys,
-    'touchSelectionEnabled': touchSelectionEnabled,
     'keyboardOnTap': keyboardOnTap,
   });
 }

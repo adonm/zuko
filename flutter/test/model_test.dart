@@ -117,16 +117,12 @@ void main() {
     expect(normalizeTerminalFontSize(40), 20);
   });
 
-  test('copyWith carries touch selection and keyboard-on-tap prefs', () {
+  test('copyWith carries the keyboard-on-tap preference', () {
     final state = ClientState(
       clientKey: Uint8List.fromList(List<int>.filled(32, 7)),
       hosts: const [],
     );
-    final updated = state.copyWith(
-      touchSelectionEnabled: true,
-      keyboardOnTap: true,
-    );
-    expect(updated.touchSelectionEnabled, isTrue);
+    final updated = state.copyWith(keyboardOnTap: true);
     expect(updated.keyboardOnTap, isTrue);
     expect(updated.hosts, state.hosts);
   });

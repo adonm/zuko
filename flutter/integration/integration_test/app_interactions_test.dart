@@ -123,10 +123,6 @@ void main() {
     );
 
     // --- Sidebar settings toggles update controller state and UI. ---
-    await tester.tap(find.text('Touch text selection'));
-    await _settle(tester);
-    expect(controller.touchSelectionEnabled, isTrue);
-
     await tester.tap(find.text('Open keyboard on tap'));
     await _settle(tester);
     expect(controller.keyboardOnTap, isTrue);

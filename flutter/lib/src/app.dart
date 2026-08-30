@@ -1,7 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/gestures.dart' show PointerDeviceKind;
-import 'package:flterm/flterm.dart';
+import 'package:flterm/flterm.dart' hide Scrollbar;
 import 'package:flutter/foundation.dart'
     show TargetPlatform, defaultTargetPlatform, kIsWeb;
 import 'package:flutter/material.dart' hide Key;
@@ -35,22 +35,6 @@ final class ZukoScrollBehavior extends MaterialScrollBehavior {
     PointerDeviceKind.invertedStylus,
     PointerDeviceKind.trackpad,
   };
-}
-
-TerminalGestureSettings terminalGestureSettings({
-  required bool touchSelectionEnabled,
-  TargetPlatform? platform,
-}) {
-  // The stock GTK3 Linux embedder reports touchscreen events as mouse
-  // pointers (flutter/flutter#90366). Mouse-kind drags select by default,
-  // which leaves touch users unable to scroll; on Linux they scroll instead
-  // and selection stays available through double-click and the keyboard.
-  final effectivePlatform = platform ?? defaultTargetPlatform;
-  final touchScrollsOnLinux = effectivePlatform == TargetPlatform.linux;
-  return TerminalGestureSettings(
-    longPressSelection: touchSelectionEnabled,
-    dragSelection: !touchScrollsOnLinux,
-  );
 }
 
 /// Collapse policy for the terminal accessory row.
@@ -102,35 +86,18 @@ class _HomeState extends State<_Home>
 
   TerminalConnection? get _activeConnection => _hub.active;
 
-  bool _lastTouchSelection = false;
-
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     _isForeground =
         WidgetsBinding.instance.lifecycleState == AppLifecycleState.resumed;
-    _lastTouchSelection = widget.controller.touchSelectionEnabled;
-    widget.controller.addListener(_onSettingsChanged);
     _hub = ConnectionHub(
       connector: widget.controller.transport.connect,
       onTunnel: _openTunnel,
       isClipboardSourceActive: (connection) =>
           mounted && _isForeground && identical(connection, _hub.active),
     )..addListener(_connectionChanged);
-  }
-
-  void _onSettingsChanged() {
-    if (!mounted) return;
-    final touchSelection = widget.controller.touchSelectionEnabled;
-    if (touchSelection != _lastTouchSelection) {
-      _lastTouchSelection = touchSelection;
-      if (!touchSelection) {
-        for (final connection in _hub.connections) {
-          connection.terminal.clearSelection();
-        }
-      }
-    }
   }
 
   @override
@@ -148,7 +115,6 @@ class _HomeState extends State<_Home>
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
-    widget.controller.removeListener(_onSettingsChanged);
     _hub.removeListener(_connectionChanged);
     unawaited(() async {
       try {
@@ -396,29 +362,28 @@ class _HomeState extends State<_Home>
                                           '${_connectionName(connection)} remote terminal',
                                       hint:
                                           'Activate to focus remote terminal input',
-                                      child: TerminalView(
-                                        controller: connection.terminal,
-                                        focusNode: connection.focusNode,
-                                        autofocus: identical(
-                                          connection,
-                                          active,
-                                        ),
-                                        showKeyboard:
-                                            widget.controller.keyboardOnTap,
-                                        theme: terminalTheme,
-                                        gestureSettings:
-                                            terminalGestureSettings(
-                                              touchSelectionEnabled: widget
-                                                  .controller
-                                                  .touchSelectionEnabled,
+                                      child: Scrollbar(
+                                        controller: connection.scrollController,
+                                        child: TerminalView(
+                                          controller: connection.terminal,
+                                          focusNode: connection.focusNode,
+                                          autofocus: identical(
+                                            connection,
+                                            active,
+                                          ),
+                                          showKeyboard:
+                                              widget.controller.keyboardOnTap,
+                                          theme: terminalTheme,
+                                          scrollController:
+                                              connection.scrollController,
+                                          linkSettings: LinkSettings(
+                                            types: const {
+                                              LinkType.osc8,
+                                              LinkType.text,
+                                            },
+                                            onActivate: (link) => unawaited(
+                                              _openTerminalLink(link),
                                             ),
-                                        linkSettings: LinkSettings(
-                                          types: const {
-                                            LinkType.osc8,
-                                            LinkType.text,
-                                          },
-                                          onActivate: (link) => unawaited(
-                                            _openTerminalLink(link),
                                           ),
                                         ),
                                       ),

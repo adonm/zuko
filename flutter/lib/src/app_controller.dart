@@ -32,8 +32,6 @@ final class AppController extends ValueNotifier<ClientState> {
   bool get terminalFontSizeCustomized => value.terminalFontSizeCustomized;
   bool get showAdditionalKeys => value.showAdditionalKeys;
 
-  bool get touchSelectionEnabled => value.touchSelectionEnabled;
-
   bool get keyboardOnTap => value.keyboardOnTap;
   String get clientName => value.clientName ?? 'device';
   String get clientLabel => clientAuthorizationLabel(clientName, clientKey);
@@ -129,9 +127,6 @@ final class AppController extends ValueNotifier<ClientState> {
 
   Future<void> setShowAdditionalKeys(bool value) =>
       _commit((state) => state.copyWith(showAdditionalKeys: value));
-
-  Future<void> setTouchSelectionEnabled(bool value) =>
-      _commit((state) => state.copyWith(touchSelectionEnabled: value));
 
   Future<void> setKeyboardOnTap(bool value) =>
       _commit((state) => state.copyWith(keyboardOnTap: value));

@@ -72,6 +72,7 @@ final class TerminalConnection {
   final RemoteClipboardWriter _clipboardWriter;
   final TerminalController terminal;
   final FocusNode focusNode = FocusNode();
+  final TerminalScrollController scrollController = TerminalScrollController();
 
   TerminalSession? _session;
   StreamSubscription<Uint8List>? _outputSubscription;
@@ -193,6 +194,7 @@ final class TerminalConnection {
     _closed = true;
     _generation++;
     focusNode.dispose();
+    scrollController.dispose();
     terminal.dispose();
     host.dispose();
     state.dispose();
