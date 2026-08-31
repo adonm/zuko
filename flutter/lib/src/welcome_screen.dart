@@ -193,9 +193,8 @@ class _Command extends StatelessWidget {
       Expanded(
         child: Text(
           command,
-          style: Theme.of(
-            context,
-          ).textTheme.bodySmall?.copyWith(fontFamily: 'monospace'),
+          style: Theme.of(context).textTheme.bodySmall
+              ?.copyWith(fontFamily: 'monospace'),
         ),
       ),
       IconButton(

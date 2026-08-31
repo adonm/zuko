@@ -7,7 +7,9 @@ import 'package:flutter/services.dart';
 
 import 'terminal_key_lists.dart';
 import 'repeatable_action.dart';
+
 import 'package:libghostty/libghostty.dart' show pasteIsSafe;
+
 import 'theme.dart';
 
 class TerminalAccessory extends StatefulWidget {
