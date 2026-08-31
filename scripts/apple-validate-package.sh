@@ -75,9 +75,10 @@ grep -A 5 LC_BUILD_VERSION <<< "$ghostty_load_commands" | \
 
 # The iroh transport is the pairing and connection critical path: the app is
 # unusable without its native library. iroh_flutter force-links the cargokit
-# Rust staticlib into its framework, so the irohdart FFI symbols must be
-# exported there — a stale or missing Rust build would slip through signing
-# and brick pairing/connecting at runtime (the 0.12.5 failure class).
+# Rust staticlib into its framework, and flutter_rust_bridge exports the
+# generated bindings as `frbgen_iroh_*` symbols (verified against the
+# shipped Linux prebuilt) — a stale or missing Rust build would slip through
+# signing and brick pairing/connecting at runtime (the 0.12.5 failure class).
 iroh="$app/Frameworks/iroh_flutter.framework/iroh_flutter"
 if [ ! -f "$iroh" ]; then
   echo "Frameworks present in the IPA:" >&2
@@ -86,10 +87,10 @@ if [ ! -f "$iroh" ]; then
 fi
 lipo -archs "$iroh" | grep -qw arm64 || \
   fail "iroh_flutter framework is not arm64"
-nm -gU "$iroh" | grep -q "irohdart" || {
+nm -gU "$iroh" | grep -q "frbgen_iroh" || {
   echo "exported symbols in iroh_flutter:" >&2
   nm -gU "$iroh" | head -20 >&2 || true
-  fail "iroh_flutter framework exports no irohdart FFI symbols"
+  fail "iroh_flutter framework exports no frbgen_iroh FFI symbols"
 }
 
 xcode-project ipa-info "$IPA"
