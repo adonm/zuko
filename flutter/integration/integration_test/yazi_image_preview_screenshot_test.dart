@@ -49,11 +49,7 @@ Future<Directory> _directoryWithTestImage() async {
     ..shader = ui.Gradient.linear(
       const ui.Offset(0, 0),
       const ui.Offset(120, 80),
-      const [
-        ui.Color(0xFF2E86AB),
-        ui.Color(0xFFF18F01),
-        ui.Color(0xFFC73E1D),
-      ],
+      const [ui.Color(0xFF2E86AB), ui.Color(0xFFF18F01), ui.Color(0xFFC73E1D)],
       const [0.0, 0.5, 1.0],
     );
   canvas.drawRect(const ui.Rect.fromLTWH(0, 0, 120, 80), paint);
