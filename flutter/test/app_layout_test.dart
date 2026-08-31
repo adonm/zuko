@@ -1,7 +1,7 @@
 import 'dart:async';
 import 'dart:typed_data';
 
-import 'package:flterm/flterm.dart' show TerminalController, TerminalView;
+import 'package:flterm/flterm.dart' show Mods, TerminalController, TerminalView;
 import 'package:flutter/foundation.dart'
     show TargetPlatform, debugDefaultTargetPlatformOverride;
 import 'package:flutter/gestures.dart' show PointerDeviceKind;
@@ -536,7 +536,7 @@ void _accessoryWidgetTests() {
     final controller = TerminalController();
     final sent = <int>[];
     controller.onOutput = (bytes) => sent.addAll(bytes);
-    final scroll = ScrollController();
+    final wheel = <double>[];
     var dragged = false;
     var toggled = false;
 
@@ -545,20 +545,12 @@ void _accessoryWidgetTests() {
         home: Scaffold(
           body: Stack(
             children: [
-              Positioned.fill(
-                child: ListView.builder(
-                  controller: scroll,
-                  itemCount: 200,
-                  itemBuilder: (context, index) =>
-                      SizedBox(height: 24, child: Text('row $index')),
-                ),
-              ),
               Positioned(
                 left: 10,
                 top: 10,
                 child: FloatingTerminalPad(
                   controller: controller,
-                  scrollController: scroll,
+                  onScrollWheel: wheel.add,
                   onDragged: (_) => dragged = true,
                   onToggleSidebar: () => toggled = true,
                 ),
@@ -589,8 +581,9 @@ void _accessoryWidgetTests() {
     dragged = false;
 
     // The center works like a joystick: holding a downward displacement
-    // scrolls the scrollback while frames tick, upward scrolls back, and
-    // the pad never moves.
+    // emits positive wheel deltas each frame (forwarded over the terminal so
+    // mouse-tracking programs can handle them), upward emits negative ones,
+    // and the pad never moves.
     final center = tester.getCenter(find.byType(FloatingTerminalPad));
     final gesture = await tester.startGesture(center);
     await tester.pump();
@@ -598,17 +591,24 @@ void _accessoryWidgetTests() {
       await gesture.moveBy(const Offset(0, 10));
       await tester.pump(const Duration(milliseconds: 50));
     }
-    final afterDown = scroll.offset;
-    expect(afterDown, greaterThan(0));
+    expect(wheel.where((delta) => delta > 0), isNotEmpty);
     expect(dragged, isFalse);
+    wheel.clear();
     for (var step = 0; step < 6; step++) {
       await gesture.moveBy(const Offset(0, -10));
       await tester.pump(const Duration(milliseconds: 50));
     }
-    expect(scroll.offset, lessThan(afterDown));
+    expect(wheel.where((delta) => delta < 0), isNotEmpty);
     expect(dragged, isFalse);
     await gesture.up();
     await tester.pump();
+
+    // Latched accessory mods merge into pad keys: Ctrl+Shift+Up encodes as
+    // CSI 1;6A.
+    sent.clear();
+    controller.toggleMod(const Mods.ctrl() | Mods.shift());
+    await tester.tap(find.byTooltip('Up arrow'));
+    expect(sent, [0x1b, 0x5b, 0x31, 0x3b, 0x36, 0x41]);
   });
 
   testWidgets('terminal taps still reach flterm on touch with the pad', (
@@ -826,7 +826,7 @@ void _accessoryWidgetTests() {
     expect(
       count,
       1 + // sidebar logo
-          4 + // Esc, Tab, Ctrl, Alt
+          5 + // Esc, Tab, Ctrl, Alt, Shift
           4 + // arrows
           2 + // copy/paste and select-all
           terminalPunctuationKeys.length +
@@ -876,7 +876,7 @@ void _accessoryWidgetTests() {
       );
       expect(
         list.childrenDelegate.estimatedChildCount,
-        4 + // Esc, Tab, Ctrl, Alt
+        5 + // Esc, Tab, Ctrl, Alt, Shift
             2 + // copy/paste and select-all
             terminalFunctionKeys.length +
             4, // group spacers

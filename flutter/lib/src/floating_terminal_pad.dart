@@ -48,13 +48,17 @@ class FloatingTerminalPad extends StatelessWidget {
   const FloatingTerminalPad({
     super.key,
     required this.controller,
-    required this.scrollController,
+    required this.onScrollWheel,
     required this.onDragged,
     required this.onToggleSidebar,
   });
 
   final TerminalController controller;
-  final ScrollController scrollController;
+
+  /// Forwards joystick scroll as wheel deltas; the app dispatches them over
+  /// the terminal so flterm forwards to mouse-tracking programs or scrolls
+  /// scrollback itself.
+  final ValueChanged<double> onScrollWheel;
   final ValueChanged<Offset> onDragged;
   final VoidCallback onToggleSidebar;
 
@@ -115,7 +119,7 @@ class FloatingTerminalPad extends StatelessWidget {
                   ),
                   _ScrollZone(
                     size: buttonSize,
-                    scrollController: scrollController,
+                    onScrollWheel: onScrollWheel,
                     onToggleSidebar: onToggleSidebar,
                   ),
                   _PadButton(
@@ -161,16 +165,17 @@ class FloatingTerminalPad extends StatelessWidget {
 
 /// The pad's center: dragging here scrolls the terminal like a joystick —
 /// the finger's displacement from where the drag started sets the scroll
-/// speed, applied every frame. A quick tap opens the sidebar.
+/// speed, delivered as wheel events every frame so terminal programs can
+/// handle them. A quick tap opens the sidebar.
 class _ScrollZone extends StatefulWidget {
   const _ScrollZone({
     required this.size,
-    required this.scrollController,
+    required this.onScrollWheel,
     required this.onToggleSidebar,
   });
 
   final double size;
-  final ScrollController scrollController;
+  final ValueChanged<double> onScrollWheel;
   final VoidCallback onToggleSidebar;
 
   @override
@@ -212,22 +217,17 @@ class _ScrollZoneState extends State<_ScrollZone>
   }
 
   void _onTick(Duration elapsed) {
-    if (_displacement == 0 || !widget.scrollController.hasClients) {
+    if (_displacement == 0) {
       _lastElapsed = elapsed;
       return;
     }
-    final position = widget.scrollController.position;
     final velocity = _displacement / _maxDisplacement * _maxVelocity;
     final dt = (elapsed - _lastElapsed).inMicroseconds / 1e6;
     _lastElapsed = elapsed;
     if (dt <= 0) return;
-    final target = (position.pixels + velocity * dt).clamp(
-      position.minScrollExtent,
-      position.maxScrollExtent,
-    );
-    // Jump directly instead of animating per event; the ticker cadence is
-    // what keeps the motion smooth.
-    if (target != position.pixels) position.jumpTo(target);
+    // Wheel deltas let flterm route the scroll: mouse-tracking programs
+    // receive encoded wheel reports, plain shells scroll scrollback.
+    widget.onScrollWheel(velocity * dt);
   }
 
   @override

@@ -40,7 +40,15 @@ void main() {
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 100));
     await tester.tap(find.widgetWithText(FilledButton, 'Pair'));
-    await tester.pumpAndSettle();
+    // The connection opens asynchronously; poll instead of settling, since
+    // the live btop output can keep frames scheduled indefinitely.
+    for (
+      var attempt = 0;
+      attempt < 40 && find.byType(TerminalView).evaluate().isEmpty;
+      attempt++
+    ) {
+      await tester.pump(const Duration(milliseconds: 250));
+    }
     expect(find.byType(TerminalView), findsOneWidget);
 
     // The pad floats over the terminal; arrows reach the PTY.

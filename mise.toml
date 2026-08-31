@@ -11,6 +11,8 @@ just = "1.55.1" # local task runner (`just check`)
 lychee = "0.24.2" # lints documentation links (`just lint-md`)
 actionlint = "1.7.12" # lints GitHub Actions workflows (`just lint-ci`)
 "cargo:mdbook" = "0.5.4" # user/contributor documentation (`just build-docs`)
+"aqua:sxyazi/yazi" = "26.8.15" # mouse-capable TUI used by the integration suite
+"aqua:helix-editor/helix" = "25.07.1" # mouse + selection TUI used by the integration suite
 "aqua:jdx/hk" = "1.50.0" # pre-commit/pre-push hooks (hk.pkl)
 "github:cli/cli" = "2.96.0" # release automation (`just publish-github-release`)
 

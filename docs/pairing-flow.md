@@ -1,8 +1,7 @@
 # Pairing and connection flow
 
-This page walks through the end-to-end pairing experience in the Zuko
-clients: installing the host, claiming a one-time share code, and opening
-the terminal session.
+A picture-by-picture walkthrough of Zuko: installing the host, claiming a
+one-time share code, and opening the terminal — on desktop and on touch.
 
 The main screenshots are captured from the real Linux app (real engine,
 bundled fonts) by `flutter/integration/integration_test/screenshot_flow_test.dart`;
@@ -25,9 +24,9 @@ and the typed fallback.
 
 ![Camera pairing](images/pairing-scan.png)
 
-Entering the code by hand accepts the canonical two-word form. Pasting
-works with the full `zuko share` output — the code is extracted from
-merged stdout/stderr, `zuko claim` lines, or `zuko://pair` URIs.
+Typing the code accepts the canonical two-word form. Pasting works with the
+full `zuko share` output — the code is extracted from merged
+stdout/stderr, `zuko claim` lines, or `zuko://pair` URIs.
 
 ![Manual pairing](images/pairing-code.png)
 
@@ -48,18 +47,36 @@ attempt; *Retry now* reconnects immediately.
 
 ![Reconnect countdown](images/retrying.png)
 
-An attached session brings up the terminal with the compact accessory bar;
-on touch devices a translucent floating pad (arrows, PgUp/PgDn, Home/End,
-drag-to-scroll, and a logo that opens the sidebar) floats over the
-terminal and can be dragged anywhere.
+## 4. The terminal
+
+An attached session brings up the terminal with the compact accessory bar.
+On wide desktops the sidebar collapses to a slim rail (the logo in the
+accessory expands it) and the app bar gives way to native window chrome, so
+the terminal fills the window.
 
 ![Attached session](images/connected.png)
 
+Real terminal programs render as they would locally — here btop under the
+touch layout's floating pad.
+
+![btop with the floating pad](images/touch-btop.png)
+
+### Touch layout
+
+Touch devices drop the top bar entirely. A translucent floating pad floats
+over the terminal and can be dragged anywhere:
+
+- tap a key for arrows, PgUp/PgDn, Home/End (hold to repeat);
+- drag the center like a joystick to scroll;
+- tap the center logo to open the sidebar.
+
 ![Touch terminal with the floating pad](images/touch-terminal.png)
+
+The sidebar opens as a drawer over the terminal.
 
 ![Touch drawer](images/touch-drawer.png)
 
-## Re-pairing and revocation
+## 5. Re-pairing and revocation
 
 A host that rejects the saved ticket shows a *Pair again* action. Pairing
 again records the fresh ticket and the host-side client label, which the

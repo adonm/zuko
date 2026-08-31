@@ -93,6 +93,8 @@ flutter-integration: flutter-get
     grep -qE "All tests passed|test[s]* passed" /tmp/zuko-flutter-touch.log
     cd flutter/integration && ZUKO_WINDOW_SIZE=390x844 xvfb-run -a flutter test integration_test/narrow_touch_test.dart -d linux --no-pub --dart-define=ZUKO_FORCE_TOUCH_PAD=true | tee /tmp/zuko-flutter-narrow.log
     grep -qE "All tests passed|test[s]* passed" /tmp/zuko-flutter-narrow.log
+    cd flutter/integration && xvfb-run -a flutter test integration_test/tui_interaction_test.dart -d linux --no-pub --dart-define=ZUKO_FORCE_TOUCH_PAD=true | tee /tmp/zuko-flutter-tui.log
+    grep -qE "All tests passed|test[s]* passed" /tmp/zuko-flutter-tui.log
 
 # Regenerate the pair/connect flow screenshots under docs/images. The main
 # set renders through the real engine via flutter drive; the camera screen
@@ -102,6 +104,7 @@ flutter-integration: flutter-get
 screenshots: flutter-get
     cd flutter/integration && flutter pub get --enforce-lockfile
     cd flutter/integration && xvfb-run -a flutter test integration_test/screenshot_flow_test.dart -d linux --no-pub
+    cd flutter/integration && xvfb-run -a flutter test integration_test/btop_pad_screenshot_test.dart -d linux --no-pub --dart-define=ZUKO_FORCE_TOUCH_PAD=true
     cd flutter && flutter test test/screenshot_flow_test.dart --dart-define=SCREENSHOTS=true --dart-define=SCREENSHOT_CAMERA_ONLY=true --no-pub
     cd flutter && flutter test test/screenshot_flow_test.dart --dart-define=SCREENSHOTS=true --dart-define=SCREENSHOT_TOUCH_ONLY=true --no-pub
 

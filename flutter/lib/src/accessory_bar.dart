@@ -147,6 +147,13 @@ class _TerminalAccessoryState extends State<TerminalAccessory> {
                     selected: controller.virtualMods.hasAlt,
                     onPressed: () => controller.toggleMod(const Mods.alt()),
                   ),
+                  _AccessoryKey(
+                    width: itemWidth,
+                    height: rowHeight,
+                    label: 'Shift',
+                    selected: controller.virtualMods.hasShift,
+                    onPressed: () => controller.toggleMod(const Mods.shift()),
+                  ),
                   if (!padCoversNavigation) ...[
                     SizedBox(width: metrics.terminalAccessoryGroupSpacing),
                     for (final item in terminalArrowKeys)
