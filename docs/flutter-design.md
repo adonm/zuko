@@ -157,8 +157,8 @@ the implementation changes.
   all controls.
 - Copy and paste are contextual. On desktop the accessory carries arrows and
   navigation keys; on touch platforms those move to the translucent floating
-  pad (arrows, PgUp/PgDn, Home/End, and a hold-drag scroll center) that can be
-  dragged anywhere over the terminal. Arrow keys repeat after a deliberate
+  pad (arrows, PgUp/PgDn, Home/End, and a sidebar toggle) that can be dragged
+  anywhere over the terminal. Arrow keys repeat after a deliberate
   hold delay instead of requiring rapid tapping, and use the predictable
   Up, Down, Left, Right order.
 - Multiline paste remains guarded. Supported terminal links are limited to

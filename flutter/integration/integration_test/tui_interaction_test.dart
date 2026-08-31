@@ -5,7 +5,6 @@ import 'package:flutter/material.dart' show FilledButton;
 import 'package:flutter_test/flutter_test.dart';
 import 'package:integration_test/integration_test.dart';
 import 'package:zuko/src/app.dart';
-import 'package:zuko/src/floating_terminal_pad.dart';
 import 'package:zuko/src/app_controller.dart';
 import 'package:zuko/src/model.dart';
 import 'package:zuko/src/storage.dart';
@@ -60,31 +59,6 @@ void main() {
     final clickBytes = transport.sentBytes.sublist(before);
     expect(clickBytes, contains(0x1b));
     expect(clickBytes, contains(0x3c)); // SGR mouse
-
-    // The pad's joystick drag forwards wheel events; yazi runs on the
-    // alternate screen with mouse tracking, so they must arrive at the PTY
-    // as SGR wheel reports (scroll-up button 64).
-    final padRect = tester.getRect(find.byType(FloatingTerminalPad));
-    final beforeWheel = transport.sentBytes.length;
-    final padGesture = await tester.startGesture(padRect.center);
-    await tester.pump();
-    for (var step = 0; step < 8; step++) {
-      await padGesture.moveBy(const Offset(0, 10));
-      await tester.pump(const Duration(milliseconds: 40));
-    }
-    await padGesture.up();
-    await tester.pump(const Duration(milliseconds: 200));
-    var sawWheel = false;
-    for (var attempt = 0; attempt < 10 && !sawWheel; attempt++) {
-      await tester.pump(const Duration(milliseconds: 200));
-      final wheelBytes = transport.sentBytes.sublist(beforeWheel);
-      sawWheel =
-          wheelBytes.contains(0x1b) &&
-          wheelBytes.contains(0x3c) &&
-          wheelBytes.contains(0x36) &&
-          (wheelBytes.contains(0x34) || wheelBytes.contains(0x35));
-    }
-    expect(sawWheel, isTrue);
 
     // A long-press drag on the terminal arms the local text selection: the
     // accessory paste slot switches to the copy tooltip.

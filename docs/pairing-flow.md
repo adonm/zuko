@@ -66,8 +66,9 @@ touch layout's floating pad.
 Touch devices drop the top bar entirely. A translucent floating pad floats
 over the terminal and can be dragged anywhere:
 
-- tap a key for arrows, PgUp/PgDn, Home/End (hold to repeat);
-- drag the center like a joystick to scroll;
+- tap a key for arrows, PgUp/PgDn, Home/End (hold to repeat) — PgUp/PgDn
+  scroll the terminal view;
+- drag the pad to move it anywhere over the terminal;
 - tap the center logo to open the sidebar.
 
 ![Touch terminal with the floating pad](images/touch-terminal.png)

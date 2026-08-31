@@ -60,8 +60,7 @@ void main() {
     expect(arrowBytes, contains(0x1b));
     expect(arrowBytes, contains(0x5b));
 
-    // Dragging the pad border repositions it; a center drag must scroll
-    // without moving the pad.
+    // Dragging the pad repositions it.
     final padRect = tester.getRect(find.byType(FloatingTerminalPad));
     await tester.dragFrom(
       Offset(padRect.right - 2, padRect.center.dy),
@@ -73,19 +72,11 @@ void main() {
       isNot(padRect.topLeft),
     );
 
-    final beforeCenter = tester.getRect(find.byType(FloatingTerminalPad));
-    await tester.dragFrom(beforeCenter.center, const Offset(0, 120));
-    await tester.pump(const Duration(milliseconds: 200));
-    expect(
-      tester.getRect(find.byType(FloatingTerminalPad)).topLeft,
-      beforeCenter.topLeft,
-    );
-
     // Tapping the pad's center logo toggles the sidebar panel.
-    await tester.tap(find.byTooltip('Drag to scroll, tap for menu'));
+    await tester.tap(find.byTooltip('Open sidebar'));
     await tester.pumpAndSettle();
     expect(find.textContaining('Saved hosts'), findsOneWidget);
-    await tester.tap(find.byTooltip('Drag to scroll, tap for menu'));
+    await tester.tap(find.byTooltip('Open sidebar'));
     await tester.pumpAndSettle();
     expect(find.textContaining('Saved hosts'), findsNothing);
 

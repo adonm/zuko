@@ -100,18 +100,6 @@ class _HomeState extends State<_Home>
   // switches. Dragging the pad updates it.
   Offset _padPosition = const Offset(12, 64);
 
-  // The pad's joystick scroll arrives as wheel deltas; dispatch a synthetic
-  // scroll event over the terminal so flterm forwards it to mouse-tracking
-  // programs or scrolls local scrollback itself.
-  void _dispatchScrollWheel(TerminalConnection connection, double dy) {
-    // Route through the terminal's own scroll position: flterm then applies
-    // its wheel policy — encoded wheel reports to mouse-tracking programs,
-    // local scrollback otherwise — exactly like a real wheel event.
-    final controller = connection.scrollController;
-    if (!controller.hasClients) return;
-    controller.position.pointerScroll(dy);
-  }
-
   void _movePad(Offset delta, Size bounds) {
     const padExtent = Size(148, 180);
     setState(() {
@@ -527,8 +515,6 @@ class _HomeState extends State<_Home>
                             top: _padPosition.dy,
                             child: FloatingTerminalPad(
                               controller: active.terminal,
-                              onScrollWheel: (dy) =>
-                                  _dispatchScrollWheel(active, dy),
                               onDragged: (delta) => _movePad(delta, paneSize),
                               onToggleSidebar: toggleSidebar,
                             ),

@@ -536,7 +536,6 @@ void _accessoryWidgetTests() {
     final controller = TerminalController();
     final sent = <int>[];
     controller.onOutput = (bytes) => sent.addAll(bytes);
-    final wheel = <double>[];
     var dragged = false;
     var toggled = false;
 
@@ -550,7 +549,6 @@ void _accessoryWidgetTests() {
                 top: 10,
                 child: FloatingTerminalPad(
                   controller: controller,
-                  onScrollWheel: wheel.add,
                   onDragged: (_) => dragged = true,
                   onToggleSidebar: () => toggled = true,
                 ),
@@ -564,14 +562,13 @@ void _accessoryWidgetTests() {
     await tester.tap(find.byTooltip('Up arrow'));
     // ESC [ A escape sequence reaches the terminal input.
     expect(sent, [0x1b, 0x5b, 0x41]);
-    await tester.tap(find.byTooltip('Drag to scroll, tap for menu'));
+    await tester.tap(find.byTooltip('Open sidebar'));
     expect(toggled, isTrue);
     await tester.tap(find.byTooltip('Home'));
     // ESC [ H escape sequence for the Home key.
     expect(sent, [0x1b, 0x5b, 0x41, 0x1b, 0x5b, 0x48]);
 
-    // Dragging from the padded border ring repositions; dragging the middle
-    // is scroll and must not move the pad.
+    // Dragging the pad repositions it.
     final rect = tester.getRect(find.byType(FloatingTerminalPad));
     await tester.dragFrom(
       Offset(rect.right - 2, rect.center.dy),
@@ -579,29 +576,6 @@ void _accessoryWidgetTests() {
     );
     expect(dragged, isTrue);
     dragged = false;
-
-    // The center works like a joystick: holding a downward displacement
-    // emits positive wheel deltas each frame (forwarded over the terminal so
-    // mouse-tracking programs can handle them), upward emits negative ones,
-    // and the pad never moves.
-    final center = tester.getCenter(find.byType(FloatingTerminalPad));
-    final gesture = await tester.startGesture(center);
-    await tester.pump();
-    for (var step = 0; step < 6; step++) {
-      await gesture.moveBy(const Offset(0, 10));
-      await tester.pump(const Duration(milliseconds: 50));
-    }
-    expect(wheel.where((delta) => delta > 0), isNotEmpty);
-    expect(dragged, isFalse);
-    wheel.clear();
-    for (var step = 0; step < 6; step++) {
-      await gesture.moveBy(const Offset(0, -10));
-      await tester.pump(const Duration(milliseconds: 50));
-    }
-    expect(wheel.where((delta) => delta < 0), isNotEmpty);
-    expect(dragged, isFalse);
-    await gesture.up();
-    await tester.pump();
 
     // Latched accessory mods merge into pad keys: Ctrl+Shift+Up encodes as
     // CSI 1;6A.
@@ -711,7 +685,7 @@ void _accessoryWidgetTests() {
     // regressed when the toggle closure captured a context above the
     // Scaffold. Frames are pumped explicitly because the open terminal's
     // idle compression task never settles.
-    await tester.tap(find.byTooltip('Drag to scroll, tap for menu'));
+    await tester.tap(find.byTooltip('Open sidebar'));
     await _pumpFrames(tester);
     expect(find.textContaining('Saved hosts'), findsOneWidget);
     debugDefaultTargetPlatformOverride = null;
@@ -794,7 +768,7 @@ void _accessoryWidgetTests() {
     // The accessory logo is desktop-only; on touch the pad's center logo
     // opens the sidebar.
     expect(find.byTooltip('Toggle sidebar'), findsNothing);
-    expect(find.byTooltip('Drag to scroll, tap for menu'), findsOneWidget);
+    expect(find.byTooltip('Open sidebar'), findsOneWidget);
     debugDefaultTargetPlatformOverride = null;
   });
 
@@ -865,7 +839,7 @@ void _accessoryWidgetTests() {
       expect(find.text('Home'), findsNothing);
       expect(find.byTooltip('Home'), findsOneWidget);
       expect(find.byTooltip('Up arrow'), findsOneWidget);
-      expect(find.byTooltip('Drag to scroll, tap for menu'), findsOneWidget);
+      expect(find.byTooltip('Open sidebar'), findsOneWidget);
       expect(find.byTooltip('Toggle sidebar'), findsNothing);
 
       final list = tester.widget<ListView>(

@@ -66,18 +66,10 @@ void main() {
       isNot(padRect.topLeft),
     );
 
-    final beforeCenter = tester.getRect(find.byType(FloatingTerminalPad));
-    await tester.dragFrom(beforeCenter.center, const Offset(0, 120));
-    await tester.pump(const Duration(milliseconds: 200));
-    expect(
-      tester.getRect(find.byType(FloatingTerminalPad)).topLeft,
-      beforeCenter.topLeft,
-    );
-
     // Tapping the pad's center logo opens the drawer on narrow layouts
     // (this regressed when the toggle closure captured a context above the
     // Scaffold); closing it again keeps the terminal interactive.
-    await tester.tap(find.byTooltip('Drag to scroll, tap for menu'));
+    await tester.tap(find.byTooltip('Open sidebar'));
     await tester.pump(const Duration(milliseconds: 300));
     await tester.pump(const Duration(milliseconds: 300));
     expect(find.textContaining('Saved hosts'), findsOneWidget);
