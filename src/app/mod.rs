@@ -107,7 +107,7 @@ fn encode_rgba_rgb(bytes: &[u8], width: usize, height: usize) -> Result<Vec<u8>>
         );
     }
     let mut out = Vec::with_capacity(width * height * 3);
-    for px in bytes[..row_bytes * height].chunks_exact(4) {
+    for px in bytes[..row_bytes * height].as_chunks::<4>().0 {
         out.extend_from_slice(&px[..3]);
     }
     Ok(out)

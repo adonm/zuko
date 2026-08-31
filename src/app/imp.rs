@@ -735,7 +735,11 @@ fn frame_has_content(rgba: &[u8]) -> bool {
     let Some(first) = rgba.get(0..4) else {
         return false;
     };
-    rgba.chunks_exact(4).step_by(97).any(|px| px != first)
+    rgba.as_chunks::<4>()
+        .0
+        .iter()
+        .step_by(97)
+        .any(|px| px != first)
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -1206,7 +1210,7 @@ mod tests {
         let (w, h) = (32usize, 32usize);
         let bg = [10, 20, 30, 255];
         let mut buf = vec![0u8; w * h * 4];
-        for px in buf.chunks_exact_mut(4) {
+        for px in buf.as_chunks_mut::<4>().0 {
             px.copy_from_slice(&bg);
         }
         draw_cursor(&mut buf, w, h, 16, 16);
@@ -2458,7 +2462,7 @@ impl Dispatch<ZwlrScreencopyFrameV1, ()> for State {
                     out.reserve(frame_len.saturating_sub(out.capacity()));
                     for y in 0..h as usize {
                         let row = &guard[y * stride as usize..y * stride as usize + w as usize * 4];
-                        for px in row.chunks_exact(4) {
+                        for px in row.as_chunks::<4>().0 {
                             // XRGB8888 little-endian -> bytes B,G,R,X. Emit R,G,B,255.
                             out.push(px[2]);
                             out.push(px[1]);

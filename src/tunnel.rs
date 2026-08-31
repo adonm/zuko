@@ -188,7 +188,7 @@ fn decode_control_secret(value: &str) -> Result<[u8; CONTROL_SECRET_LEN]> {
         bail!("invalid Zuko tunnel control capability");
     }
     let mut secret = [0; CONTROL_SECRET_LEN];
-    for (index, chunk) in value.as_bytes().chunks_exact(2).enumerate() {
+    for (index, chunk) in value.as_bytes().as_chunks::<2>().0.iter().enumerate() {
         let text = std::str::from_utf8(chunk).context("tunnel control capability is not ASCII")?;
         secret[index] =
             u8::from_str_radix(text, 16).context("tunnel control capability is not hex")?;

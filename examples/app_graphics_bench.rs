@@ -275,7 +275,7 @@ mod bench {
 
     fn frame_ui(seed: u32) -> Vec<u8> {
         let mut b = vec![0u8; W * H * 4];
-        for px in b.chunks_exact_mut(4) {
+        for px in b.as_chunks_mut::<4>().0 {
             px.copy_from_slice(&[28, 30, 34, 255]);
         }
         fill_rect(&mut b, W, 0, 0, W, 36, [42, 46, 54, 255]);
