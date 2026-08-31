@@ -17,15 +17,10 @@ import 'local_host_transport.dart';
 void main() {
   IntegrationTestWidgetsFlutterBinding.ensureInitialized();
 
-  testWidgets('yazi receives clicks and long-press arms selection', (
-    tester,
+  Future<void> openPairedApp(
+    WidgetTester tester,
+    AppController controller,
   ) async {
-    final transport = LocalHostTransport(
-      command: const ['/usr/bin/bash', '--norc', '-c', 'yazi'],
-    );
-    final controller = await _controller(transport);
-    addTearDown(controller.close);
-
     await tester.pumpWidget(ZukoApp(controller: controller));
     await tester.pump();
     await tester.tap(find.text('Enter pairing code'));
@@ -38,6 +33,17 @@ void main() {
     await tester.pump(const Duration(milliseconds: 100));
     await tester.tap(find.widgetWithText(FilledButton, 'Pair'));
     await tester.pumpAndSettle();
+  }
+
+  testWidgets('yazi receives clicks and long-press arms selection', (
+    tester,
+  ) async {
+    final transport = LocalHostTransport(
+      command: const ['/usr/bin/bash', '--norc', '-c', 'yazi'],
+    );
+    final controller = await _controller(transport);
+    addTearDown(controller.close);
+    await openPairedApp(tester, controller);
 
     // Let yazi draw and enable mouse tracking.
     for (var attempt = 0; attempt < 40; attempt++) {
@@ -73,6 +79,41 @@ void main() {
     await gesture.up();
     await tester.pump(const Duration(milliseconds: 300));
     expect(find.byTooltip('Copy selected text'), findsOneWidget);
+  });
+
+  testWidgets('yazi picks the Kitty graphics adapter', (tester) async {
+    final transport = LocalHostTransport(
+      command: const ['/usr/bin/bash', '--norc', '-c', 'ya env'],
+    );
+    final controller = await _controller(transport);
+    addTearDown(controller.close);
+    await openPairedApp(tester, controller);
+
+    // ya env probes the terminal the same way yazi does before picking an
+    // image adapter. Under the resolved session TERM it must probe the
+    // Kitty graphics protocol (ESC _ G); under xterm-256color it would
+    // take the Sixel path and emit none of these probes. The client renders
+    // Kitty graphics, so this is the adapter-detection proof — ya env may
+    // then stall awaiting query responses, which is fine for the assertion.
+    if (transport.sessionTerm != 'xterm-kitty') {
+      markTestSkipped(
+        'xterm-kitty terminfo not installed; host sessions would fall '
+        'back to xterm-256color (see zuko doctor)',
+      );
+      return;
+    }
+    var sawKittyProbe = false;
+    for (var attempt = 0; attempt < 40 && !sawKittyProbe; attempt++) {
+      await tester.pump(const Duration(milliseconds: 250));
+      final bytes = transport.receivedBytes;
+      for (var i = 0; i + 2 < bytes.length; i++) {
+        if (bytes[i] == 0x1b && bytes[i + 1] == 0x5f && bytes[i + 2] == 0x47) {
+          sawKittyProbe = true;
+          break;
+        }
+      }
+    }
+    expect(sawKittyProbe, isTrue);
   });
 }
 

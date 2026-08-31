@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io' show Process;
 import 'dart:typed_data';
 
 import 'package:ptyx/ptyx.dart';
@@ -7,6 +8,16 @@ import 'package:zuko/src/session_state.dart';
 import 'package:zuko/src/transport.dart';
 import 'package:zuko/src/wire.dart';
 
+/// Mirrors the host's session TERM resolution: `zuko host` advertises
+/// `xterm-kitty` when the terminfo entry exists so TUIs like yazi pick the
+/// Kitty graphics adapter the client renders, and falls back to
+/// `xterm-256color` otherwise. Integration tests probe the same way so the
+/// TUI suite exercises whichever TERM a real host would choose.
+String probeSessionTerm() {
+  final result = Process.runSync('infocmp', const ['xterm-kitty']);
+  return result.exitCode == 0 ? 'xterm-kitty' : 'xterm-256color';
+}
+
 /// Bridges the Flutter app to real local pseudo-terminal sessions.
 ///
 /// Every `connect` spawns the configured shell in a PTY and forwards terminal
@@ -14,9 +25,13 @@ import 'package:zuko/src/wire.dart';
 /// PTY. This lets integration tests drive the real UI against real terminal
 /// programs (bash, btop, vim) with no network involved.
 final class LocalHostTransport implements ClientTransport {
-  LocalHostTransport({this.command = const ['/usr/bin/bash', '--norc', '-i']});
+  LocalHostTransport({this.command = const ['/usr/bin/bash', '--norc', '-i']})
+    : sessionTerm = probeSessionTerm();
 
   final List<String> command;
+
+  /// The TERM sessions under this transport advertise (host-equivalent).
+  final String sessionTerm;
   final List<_LocalSession> _sessions = [];
 
   /// Bytes written into the PTY by every live session, for assertions.
@@ -41,6 +56,7 @@ final class LocalHostTransport implements ClientTransport {
       command: command,
       onSent: sentBytes.addAll,
       onReceived: receivedBytes.addAll,
+      term: sessionTerm,
     );
     _sessions.add(session);
     return session;
@@ -62,11 +78,13 @@ final class _LocalSession implements TerminalSession {
     required this.command,
     required this.onSent,
     required this.onReceived,
+    required this.term,
   });
 
   final List<String> command;
   final void Function(List<int>) onSent;
   final void Function(List<int>) onReceived;
+  final String term;
   final _states = StreamController<SessionState>.broadcast(sync: true);
   final _tunnels = StreamController<TunnelEndpoint>.broadcast(sync: true);
   PtySession? _pty;
@@ -80,7 +98,7 @@ final class _LocalSession implements TerminalSession {
       PtySpawnOptions(
         executable: command.first,
         arguments: command.skip(1).toList(),
-        environment: const {'TERM': 'xterm-256color'},
+        environment: {'TERM': term},
         initialSize: const PtySize(rows: 30, columns: 100),
       ),
     );

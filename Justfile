@@ -107,6 +107,7 @@ screenshots: flutter-get
     cd flutter/integration && xvfb-run -a flutter test integration_test/screenshot_flow_test.dart -d linux --no-pub
     cd flutter/integration && xvfb-run -a flutter test integration_test/btop_pad_screenshot_test.dart -d linux --no-pub --dart-define=ZUKO_FORCE_TOUCH_PAD=true
     cd flutter/integration && ZUKO_WINDOW_SIZE=390x844 xvfb-run -a flutter test integration_test/btop_pad_screenshot_test.dart -d linux --no-pub --dart-define=ZUKO_FORCE_TOUCH_PAD=true --dart-define=ZUKO_SHOT_NAME=touch-narrow-btop --dart-define=ZUKO_FONT_SIZE=6
+    cd flutter/integration && xvfb-run -a flutter test integration_test/yazi_image_preview_screenshot_test.dart -d linux --no-pub
     cd flutter && flutter test test/screenshot_flow_test.dart --dart-define=SCREENSHOTS=true --dart-define=SCREENSHOT_CAMERA_ONLY=true --no-pub
     cd flutter && flutter test test/screenshot_flow_test.dart --dart-define=SCREENSHOTS=true --dart-define=SCREENSHOT_TOUCH_ONLY=true --no-pub
 

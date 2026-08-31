@@ -67,6 +67,8 @@ so `zuko doctor` checks for the terminfo entry (on Debian/Ubuntu: the
 `kitty-terminfo` package) and tells you how to install it when sessions
 would fall back to `xterm-256color`.
 
+![yazi previewing an image through the Kitty graphics protocol](images/yazi-preview.png)
+
 ### Touch layout
 
 Touch devices drop the top bar entirely. A translucent floating pad floats
