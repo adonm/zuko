@@ -73,9 +73,10 @@ over the terminal and can be dragged anywhere:
 
 ![Touch terminal with the floating pad](images/touch-terminal.png)
 
-The sidebar opens as a drawer over the terminal.
+The same narrow layout running a real terminal program: the sidebar stays
+closed and the pad floats over btop.
 
-![Touch drawer](images/touch-drawer.png)
+![btop in the narrow touch layout](images/touch-narrow-btop.png)
 
 ## 5. Re-pairing and revocation
 

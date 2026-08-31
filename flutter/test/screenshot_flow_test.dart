@@ -203,21 +203,6 @@ void main() {
       debugDefaultTargetPlatformOverride = null;
     });
 
-    testWidgets('touch drawer over the terminal', (tester) async {
-      if (!_generate && !_touchOnly) return;
-      useAndroidPlatform();
-      await _setSurface(tester, _portrait, 2.0);
-      final transport = _FakeTransport();
-      final controller = await _controller(transport, hosts: const [_host]);
-      await controller.setTheme(AppThemePreference.dark);
-      await tester.pumpWidget(_shot(ZukoApp(controller: controller)));
-      await tester.tap(find.byTooltip('Open sidebar'));
-      await tester.pumpAndSettle();
-      await _capture(tester, 'touch-drawer');
-      await _unmount(tester, controller);
-      debugDefaultTargetPlatformOverride = null;
-    });
-
     testWidgets('attached terminal session', (tester) async {
       if (!_generate || _cameraOnly || _touchOnly) return;
       useLinuxPlatform();

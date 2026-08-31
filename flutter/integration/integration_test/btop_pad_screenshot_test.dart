@@ -16,8 +16,15 @@ import 'local_host_transport.dart';
 
 /// Real-app screenshots of the touch shell with live TUI content: runs with
 /// ZUKO_FORCE_TOUCH_PAD and a btop PTY so the pad floats over a real
-/// mouse-capable terminal program.
+/// mouse-capable terminal program. ZUKO_SHOT_NAME renames the capture so
+/// the same test can record several window sizes (see the screenshots
+/// recipe).
 final _shotKey = GlobalKey();
+
+const _shotName = String.fromEnvironment(
+  'ZUKO_SHOT_NAME',
+  defaultValue: 'touch-btop',
+);
 
 Future<void> _capture(WidgetTester tester, String name) async {
   await tester.pump();
@@ -73,7 +80,7 @@ void main() {
       if (transport.receivedBytes.contains(0x1b)) break;
     }
     await tester.pump(const Duration(milliseconds: 400));
-    await _capture(tester, 'touch-btop');
+    await _capture(tester, _shotName);
   });
 }
 
