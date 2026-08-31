@@ -10,21 +10,21 @@ import tomllib
 import xml.etree.ElementTree as ET
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
-FRAMEWORK_REVISION = "6655482ec06e547f90abf8ae7590466f4415978d"
-FRAMEWORK_VERSION = "3.47.1"
+FRAMEWORK_REVISION = "d3b14c876900e553bc736ca19295fc09e3853e8e"
+FRAMEWORK_VERSION = "3.47.2"
 SDK_BASE = "https://storage.googleapis.com/flutter_infra_release/releases/stable"
 SDK_PLATFORMS = {
     "linux-x64": {
-        "archive": "linux/flutter_linux_3.47.1-stable.tar.xz",
-        "digest": "a1d8166c0309267cb7dc99f1424eecf08b86946ad3b50723c6f59945964aea45",
+        "archive": "linux/flutter_linux_3.47.2-stable.tar.xz",
+        "digest": "447878859d01ca9bfdb99a85f245af07ed8a15fedcd9d189c4749e8e92d1f185",
     },
     "macos-arm64": {
-        "archive": "macos/flutter_macos_3.47.1-stable.zip",
-        "digest": "21e06435c50be9a43ffea8abb549bd7640cd38197e7741dd780f0680afbb64ba",
+        "archive": "macos/flutter_macos_3.47.2-stable.zip",
+        "digest": "b6fd6ba98c8503d5ee06a6670627b5b1c36167ece3427435ec83b66e9b28c6b5",
     },
     "windows-x64": {
-        "archive": "windows/flutter_windows_3.47.1-stable.zip",
-        "digest": "4cbf94fde1f5f8d6b9fc50b2483b57cf2077f61712282c2f4cf92560168f442b",
+        "archive": "windows/flutter_windows_3.47.2-stable.zip",
+        "digest": "37934f2128a55d77a38baba12fd611157ed23a47bf7d2b7d17e9e84da118409d",
     },
 }
 
@@ -219,7 +219,10 @@ def validate_automation() -> None:
     require_text("scripts/package-linux-release.sh", "debug sections remain")
     require_text("scripts/package-linux-release.sh", "release bundle contains a JIT artifact")
     require_text("scripts/package-linux-release.sh", "engine does not link the stock GTK3 embedder")
-    require_text("scripts/prepare-libghostty-ios-static.py", 'version != "3.47.1"')
+    require_text(
+        "scripts/prepare-libghostty-ios-static.py",
+        'version not in ("3.47.1", "3.47.2")',
+    )
     require_text("scripts/install-android-platform-tools.sh", "VERSION=37.0.0")
     require_text(
         "scripts/install-android-platform-tools.sh",

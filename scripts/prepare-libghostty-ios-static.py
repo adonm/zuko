@@ -70,7 +70,7 @@ def patch_flutter_native_assets() -> None:
         text=True,
     )
     version = json.loads(version_result.stdout)["frameworkVersion"]
-    if version != "3.47.1":
+    if version not in ("3.47.1", "3.47.2"):
         fail(f"the patch must be reviewed for Flutter {version}")
 
     native_assets = (
