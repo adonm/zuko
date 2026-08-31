@@ -16,15 +16,19 @@ import 'local_host_transport.dart';
 
 /// Real-app screenshots of the touch shell with live TUI content: runs with
 /// ZUKO_FORCE_TOUCH_PAD and a btop PTY so the pad floats over a real
-/// mouse-capable terminal program. ZUKO_SHOT_NAME renames the capture so
-/// the same test can record several window sizes (see the screenshots
-/// recipe).
+/// mouse-capable terminal program. ZUKO_SHOT_NAME renames the capture and
+/// ZUKO_FONT_SIZE sets the terminal font (both so the same test can record
+/// several window sizes — see the screenshots recipe).
 final _shotKey = GlobalKey();
 
 const _shotName = String.fromEnvironment(
   'ZUKO_SHOT_NAME',
   defaultValue: 'touch-btop',
 );
+
+/// Terminal font size in logical points; narrow windows need a small font
+/// for TUIs like btop to fit their full layout.
+const _fontSize = int.fromEnvironment('ZUKO_FONT_SIZE', defaultValue: 10);
 
 Future<void> _capture(WidgetTester tester, String name) async {
   await tester.pump();
@@ -102,6 +106,8 @@ Future<AppController> _controller(LocalHostTransport transport) async {
     clientKey: Uint8List.fromList(List<int>.generate(32, (index) => index)),
     clientName: 'zuko-test-client',
     hosts: const [],
+    terminalFontSize: _fontSize.toDouble(),
+    terminalFontSizeCustomized: true,
   );
   final store = ClientStateStore.withStorage(_MemoryStorage());
   await store.save(state);
