@@ -8,10 +8,8 @@ import 'model.dart';
 import 'pairing_code.dart';
 import 'pairing_scanner.dart';
 
-typedef PairingScannerBuilder = Widget Function(
-  BuildContext context,
-  ValueChanged<String> onDetect,
-);
+typedef PairingScannerBuilder =
+    Widget Function(BuildContext context, ValueChanged<String> onDetect);
 
 String pairingClaimErrorMessage(Object error) {
   final text = error.toString().toLowerCase();
@@ -275,8 +273,9 @@ class _PairingScreenState extends State<PairingScreen> {
           child: Container(
             width: double.infinity,
             padding: const EdgeInsets.fromLTRB(20, 16, 20, 12),
-            color: Theme.of(context).colorScheme.surface
-                .withValues(alpha: 0.94),
+            color: Theme.of(
+              context,
+            ).colorScheme.surface.withValues(alpha: 0.94),
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [

@@ -10,15 +10,14 @@ import 'session_state.dart';
 import 'transport.dart';
 import 'wire.dart';
 
-typedef TerminalConnector = TerminalSession Function(
-  SavedHost host,
-  TerminalGeometry geometry,
-);
-typedef TerminalTunnelHandler = void Function(
-  TerminalConnection connection,
-  TunnelEndpoint tunnel,
-  int generation,
-);
+typedef TerminalConnector =
+    TerminalSession Function(SavedHost host, TerminalGeometry geometry);
+typedef TerminalTunnelHandler =
+    void Function(
+      TerminalConnection connection,
+      TunnelEndpoint tunnel,
+      int generation,
+    );
 typedef RemoteClipboardWriter = Future<void> Function(String text);
 
 const maxRemoteClipboardBytes = 1024 * 1024;

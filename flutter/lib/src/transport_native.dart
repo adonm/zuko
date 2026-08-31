@@ -490,8 +490,9 @@ final class _NativeTunnel {
     _connection = null;
     final proxies = _proxies.toList();
     if (proxies.isNotEmpty) {
-      await Future.wait(proxies)
-          .timeout(const Duration(seconds: 2), onTimeout: () => const <void>[]);
+      await Future.wait(
+        proxies,
+      ).timeout(const Duration(seconds: 2), onTimeout: () => const <void>[]);
     }
   }
 }
