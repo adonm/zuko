@@ -79,10 +79,18 @@ grep -A 5 LC_BUILD_VERSION <<< "$ghostty_load_commands" | \
 # exported there — a stale or missing Rust build would slip through signing
 # and brick pairing/connecting at runtime (the 0.12.5 failure class).
 iroh="$app/Frameworks/iroh_flutter.framework/iroh_flutter"
-[ -f "$iroh" ] || fail "iroh_flutter framework binary is missing: $iroh"
-lipo -archs "$iroh" | grep -qw arm64
-nm -gU "$iroh" | grep -q "irohdart" || \
+if [ ! -f "$iroh" ]; then
+  echo "Frameworks present in the IPA:" >&2
+  ls -1 "$app/Frameworks" >&2 || true
+  fail "iroh_flutter framework binary is missing: $iroh"
+fi
+lipo -archs "$iroh" | grep -qw arm64 || \
+  fail "iroh_flutter framework is not arm64"
+nm -gU "$iroh" | grep -q "irohdart" || {
+  echo "exported symbols in iroh_flutter:" >&2
+  nm -gU "$iroh" | head -20 >&2 || true
   fail "iroh_flutter framework exports no irohdart FFI symbols"
+}
 
 xcode-project ipa-info "$IPA"
 echo "iOS IPA metadata, signature, and store package are valid"

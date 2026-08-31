@@ -23,7 +23,10 @@ workflows:
         - $HOME/.local/share/mise
         - $HOME/.pub-cache
         - $HOME/Library/Caches/CocoaPods
-        - flutter/ios/Pods
+        # NOTE: flutter/ios/Pods is deliberately NOT cached for releases.
+        # A stale cached pod build (cargokit's incremental irohdart_ffi.a)
+        # can link a broken framework that passes code signing yet fails
+        # Iroh.init() at runtime; release builds always rebuild pods fresh.
     scripts:
       - name: Verify immutable release identity
         script: |
