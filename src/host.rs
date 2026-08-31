@@ -1007,7 +1007,7 @@ struct Pty {
 /// (shipped by ncurses and kitty) so those programs use the Kitty adapter
 /// that flterm renders; fall back to `xterm-256color` when the host lacks
 /// the terminfo entry or `infocmp` itself.
-fn resolve_term() -> &'static str {
+pub(crate) fn resolve_term() -> &'static str {
     let ok = std::process::Command::new("infocmp")
         .arg("xterm-kitty")
         .stdout(std::process::Stdio::null())

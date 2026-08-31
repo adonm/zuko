@@ -14,7 +14,7 @@ zuko host              # foreground host
 zuko install           # install/start user service
 zuko uninstall         # remove service; keep user state
 zuko upgrade           # mise-managed binary upgrade
-zuko doctor            # service, ticket, state, network diagnostics
+zuko doctor            # service, ticket, state, network, session TERM diagnostics
 
 zuko share             # authorise a client with a one-time code
 zuko <code>            # claim, save, connect
@@ -119,7 +119,10 @@ zuko reset --yes
 
 ## Session behavior
 
-- Host runs a real PTY with `TERM=xterm-256color`.
+- Host runs a real PTY. `TERM` is `xterm-kitty` when the host carries that
+  terminfo entry (the client renders the Kitty graphics protocol, which TUIs
+  like yazi use for image previews), falling back to `xterm-256color`
+  otherwise.
 - Shell exit ends the session and kills the PTY.
 - Network/client drop detaches the PTY for up to 6 hours by default
   (`zuko host --detached-ttl <seconds>`; `0` keeps detached sessions until the
@@ -182,16 +185,27 @@ zuko doctor
 
 It checks whether the platform user service is installed and active, validates
 the host key and fresh ticket without printing either, summarizes saved hosts
-and authorized clients, and performs a 10-second Iroh relay-registration probe.
-Warnings include the next command to run; a client-only installation may
-legitimately warn that no local host is installed. Pass `--key <path>` if the
-host service was installed with a non-default key path.
+and authorized clients, performs a 10-second Iroh relay-registration probe,
+and reports the `TERM` sessions will advertise. Warnings include the next
+command to run; a client-only installation may legitimately warn that no
+local host is installed. Pass `--key <path>` if the host service was
+installed with a non-default key path.
 
 ### `zuko share` reports a missing or stale ticket
 
 The host service must be running and refreshing `current_ticket`. Check its log,
 then restart it with the platform service manager or run `zuko host` in the
 foreground. Do not copy a raw ticket around as a workaround.
+
+### Image previews in yazi and other TUIs don't render
+
+`zuko doctor` reports `session TERM`. The client terminal renders the Kitty
+graphics protocol but not Sixel, and programs like yazi pick their image
+adapter from `TERM` — with the fallback `xterm-256color` they emit Sixel and
+previews silently fail. Install the terminfo entry (`apt install ncurses-term`
+— `apt install kitty-terminfo` on Debian/Ubuntu — or kitty's `xterm-kitty`
+terminfo) so sessions advertise `xterm-kitty`, and rerun `zuko doctor` until
+the check is green.
 
 ### The host rejects authorization
 

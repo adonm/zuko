@@ -229,6 +229,7 @@ pub async fn doctor(key: Option<&Path>) -> Result<()> {
     );
 
     print_doctor_check("Iroh network", doctor_network().await, &mut warnings);
+    print_doctor_check("session TERM", doctor_session_term(), &mut warnings);
 
     println!();
     if warnings == 0 {
@@ -237,6 +238,22 @@ pub async fn doctor(key: Option<&Path>) -> Result<()> {
         println!("completed with {warnings} warning(s); follow the actions above as needed");
     }
     Ok(())
+}
+
+/// The terminal sessions advertise to shells. The client renders the Kitty
+/// graphics protocol (Ghostty vt core behind flterm) but not Sixel, and TUIs
+/// like yazi pick their image adapter from TERM — without the `xterm-kitty`
+/// terminfo entry they fall back to Sixel and image previews silently fail.
+fn doctor_session_term() -> Result<String> {
+    match crate::host::resolve_term() {
+        "xterm-kitty" => Ok(
+            "xterm-kitty (Kitty graphics image previews in yazi and similar TUIs are supported)"
+                .to_string(),
+        ),
+        term => bail!(
+            "sessions advertise `{term}`: the host lacks the `xterm-kitty` terminfo entry, so image previews in yazi and other Kitty-protocol TUIs will not render; install `ncurses-term` (Debian/Ubuntu: `kitty-terminfo`), or kitty's `xterm-kitty` terminfo, to enable them"
+        ),
+    }
 }
 
 fn print_doctor_check(label: &str, check: Result<String>, warnings: &mut usize) {
@@ -931,6 +948,20 @@ fn installed_version() -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn doctor_session_term_agrees_with_terminfo_resolution() {
+        // The check's outcome tracks the host's actual terminfo state, so
+        // assert the contract instead of a fixed result: green exactly when
+        // resolve_term() selected the Kitty entry.
+        let result = doctor_session_term();
+        assert_eq!(result.is_ok(), crate::host::resolve_term() == "xterm-kitty");
+        if let Err(error) = &result {
+            let text = format!("{error:#}");
+            assert!(text.contains("ncurses-term"), "actionable hint: {text}");
+            assert!(text.contains("yazi"), "names the affected program: {text}");
+        }
+    }
 
     #[test]
     fn sh_quote_passes_simple_paths_through() {

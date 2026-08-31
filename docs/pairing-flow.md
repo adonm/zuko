@@ -61,6 +61,12 @@ touch layout's floating pad.
 
 ![btop with the floating pad](images/touch-btop.png)
 
+TUI image previews (for example yazi's) use the Kitty graphics protocol,
+which the client renders. They need the host to advertise `TERM=xterm-kitty`,
+so `zuko doctor` checks for the terminfo entry (on Debian/Ubuntu: the
+`kitty-terminfo` package) and tells you how to install it when sessions
+would fall back to `xterm-256color`.
+
 ### Touch layout
 
 Touch devices drop the top bar entirely. A translucent floating pad floats
