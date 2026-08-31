@@ -998,6 +998,34 @@ struct Pty {
 /// plumb reader/writer/resizer/killer threads around it. Doesn't spawn any
 /// threads itself — `serve()` does that, so the threading model stays in
 /// one place.
+/// TERM advertised to shells running in zuko sessions.
+///
+/// The client's terminal (the Ghostty vt core behind flterm) renders the
+/// Kitty graphics protocol but not Sixel, and TUIs like yazi pick their
+/// image adapter from TERM: `xterm-256color` makes them emit Sixel, which
+/// this stack ignores, so image previews silently fail. Prefer `xterm-kitty`
+/// (shipped by ncurses and kitty) so those programs use the Kitty adapter
+/// that flterm renders; fall back to `xterm-256color` when the host lacks
+/// the terminfo entry or `infocmp` itself.
+fn resolve_term() -> &'static str {
+    let ok = std::process::Command::new("infocmp")
+        .arg("xterm-kitty")
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .is_ok_and(|status| status.success());
+    term_for(ok)
+}
+
+/// The pure selection behind [`resolve_term`], split out for testing.
+fn term_for(has_kitty_terminfo: bool) -> &'static str {
+    if has_kitty_terminfo {
+        "xterm-kitty"
+    } else {
+        "xterm-256color"
+    }
+}
+
 fn spawn_pty(
     shell: String,
     shell_args: Vec<String>,
@@ -1018,7 +1046,7 @@ fn spawn_pty(
 
     let mut cmd = CommandBuilder::new(&shell);
     cmd.args(&shell_args);
-    cmd.env("TERM", "xterm-256color");
+    cmd.env("TERM", resolve_term());
     cmd.env(tunnel::CONTROL_ADDR_ENV, tunnel_control_addr.to_string());
     cmd.env(
         tunnel::CONTROL_SECRET_ENV,
@@ -1057,6 +1085,16 @@ fn default_key_path() -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn term_prefers_kitty_when_terminfo_is_available() {
+        assert_eq!(term_for(true), "xterm-kitty");
+    }
+
+    #[test]
+    fn term_falls_back_to_xterm_without_terminfo() {
+        assert_eq!(term_for(false), "xterm-256color");
+    }
 
     #[test]
     fn first_resize_frame_is_rejected() {
