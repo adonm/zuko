@@ -75,6 +75,7 @@ flutter-app-check: flutter-get
     python3 scripts/check-flutter-config.py
     python3 scripts/check-dart-format.py flutter/lib flutter/test flutter/integration/lib flutter/integration/integration_test
     cd flutter && flutter analyze --no-pub lib test
+    cd flutter && dart run iroh_quic:setup
     cd flutter && flutter test --no-pub
 
 # Desktop UI integration tests: drives the real app (pairing, terminal

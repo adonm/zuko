@@ -56,3 +56,9 @@ flutter:
     - family: Noto Sans KR
       fonts:
         - asset: assets/fonts/NotoSansKR-Regular.otf
+# flutter_rust_bridge is pinned to the exact version iroh_quic's Rust core
+# compiles against (see its rust/Cargo.toml `flutter_rust_bridge = "=2.12.0"`);
+# the frb runtime performs a hard codegen-version handshake with the irohdart-ffi
+# native library and a newer runtime breaks Iroh.init() at startup.
+dependency_overrides:
+  flutter_rust_bridge: 2.12.0
