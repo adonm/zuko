@@ -125,8 +125,8 @@ packages:
     dependency: "direct main"
     description:
       path: "packages/flterm"
-      ref: "1167890c61dc644f9e49e470a7b37383649f0385"
-      resolved-ref: "1167890c61dc644f9e49e470a7b37383649f0385"
+      ref: "81ae51837a8fcd2431c60b7c49ea899d201d711c"
+      resolved-ref: "81ae51837a8fcd2431c60b7c49ea899d201d711c"
       url: "https://github.com/adonm/libghostty.git"
     source: git
     version: "0.0.5+zuko.1"

@@ -44,7 +44,7 @@ def forbid_text(path: str, value: str) -> None:
 
 
 FLTERM_GIT_URL = "https://github.com/adonm/libghostty.git"
-FLTERM_GIT_REF = "1167890c61dc644f9e49e470a7b37383649f0385"
+FLTERM_GIT_REF = "81ae51837a8fcd2431c60b7c49ea899d201d711c"
 FLTERM_GIT_PATH = "packages/flterm"
 
 
