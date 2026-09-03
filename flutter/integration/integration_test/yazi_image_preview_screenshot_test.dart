@@ -117,11 +117,60 @@ void main() {
       }
     }
     expect(sawKittyImage, isTrue);
-    // The image decodes asynchronously and paints on a later frame; settle
-    // until quiescent so the capture shows the rendered preview, not the
-    // placeholder cells.
-    await tester.pump(const Duration(seconds: 2));
-    await tester.pump(const Duration(seconds: 1));
+    // TEMP-DIAG: dump the full kitty conversation (control params only).
+    final raw = transport.receivedBytes;
+    var i = 0;
+    var shown = 0;
+    var nTransmits = 0;
+    var nDisplays = 0;
+    var nQueries = 0;
+    while (i + 2 < raw.length) {
+      if (raw[i] == 0x1b && raw[i + 1] == 0x5f && raw[i + 2] == 0x47) {
+        var j = i + 3;
+        while (j < raw.length && raw[j] != 0x1b) {
+          j++;
+        }
+        final ctl = String.fromCharCodes(raw.sublist(i + 3, j));
+        final semi = ctl.indexOf(';');
+        final head = semi >= 0 ? ctl.substring(0, semi) : ctl;
+        if (head.contains('a=p')) nDisplays++;
+        if (head.contains('a=T') || head.contains('a=t')) nTransmits++;
+        if (head.contains('a=q') || head.contains('q=2')) nQueries++;
+        if (shown < 16) {
+          // ignore: avoid_print
+          print(
+            'YAZI-KITTY: $head '
+            'paylen=${semi >= 0 ? ctl.length - semi - 1 : 0}',
+          );
+          shown++;
+        }
+        i = j;
+      } else {
+        i++;
+      }
+    }
+    // ignore: avoid_print
+    print(
+      'YAZI-KITTY-SUMMARY: transmits=$nTransmits displays=$nDisplays queries=$nQueries',
+    );
+    // TEMP-DIAG: what did WE send back? (query responses).
+    final sent = String.fromCharCodes(transport.sentBytes);
+    final resps = RegExp(r'\x1b_Gi=[^\\]*\x1b\\').allMatches(sent);
+    for (final m in resps) {
+      // ignore: avoid_print
+      print(
+        'ZUKO-RESP: ${m.group(0)!.replaceAll('\x1b', '<ESC>')}',
+      );
+    }
+    // Images decode asynchronously via a native callback that only fires on
+    // the real event loop, and painting needs a frame after decode: cycle
+    // real-yield + pump several times before capturing.
+    for (var i = 0; i < 3; i++) {
+      await tester.runAsync(
+        () => Future<void>.delayed(const Duration(seconds: 1)),
+      );
+      await tester.pump();
+    }
     await _capture(tester, 'yazi-preview');
   });
 }
