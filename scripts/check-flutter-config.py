@@ -44,7 +44,7 @@ def forbid_text(path: str, value: str) -> None:
 
 
 FLTERM_GIT_URL = "https://github.com/adonm/libghostty.git"
-FLTERM_GIT_REF = "42470675e05da584052631148c9acc4ead08621c"
+FLTERM_GIT_REF = "f7b01a52e3fe598d48236b74fee37c780a5390f4"
 FLTERM_GIT_PATH = "packages/flterm"
 
 
@@ -107,14 +107,14 @@ def validate_terminal_dependency_pin() -> None:
 
     app_lock = content("flutter/pubspec.lock")
     if not re.search(
-        r'^  flterm:\n'
-        r'    dependency: "direct main"\n'
-        r'    description:\n'
-        r'      path: "packages/flterm"\n'
-        rf'      ref: "{FLTERM_GIT_REF}"\n'
-        rf'      resolved-ref: "[0-9a-f]{{40}}"\n'
-        rf'      url: "{re.escape(FLTERM_GIT_URL)}"\n'
-        r'    source: git\n',
+        "^  flterm:\n"
+        '    dependency: "direct main"\n'
+        "    description:\n"
+        '      path: "packages/flterm"\n'
+        f"      ref: {FLTERM_GIT_REF}\n"
+        f'      resolved-ref: {FLTERM_GIT_REF}\n'
+        f'      url: "{FLTERM_GIT_URL}"\n'
+        "    source: git\n",
         app_lock,
         re.MULTILINE,
     ):
@@ -142,14 +142,14 @@ def validate_terminal_dependency_pin() -> None:
     if resolved != [ptyx_ref]:
         raise SystemExit("Flutter config: integration lock refs differ from its pubspec")
     if not re.search(
-        r'^  flterm:\n'
-        r'    dependency: "direct main"\n'
-        r'    description:\n'
-        r'      path: "packages/flterm"\n'
-        rf'      ref: "{FLTERM_GIT_REF}"\n'
-        rf'      resolved-ref: "[0-9a-f]{{40}}"\n'
-        rf'      url: "{re.escape(FLTERM_GIT_URL)}"\n'
-        r'    source: git\n',
+        "^  flterm:\n"
+        '    dependency: "direct main"\n'
+        "    description:\n"
+        '      path: "packages/flterm"\n'
+        f"      ref: {FLTERM_GIT_REF}\n"
+        f'      resolved-ref: {FLTERM_GIT_REF}\n'
+        f'      url: "{FLTERM_GIT_URL}"\n'
+        "    source: git\n",
         integration_lock,
         re.MULTILINE,
     ):
