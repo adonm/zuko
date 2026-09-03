@@ -700,7 +700,7 @@ packages:
       path: ".."
       relative: true
     source: path
-    version: "0.12.11+1800012011"
+    version: "0.12.12+1800012012"
 sdks:
   dart: ">=3.12.2 <4.0.0"
   flutter: ">=3.44.0"
