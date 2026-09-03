@@ -171,8 +171,12 @@ final class TerminalConnection {
         if (!isCurrentGeneration(generation) || !identical(_session, active)) {
           return;
         }
+        final wasAttached = _acceptingIo;
         _acceptingIo = next.isAttached;
         state.value = next;
+        if (next.isAttached && !wasAttached) {
+          _refreshResumedSession(active);
+        }
       });
       _tunnelSubscription = active.tunnels.listen((tunnel) {
         if (isCurrentGeneration(generation) && identical(_session, active)) {
@@ -185,6 +189,26 @@ final class TerminalConnection {
         'Could not start this session. Check the host and try again.',
       );
     }
+  }
+
+  /// Replays the host-side redraw nudge client-side whenever a session
+  /// attaches: resize to a deliberately-different width, then back to the
+  /// real geometry. Newer servers do this themselves, but the two RESIZE
+  /// frames are harmless there — and against an older server this is what
+  /// forces a SIGWINCH repaint, so resumed sessions refresh seamlessly
+  /// whatever the server runs.
+  void _refreshResumedSession(TerminalSession session) {
+    final current = geometry;
+    // Width 1 cannot nudge down; bump the other way instead. Either way the
+    // width must differ to provoke a real SIGWINCH.
+    final nudge = TerminalGeometry(
+      current.cols > 1 ? current.cols - 1 : current.cols + 1,
+      current.rows,
+      0,
+      0,
+    );
+    unawaited(session.resize(nudge));
+    unawaited(session.resize(current));
   }
 
   Future<void> close() async {

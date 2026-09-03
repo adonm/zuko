@@ -202,6 +202,45 @@ void main() {
     expect(connection.host.value, same(refreshed));
   });
 
+  test('resumed sessions refresh with a nudge resize pair', () async {
+    final session = _FakeTerminalSession();
+    final connection = TerminalConnection(
+      host: _alpha,
+      connector: (_, _) => session,
+      onTunnel: (_, _, _) {},
+    );
+    addTearDown(() async {
+      await connection.close();
+      connection.dispose();
+    });
+    await connection.reconnect();
+
+    // Nothing refreshes before attach.
+    expect(session.resizes, isEmpty);
+
+    // Attaching replays the redraw nudge client-side: a
+    // deliberately-different width, then the real geometry — so even a
+    // server without the host-side nudge repaints the resumed session.
+    connection.applyTerminalGeometry(100, 40);
+    session.resizes.clear();
+    session.emitState(const SessionState.attached());
+    await Future<void>.delayed(Duration.zero);
+    expect(session.resizes.map((geometry) => (geometry.cols, geometry.rows)), [
+      (99, 40),
+      (100, 40),
+    ]);
+
+    // Re-attach (e.g. after a drop) refreshes again at current geometry.
+    session.resizes.clear();
+    session.emitState(const SessionState.connecting());
+    session.emitState(const SessionState.attached());
+    await Future<void>.delayed(Duration.zero);
+    expect(session.resizes.map((geometry) => (geometry.cols, geometry.rows)), [
+      (99, 40),
+      (100, 40),
+    ]);
+  });
+
   test('terminal resize bursts coalesce to first and final sizes', () async {
     final session = _FakeTerminalSession();
     final connection = TerminalConnection(
@@ -215,6 +254,9 @@ void main() {
     });
     await connection.reconnect();
     session.emitState(const SessionState.attached());
+    // Attaching refreshes the session with a nudge resize pair; clear it so
+    // the burst assertions below start from a clean slate.
+    session.resizes.clear();
 
     // A keyboard-animation style burst: the PTY sees the first size
     // immediately, then only the final size once the burst settles — never
@@ -248,6 +290,10 @@ void main() {
     });
     await connection.reconnect();
     session.emitState(const SessionState.attached());
+
+    // Attaching refreshes the session (tested below); clear it so this
+    // test only sees the explicit geometry change.
+    session.resizes.clear();
 
     connection.terminal.sendText('hello');
     connection.applyTerminalGeometry(100, 40);
