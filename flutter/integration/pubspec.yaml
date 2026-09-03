@@ -15,7 +15,7 @@ dependencies:
   flterm:
     git:
       url: https://github.com/adonm/libghostty.git
-      ref: 81ae51837a8fcd2431c60b7c49ea899d201d711c
+      ref: 42470675e05da584052631148c9acc4ead08621c
       path: packages/flterm
   libghostty: 0.0.12
 
