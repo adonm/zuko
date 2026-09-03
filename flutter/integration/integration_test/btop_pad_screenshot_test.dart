@@ -8,6 +8,7 @@ import 'package:flutter/widgets.dart' show GlobalKey;
 import 'package:flutter_test/flutter_test.dart';
 import 'package:integration_test/integration_test.dart';
 import 'package:zuko/src/app.dart';
+import 'package:zuko/src/model.dart';
 
 import 'journey.dart';
 import 'local_host_transport.dart';
@@ -57,6 +58,7 @@ void main() {
     final controller = await testController(
       transport,
       terminalFontSize: _fontSize.toDouble(),
+      theme: AppThemePreference.dark,
     );
     addTearDown(controller.close);
 

@@ -202,6 +202,39 @@ void main() {
     expect(connection.host.value, same(refreshed));
   });
 
+  test('terminal resize bursts coalesce to first and final sizes', () async {
+    final session = _FakeTerminalSession();
+    final connection = TerminalConnection(
+      host: _alpha,
+      connector: (_, _) => session,
+      onTunnel: (_, _, _) {},
+    );
+    addTearDown(() async {
+      await connection.close();
+      connection.dispose();
+    });
+    await connection.reconnect();
+    session.emitState(const SessionState.attached());
+
+    // A keyboard-animation style burst: the PTY sees the first size
+    // immediately, then only the final size once the burst settles — never
+    // the transient sizes in between.
+    connection.applyTerminalGeometry(80, 24);
+    connection.applyTerminalGeometry(80, 20);
+    connection.applyTerminalGeometry(80, 16);
+    await Future<void>.delayed(const Duration(milliseconds: 50));
+    expect(session.resizes.map((geometry) => geometry.rows).toList(), [24]);
+    await Future<void>.delayed(const Duration(milliseconds: 300));
+    expect(session.resizes.map((geometry) => geometry.rows).toList(), [24, 16]);
+
+    // A lone resize sends exactly once.
+    session.resizes.clear();
+    connection.applyTerminalGeometry(100, 40);
+    await Future<void>.delayed(const Duration(milliseconds: 300));
+    expect(session.resizes.single.cols, 100);
+    expect(session.resizes.single.rows, 40);
+  });
+
   test('terminal input and resize route to the owning session', () async {
     final session = _FakeTerminalSession();
     final connection = TerminalConnection(

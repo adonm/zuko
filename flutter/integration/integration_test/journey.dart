@@ -40,6 +40,7 @@ Future<AppController> testController(
   ClientTransport transport, {
   String clientName = 'integration',
   double? terminalFontSize,
+  AppThemePreference theme = AppThemePreference.system,
 }) async {
   final state = ClientState(
     clientKey: Uint8List.fromList(List<int>.generate(32, (index) => index)),
@@ -50,11 +51,13 @@ Future<AppController> testController(
   );
   final store = ClientStateStore.withStorage(MemoryStorage());
   await store.save(state);
-  return AppController.forTesting(
+  final controller = AppController.forTesting(
     store: store,
     state: state,
     transport: transport,
   );
+  await controller.setTheme(theme);
+  return controller;
 }
 
 /// A short settle for UI reactions (focus changes, key echoes).

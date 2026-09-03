@@ -288,8 +288,9 @@ Future<void> _capture(WidgetTester tester, String name) async {
   );
   final directory = Directory('../docs/images');
   if (!directory.existsSync()) directory.createSync(recursive: true);
-  File('../docs/images/$name.png')
-      .writeAsBytesSync(bytes!.buffer.asUint8List(), flush: true);
+  File(
+    '../docs/images/$name.png',
+  ).writeAsBytesSync(bytes!.buffer.asUint8List(), flush: true);
 }
 
 Future<void> _unmountTree(WidgetTester tester) async {

@@ -10,15 +10,14 @@ import 'session_state.dart';
 import 'transport.dart';
 import 'wire.dart';
 
-typedef TerminalConnector = TerminalSession Function(
-  SavedHost host,
-  TerminalGeometry geometry,
-);
-typedef TerminalTunnelHandler = void Function(
-  TerminalConnection connection,
-  TunnelEndpoint tunnel,
-  int generation,
-);
+typedef TerminalConnector =
+    TerminalSession Function(SavedHost host, TerminalGeometry geometry);
+typedef TerminalTunnelHandler =
+    void Function(
+      TerminalConnection connection,
+      TunnelEndpoint tunnel,
+      int generation,
+    );
 typedef RemoteClipboardWriter = Future<void> Function(String text);
 
 const maxRemoteClipboardBytes = 1024 * 1024;
@@ -82,6 +81,10 @@ final class TerminalConnection {
   int _generation = 0;
   bool _acceptingIo = false;
   bool _closed = false;
+  Timer? _resizeTimer;
+  bool _resizeDirty = false;
+
+  static const _resizeSettle = Duration(milliseconds: 200);
 
   final ValueNotifier<SessionState> state = ValueNotifier(
     const SessionState.connecting(),
@@ -109,7 +112,24 @@ final class TerminalConnection {
 
   void applyTerminalGeometry(int cols, int rows) {
     geometry = TerminalGeometry(cols, rows, 0, 0);
-    unawaited(_session?.resize(geometry));
+    // Keyboard animation, rotation, and drawer motion fire bursts of resizes.
+    // Send the first immediately so rotations stay snappy, then coalesce the
+    // burst and send the final size once it settles — the PTY never draws
+    // (and glitches on) transient sizes, and full-screen apps repaint once.
+    final session = _session;
+    if (_resizeTimer == null) {
+      if (session != null) unawaited(session.resize(geometry));
+    } else {
+      _resizeDirty = true;
+    }
+    _resizeTimer?.cancel();
+    _resizeTimer = Timer(_resizeSettle, () {
+      _resizeTimer = null;
+      if (!_resizeDirty) return;
+      _resizeDirty = false;
+      final pending = _session;
+      if (pending != null) unawaited(pending.resize(geometry));
+    });
   }
 
   Future<void> updateHost(SavedHost host) async {
@@ -191,9 +211,19 @@ final class TerminalConnection {
     return detached;
   }
 
+  /// Drops any coalesced resize without sending it. Called synchronously on
+  /// teardown so no debounce timer outlives the connection.
+  void cancelPendingResize() {
+    _resizeTimer?.cancel();
+    _resizeTimer = null;
+    _resizeDirty = false;
+  }
+
   void dispose() {
     _closed = true;
     _generation++;
+    _resizeTimer?.cancel();
+    _resizeTimer = null;
     focusNode.dispose();
     scrollController.dispose();
     terminal.dispose();

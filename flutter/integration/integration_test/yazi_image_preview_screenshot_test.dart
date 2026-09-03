@@ -8,6 +8,7 @@ import 'package:flutter/widgets.dart' show GlobalKey;
 import 'package:flutter_test/flutter_test.dart';
 import 'package:integration_test/integration_test.dart';
 import 'package:zuko/src/app.dart';
+import 'package:zuko/src/model.dart';
 
 import 'journey.dart';
 import 'local_host_transport.dart';
@@ -78,7 +79,10 @@ void main() {
         directory.path,
       ],
     );
-    final controller = await testController(transport);
+    final controller = await testController(
+      transport,
+      theme: AppThemePreference.dark,
+    );
     addTearDown(controller.close);
 
     await tester.pumpWidget(

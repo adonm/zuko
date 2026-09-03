@@ -128,6 +128,9 @@ zuko reset --yes
   (`zuko host --detached-ttl <seconds>`; `0` keeps detached sessions until the
   shell exits or the host restarts).
 - Detached output is discarded.
+- Resizes repaint seamlessly: the client coalesces resize bursts (keyboard
+  animation, rotation) to the final size, and the host forces full-screen
+  apps to repaint on every accepted resize — no manual refresh needed.
 - CLI reconnects while the process is alive; Flutter redials while its screen
   is active; Flutter clients use bounded reconnect while their session is open.
 - Use `tmux`, `zellij`, or `screen` for durable work.

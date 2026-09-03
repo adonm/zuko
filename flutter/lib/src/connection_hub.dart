@@ -101,8 +101,18 @@ final class ConnectionHub extends ChangeNotifier {
     _backgroundedAt ??= DateTime.now();
   }
 
+  /// Cancels coalesced resizes on every connection without sending them.
+  /// Runs synchronously first in teardown paths so no debounce timer can
+  /// outlive the connections while async closes are still in flight.
+  void cancelPendingResizes() {
+    for (final connection in connections) {
+      connection.cancelPendingResize();
+    }
+  }
+
   /// Closes and disposes every connection. The hub is unusable afterwards.
   Future<void> disposeAll() async {
+    cancelPendingResizes();
     final snapshot = List.of(connections);
     connections.clear();
     activeIndex = -1;

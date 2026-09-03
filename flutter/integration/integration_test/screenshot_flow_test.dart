@@ -44,7 +44,10 @@ void main() {
 
   testWidgets('capture the pairing flow screenshots', (tester) async {
     final transport = _FakeTransport();
-    final controller = await testController(transport);
+    final controller = await testController(
+      transport,
+      theme: AppThemePreference.dark,
+    );
     addTearDown(controller.close);
 
     await tester.pumpWidget(

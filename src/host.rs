@@ -544,15 +544,18 @@ async fn handle_control_stream(
                     let rows = u16::from_be_bytes([frame.payload[2], frame.payload[3]]);
                     let pixel_width = u16::from_be_bytes([frame.payload[4], frame.payload[5]]);
                     let pixel_height = u16::from_be_bytes([frame.payload[6], frame.payload[7]]);
-                    let _ = session
-                        .pty_tx
-                        .send(PtyCmd::Resize(TermSize {
-                            cols: cols.max(1),
-                            rows: rows.max(1),
-                            pixel_width,
-                            pixel_height,
-                        }))
-                        .await;
+                    let size = TermSize {
+                        cols: cols.max(1),
+                        rows: rows.max(1),
+                        pixel_width,
+                        pixel_height,
+                    };
+                    // Nudge every resize, not just reattach: keyboard-driven
+                    // resizes must repaint full-screen apps seamlessly, with
+                    // no manual refresh from the user.
+                    for cmd in resize_cmds(size) {
+                        let _ = session.pty_tx.send(cmd).await;
+                    }
                 }
                 TYPE_PING => {
                     let nonce = decode_nonce(&frame.payload);
@@ -630,15 +633,15 @@ async fn handle_client_frame(
             let rows = u16::from_be_bytes([frame.payload[2], frame.payload[3]]);
             let pixel_width = u16::from_be_bytes([frame.payload[4], frame.payload[5]]);
             let pixel_height = u16::from_be_bytes([frame.payload[6], frame.payload[7]]);
-            let _ = session
-                .pty_tx
-                .send(PtyCmd::Resize(TermSize {
-                    cols: cols.max(1),
-                    rows: rows.max(1),
-                    pixel_width,
-                    pixel_height,
-                }))
-                .await;
+            let size = TermSize {
+                cols: cols.max(1),
+                rows: rows.max(1),
+                pixel_width,
+                pixel_height,
+            };
+            for cmd in resize_cmds(size) {
+                let _ = session.pty_tx.send(cmd).await;
+            }
             true
         }
         TYPE_PING => {
@@ -714,17 +717,23 @@ async fn get_or_create_session(
     Ok(session)
 }
 
-async fn nudge_redraw(session: &Session, size: TermSize) {
-    // Force the remote app to repaint on reattach. The kernel only emits
-    // SIGWINCH on an *actual* size change, so resizing straight to (cols, rows)
-    // is a no-op when the client reconnects at the same size — and a
-    // full-screen app (vim/htop/tmux) would keep showing a stale screen. Resize
-    // to a deliberately-different width then back to the real one: two
-    // SIGWINCHes, final state correct.
+/// PTY resize commands for an accepted client size: a deliberately-different
+/// width first, then the real size. The kernel only emits SIGWINCH on an
+/// *actual* size change, so resizing straight to (cols, rows) is a no-op when
+/// the size is unchanged — and a full-screen app (vim/htop/tmux, yazi) would
+/// keep showing a stale screen. Two SIGWINCHes, final state always `size`.
+/// Pure so the sequence is unit-testable.
+fn resize_cmds(size: TermSize) -> [PtyCmd; 2] {
     let mut nudge = size;
     nudge.cols = redraw_nudge_cols(size.cols);
-    let _ = session.pty_tx.send(PtyCmd::Resize(nudge)).await;
-    let _ = session.pty_tx.send(PtyCmd::Resize(size)).await;
+    [PtyCmd::Resize(nudge), PtyCmd::Resize(size)]
+}
+
+async fn nudge_redraw(session: &Session, size: TermSize) {
+    // Force the remote app to repaint on reattach (see `resize_cmds`).
+    for cmd in resize_cmds(size) {
+        let _ = session.pty_tx.send(cmd).await;
+    }
 }
 
 /// A column count guaranteed to differ from `cols` (and stay ≥1), used to
@@ -1085,6 +1094,30 @@ fn default_key_path() -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn resize_cmds_nudge_then_settle_on_the_real_size() {
+        let size = TermSize {
+            cols: 100,
+            rows: 40,
+            pixel_width: 800,
+            pixel_height: 600,
+        };
+        let [first, second] = resize_cmds(size);
+        let (PtyCmd::Resize(nudge), PtyCmd::Resize(final_size)) = (first, second) else {
+            panic!("resize_cmds must emit two resizes");
+        };
+        // Nudge width differs (provokes SIGWINCH); everything else matches.
+        assert_ne!(nudge.cols, size.cols);
+        assert_eq!(nudge.rows, size.rows);
+        assert_eq!(nudge.pixel_width, size.pixel_width);
+        assert_eq!(nudge.pixel_height, size.pixel_height);
+        // Final state is exactly the accepted size.
+        assert_eq!(final_size.cols, size.cols);
+        assert_eq!(final_size.rows, size.rows);
+        assert_eq!(final_size.pixel_width, size.pixel_width);
+        assert_eq!(final_size.pixel_height, size.pixel_height);
+    }
 
     #[test]
     fn term_prefers_kitty_when_terminfo_is_available() {
