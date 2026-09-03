@@ -3,6 +3,10 @@ description: >-
   Restore immutable Pub packages, native-asset hook outputs, test kernels, and
   the Cargo registry for the pinned toolchain. Build output directories stay
   out of the cache so CMake/Xcode/Gradle always reconfigure from a clean tree.
+  The cache must never shadow pub resolution: only the shared package
+  downloads are cached, never any .dart_tool (which records one machine's
+  resolved paths), so `flutter pub get --enforce-lockfile` always resolves
+  fresh from the committed lockfiles.
 
 runs:
   using: composite
@@ -14,9 +18,7 @@ runs:
           ~/.pub-cache/git/cache
           ~/.cargo/registry
           ~/.cargo/git
-          flutter/.dart_tool
           flutter/build/test_cache
-          flutter/integration/.dart_tool
           ~/Library/Caches/CocoaPods
           flutter/ios/Pods
           flutter/macos/Pods
