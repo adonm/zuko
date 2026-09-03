@@ -117,7 +117,11 @@ void main() {
       }
     }
     expect(sawKittyImage, isTrue);
-    await tester.pump(const Duration(milliseconds: 600));
+    // The image decodes asynchronously and paints on a later frame; settle
+    // until quiescent so the capture shows the rendered preview, not the
+    // placeholder cells.
+    await tester.pump(const Duration(seconds: 2));
+    await tester.pump(const Duration(seconds: 1));
     await _capture(tester, 'yazi-preview');
   });
 }
