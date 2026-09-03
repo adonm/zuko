@@ -61,19 +61,23 @@ touch layout's floating pad.
 
 ![btop with the floating pad](images/touch-btop.png)
 
-TUI image previews (for example yazi's) use the Kitty graphics protocol,
-which the client renders. They need the host to advertise `TERM=xterm-kitty`,
-so `zuko doctor` checks for the terminfo entry (on Debian/Ubuntu: the
-`kitty-terminfo` package) and tells you how to install it when sessions
-would fall back to `xterm-256color`.
+TUI image previews (for example yazi's) use the Kitty graphics protocol.
+They need the host to advertise `TERM=xterm-kitty`, so `zuko doctor`
+checks for the terminfo entry (on Debian/Ubuntu: the `kitty-terminfo`
+package) and tells you how to install it when sessions would fall back to
+`xterm-256color`. Protocol transport is verified end to end (yazi picks
+the Kitty adapter and its image bytes reach the client); visible painting
+of placed images is a known upstream flterm gap being tracked in the test
+suite.
 
-![yazi previewing an image through the Kitty graphics protocol](images/yazi-preview.png)
+![yazi sending an image over the Kitty graphics protocol](images/yazi-preview.png)
 
 Terminal capability support:
 
 | Capability | Status | Notes |
 | --- | --- | --- |
-| Kitty graphics image previews | Supported | PNG/RGB/RGBA via the Kitty protocol; needs `TERM=xterm-kitty` on the host |
+| Kitty graphics transport | Supported | PNG/RGB/RGBA payloads store; needs `TERM=xterm-kitty` on the host |
+| Kitty image painting | Upstream gap | Stored images don't paint yet (flterm); placeholders show as tofu |
 | Sixel graphics | Not supported | Upstream Ghostty vt core has no Sixel; use Kitty-protocol programs |
 | Mouse clicks, drags, wheel | Supported | SGR reports to mouse-tracking programs (yazi, helix, btop) |
 | Touch tap, drag, long-press select | Supported | Long-press arms local selection; latch Shift in the accessory to select instead of clicking in mouse mode |
