@@ -88,13 +88,13 @@ flutter-app-check: flutter-get
 [group('flutter')]
 flutter-integration: flutter-get
     cd flutter/integration && flutter pub get --enforce-lockfile
-    cd flutter/integration && xvfb-run -a flutter test integration_test/app_interactions_test.dart -d linux --no-pub | tee /tmp/zuko-flutter-integration.log
+    cd flutter/integration && xvfb-run -a flutter test integration_test/desktop_journey_test.dart -d linux --no-pub | tee /tmp/zuko-flutter-integration.log
     grep -qE "All tests passed|test[s]* passed" /tmp/zuko-flutter-integration.log
-    cd flutter/integration && xvfb-run -a flutter test integration_test/touch_pad_test.dart -d linux --no-pub --dart-define=ZUKO_FORCE_TOUCH_PAD=true | tee /tmp/zuko-flutter-touch.log
+    cd flutter/integration && xvfb-run -a flutter test integration_test/touch_journey_test.dart -d linux --no-pub --dart-define=ZUKO_FORCE_TOUCH_PAD=true | tee /tmp/zuko-flutter-touch.log
     grep -qE "All tests passed|test[s]* passed" /tmp/zuko-flutter-touch.log
-    cd flutter/integration && ZUKO_WINDOW_SIZE=390x844 xvfb-run -a flutter test integration_test/narrow_touch_test.dart -d linux --no-pub --dart-define=ZUKO_FORCE_TOUCH_PAD=true | tee /tmp/zuko-flutter-narrow.log
+    cd flutter/integration && ZUKO_WINDOW_SIZE=390x844 xvfb-run -a flutter test integration_test/narrow_touch_journey_test.dart -d linux --no-pub --dart-define=ZUKO_FORCE_TOUCH_PAD=true | tee /tmp/zuko-flutter-narrow.log
     grep -qE "All tests passed|test[s]* passed" /tmp/zuko-flutter-narrow.log
-    cd flutter/integration && xvfb-run -a flutter test integration_test/tui_interaction_test.dart -d linux --no-pub | tee /tmp/zuko-flutter-tui.log
+    cd flutter/integration && xvfb-run -a flutter test integration_test/tui_journey_test.dart -d linux --no-pub | tee /tmp/zuko-flutter-tui.log
     grep -qE "All tests passed|test[s]* passed" /tmp/zuko-flutter-tui.log
 
 # Regenerate the pair/connect flow screenshots under docs/images. The main

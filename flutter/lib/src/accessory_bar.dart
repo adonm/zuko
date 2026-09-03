@@ -153,8 +153,7 @@ class _TerminalAccessoryState extends State<TerminalAccessory> {
                     width: itemWidth,
                     height: rowHeight,
                     label: 'Shift',
-                    tooltip:
-                        'Shift (latch to select text instead of clicking in mouse mode)',
+                    tooltip: 'Shift (latch to select text instead of clicking in mouse mode)',
                     selected: controller.virtualMods.hasShift,
                     onPressed: () => controller.toggleMod(const Mods.shift()),
                   ),

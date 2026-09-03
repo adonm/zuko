@@ -8,10 +8,8 @@ import 'package:flutter/widgets.dart' show GlobalKey;
 import 'package:flutter_test/flutter_test.dart';
 import 'package:integration_test/integration_test.dart';
 import 'package:zuko/src/app.dart';
-import 'package:zuko/src/app_controller.dart';
-import 'package:zuko/src/model.dart';
-import 'package:zuko/src/storage.dart';
 
+import 'journey.dart';
 import 'local_host_transport.dart';
 
 /// Real-app proof of the Kitty graphics path: runs yazi in a directory
@@ -80,7 +78,7 @@ void main() {
         directory.path,
       ],
     );
-    final controller = await _controller(transport);
+    final controller = await testController(transport);
     addTearDown(controller.close);
 
     await tester.pumpWidget(
@@ -118,32 +116,4 @@ void main() {
     await tester.pump(const Duration(milliseconds: 600));
     await _capture(tester, 'yazi-preview');
   });
-}
-
-final class _MemoryStorage implements SecureStateStorage {
-  final Map<String, String> values = {};
-
-  @override
-  Future<void> delete(String key) async => values.remove(key);
-
-  @override
-  Future<String?> read(String key) async => values[key];
-
-  @override
-  Future<void> write(String key, String value) async => values[key] = value;
-}
-
-Future<AppController> _controller(LocalHostTransport transport) async {
-  final state = ClientState(
-    clientKey: Uint8List.fromList(List<int>.generate(32, (index) => index)),
-    clientName: 'zuko-test-client',
-    hosts: const [],
-  );
-  final store = ClientStateStore.withStorage(_MemoryStorage());
-  await store.save(state);
-  return AppController.forTesting(
-    store: store,
-    state: state,
-    transport: transport,
-  );
 }

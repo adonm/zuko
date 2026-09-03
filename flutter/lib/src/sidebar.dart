@@ -201,9 +201,8 @@ class Sidebar extends StatelessWidget {
   Future<void> _copy(BuildContext context, String value) async {
     await Clipboard.setData(ClipboardData(text: value));
     if (context.mounted) {
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text('Copied')));
+      ScaffoldMessenger.of(context)
+          .showSnackBar(const SnackBar(content: Text('Copied')));
     }
   }
 
@@ -652,9 +651,8 @@ class _SavedHostTile extends StatelessWidget {
     // same look the GNOME-style sidebar had.
     return ListTile(
       selected: selected,
-      selectedTileColor: Theme.of(
-        context,
-      ).colorScheme.primary.withValues(alpha: 0.14),
+      selectedTileColor: Theme.of(context).colorScheme.primary
+          .withValues(alpha: 0.14),
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(metrics.size(6)),
       ),
@@ -765,9 +763,8 @@ class OptionTile<T> extends StatelessWidget {
       children: [
         Text(
           valueLabel(value),
-          style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-            color: Theme.of(context).colorScheme.onSurfaceVariant,
-          ),
+          style: Theme.of(context).textTheme.bodyMedium
+              ?.copyWith(color: Theme.of(context).colorScheme.onSurfaceVariant),
         ),
         const SizedBox(width: 4),
         const Icon(Icons.chevron_right, size: 16),

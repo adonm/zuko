@@ -9,12 +9,12 @@ import 'package:flutter/widgets.dart' show GlobalKey;
 import 'package:flutter_test/flutter_test.dart';
 import 'package:integration_test/integration_test.dart';
 import 'package:zuko/src/app.dart';
-import 'package:zuko/src/app_controller.dart';
 import 'package:zuko/src/model.dart';
 import 'package:zuko/src/session_state.dart';
-import 'package:zuko/src/storage.dart';
 import 'package:zuko/src/transport.dart';
 import 'package:zuko/src/wire.dart';
+
+import 'journey.dart';
 
 /// Real-app pairing-flow screenshots captured by `flutter drive` (see
 /// `just screenshots`). Unlike the widget-test generator, these render through
@@ -44,7 +44,7 @@ void main() {
 
   testWidgets('capture the pairing flow screenshots', (tester) async {
     final transport = _FakeTransport();
-    final controller = await _controller(transport);
+    final controller = await testController(transport);
     addTearDown(controller.close);
 
     await tester.pumpWidget(
@@ -99,34 +99,6 @@ void main() {
     await tester.pump(const Duration(milliseconds: 400));
     await _capture(tester, 'connected');
   });
-}
-
-final class _MemoryStorage implements SecureStateStorage {
-  final Map<String, String> values = {};
-
-  @override
-  Future<void> delete(String key) async => values.remove(key);
-
-  @override
-  Future<String?> read(String key) async => values[key];
-
-  @override
-  Future<void> write(String key, String value) async => values[key] = value;
-}
-
-Future<AppController> _controller(_FakeTransport transport) async {
-  final state = ClientState(
-    clientKey: Uint8List.fromList(List<int>.generate(32, (index) => index)),
-    clientName: 'zuko-test-client',
-    hosts: const [],
-  );
-  final store = ClientStateStore.withStorage(_MemoryStorage());
-  await store.save(state);
-  return AppController.forTesting(
-    store: store,
-    state: state,
-    transport: transport,
-  );
 }
 
 final class _FakeTransport implements ClientTransport {

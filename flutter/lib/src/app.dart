@@ -429,8 +429,7 @@ class _HomeState extends State<_Home>
                                                   container: false,
                                                   label:
                                                       '${_connectionName(connection)} remote terminal',
-                                                  hint:
-                                                      'Activate to focus remote terminal input',
+                                                  hint: 'Activate to focus remote terminal input',
                                                   child: Scrollbar(
                                                     controller: connection
                                                         .scrollController,
