@@ -11,7 +11,11 @@ dependencies:
   flutter:
     sdk: flutter
   crypto: 3.0.7
-  flterm: 0.0.5
+  flterm:
+    git:
+      url: https://github.com/adonm/libghostty.git
+      ref: 1167890c61dc644f9e49e470a7b37383649f0385
+      path: packages/flterm
   flutter_secure_storage: 10.3.1
   iroh_flutter: 1.0.3
   libghostty: 0.0.12

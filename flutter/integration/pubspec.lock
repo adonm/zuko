@@ -132,11 +132,12 @@ packages:
   flterm:
     dependency: "direct main"
     description:
-      name: flterm
-      sha256: "41c4dff517de37abcff66b5ee1481d838b5f2952c02d547c7b6db1cf3ff25c14"
-      url: "https://pub.dev"
-    source: hosted
-    version: "0.0.5"
+      path: "packages/flterm"
+      ref: "1167890c61dc644f9e49e470a7b37383649f0385"
+      resolved-ref: "1167890c61dc644f9e49e470a7b37383649f0385"
+      url: "https://github.com/adonm/libghostty.git"
+    source: git
+    version: "0.0.5+zuko.1"
   flutter:
     dependency: "direct main"
     description: flutter

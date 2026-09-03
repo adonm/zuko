@@ -43,20 +43,44 @@ def forbid_text(path: str, value: str) -> None:
         raise SystemExit(f"Flutter config: {path} must not contain {value!r}")
 
 
+FLTERM_GIT_URL = "https://github.com/adonm/libghostty.git"
+FLTERM_GIT_REF = "1167890c61dc644f9e49e470a7b37383649f0385"
+FLTERM_GIT_PATH = "packages/flterm"
+
+
+def require_flterm_git_pin(pubspec: str, path: str) -> None:
+    """flterm must come from the adonm/libghostty fork at the pinned commit.
+
+    The fork carries the Kitty U+1 placeholder rendering that upstream
+    flterm 0.0.5 lacks; pinning the exact commit keeps release builds
+    reproducible. libghostty itself always stays on the hosted release so
+    its hook keeps downloading prebuilt binaries.
+    """
+    block = (
+        "  flterm:\n"
+        "    git:\n"
+        f"      url: {FLTERM_GIT_URL}\n"
+        f"      ref: {FLTERM_GIT_REF}\n"
+        f"      path: {FLTERM_GIT_PATH}"
+    )
+    if block not in pubspec:
+        raise SystemExit(f"Flutter config: {path} must pin flterm to the fork commit")
+
+
 def validate_terminal_dependency_pin() -> None:
     app = content("flutter/pubspec.yaml")
-    # flterm and libghostty are the upstream-hosted pub.dev releases; the
-    # libghostty hook then downloads its SHA256-pinned prebuilt binaries, so
-    # no Zig toolchain and no source compile. Neither package may be pinned
-    # to a git ref or forced to compile from source.
-    if "flterm: 0.0.5" not in app:
-        raise SystemExit("Flutter config: flterm must be the hosted 0.0.5 pin")
+    # libghostty stays on the upstream-hosted pub.dev release so its hook
+    # keeps downloading SHA256-pinned prebuilt binaries — no Zig toolchain
+    # and no source compile. Neither package may force a source compile.
     if "libghostty: 0.0.12" not in app:
         raise SystemExit("Flutter config: libghostty must be the hosted 0.0.12 pin")
-    if "github.com" in app:
-        raise SystemExit("Flutter config: terminal packages must not use git pins")
     if "source: compile" in app:
         raise SystemExit("Flutter config: libghostty must use prebuilt release binaries")
+    require_flterm_git_pin(app, "flutter/pubspec.yaml")
+    # The only git URL allowed in the app pubspec is the flterm fork.
+    for match in re.finditer(r"^\s*url: (\S+)", app, re.MULTILINE):
+        if match.group(1) != FLTERM_GIT_URL:
+            raise SystemExit("Flutter config: unexpected git pin in app pubspec")
     # integration_test and ptyx must NOT live in the app pubspec: ptyx's
     # native-asset hook fails iOS builds and integration_test breaks the
     # Android release registrant. They belong to the standalone integration
@@ -69,10 +93,11 @@ def validate_terminal_dependency_pin() -> None:
     integration_refs = re.findall(
         r'^      ref: "?([0-9a-f]{40})"?[ \t]*$', integration, re.MULTILINE
     )
-    if integration_refs != [ptyx_ref]:
+    if sorted(integration_refs) != sorted([ptyx_ref, FLTERM_GIT_REF]):
         raise SystemExit("Flutter config: integration package refs drifted")
-    if "flterm: 0.0.5" not in integration or "libghostty: 0.0.12" not in integration:
-        raise SystemExit("Flutter config: integration package must use the hosted terminal pins")
+    require_flterm_git_pin(integration, "flutter/integration/pubspec.yaml")
+    if "libghostty: 0.0.12" not in integration:
+        raise SystemExit("Flutter config: integration package must use hosted libghostty 0.0.12")
     if "source: compile" in integration:
         raise SystemExit("Flutter config: integration package must use prebuilt release binaries")
     if integration.count("url: https://github.com/elias8/libghostty.git") != 1:
@@ -85,15 +110,15 @@ def validate_terminal_dependency_pin() -> None:
         r'^  flterm:\n'
         r'    dependency: "direct main"\n'
         r'    description:\n'
-        r'      name: flterm\n'
-        r'      sha256: "?[0-9a-f]+"?\n'
-        r'      url: "https://pub\.dev"\n'
-        r'    source: hosted\n'
-        r'    version: "0\.0\.5"\n',
+        r'      path: "packages/flterm"\n'
+        rf'      ref: "{FLTERM_GIT_REF}"\n'
+        rf'      resolved-ref: "[0-9a-f]{{40}}"\n'
+        rf'      url: "{re.escape(FLTERM_GIT_URL)}"\n'
+        r'    source: git\n',
         app_lock,
         re.MULTILINE,
     ):
-        raise SystemExit("Flutter config: lockfile must pin hosted flterm 0.0.5")
+        raise SystemExit("Flutter config: lockfile must pin fork flterm at the pinned commit")
     if not re.search(
         r'^  libghostty:\n'
         r'    dependency: "direct main"\n'
@@ -116,6 +141,19 @@ def validate_terminal_dependency_pin() -> None:
     )
     if resolved != [ptyx_ref]:
         raise SystemExit("Flutter config: integration lock refs differ from its pubspec")
+    if not re.search(
+        r'^  flterm:\n'
+        r'    dependency: "direct main"\n'
+        r'    description:\n'
+        r'      path: "packages/flterm"\n'
+        rf'      ref: "{FLTERM_GIT_REF}"\n'
+        rf'      resolved-ref: "[0-9a-f]{{40}}"\n'
+        rf'      url: "{re.escape(FLTERM_GIT_URL)}"\n'
+        r'    source: git\n',
+        integration_lock,
+        re.MULTILINE,
+    ):
+        raise SystemExit("Flutter config: integration lock must pin fork flterm")
 
 
 def validate_sdk() -> None:

@@ -158,9 +158,7 @@ void main() {
     final resps = RegExp(r'\x1b_Gi=[^\\]*\x1b\\').allMatches(sent);
     for (final m in resps) {
       // ignore: avoid_print
-      print(
-        'ZUKO-RESP: ${m.group(0)!.replaceAll('\x1b', '<ESC>')}',
-      );
+      print('ZUKO-RESP: ${m.group(0)!.replaceAll('\x1b', '<ESC>')}');
     }
     // Images decode asynchronously via a native callback that only fires on
     // the real event loop, and painting needs a frame after decode: cycle
