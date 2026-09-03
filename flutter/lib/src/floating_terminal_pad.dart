@@ -1,5 +1,6 @@
 import 'package:flterm/flterm.dart' show Key, TerminalController;
 import 'package:flutter/material.dart' hide Key;
+import 'package:flutter/services.dart' show HapticFeedback;
 
 import 'repeatable_action.dart';
 
@@ -28,7 +29,10 @@ class FloatingTerminalLogo extends StatelessWidget {
         button: true,
         label: 'Open sidebar',
         child: InkWell(
-          onTap: onPressed,
+          onTap: () {
+            HapticFeedback.selectionClick();
+            onPressed();
+          },
           borderRadius: BorderRadius.circular(20),
           child: Material(
             color: colors.surfaceContainerHighest.withValues(alpha: 0.44),
@@ -127,7 +131,10 @@ class FloatingTerminalPad extends StatelessWidget {
                     size: buttonSize,
                     tooltip: 'Home',
                     icon: Icons.first_page,
-                    onPressed: () => _sendKey(Key.home),
+                    onPressed: () {
+                      HapticFeedback.selectionClick();
+                      _sendKey(Key.home);
+                    },
                   ),
                   _PadButton(
                     size: buttonSize,
@@ -140,7 +147,10 @@ class FloatingTerminalPad extends StatelessWidget {
                     size: buttonSize,
                     tooltip: 'End',
                     icon: Icons.last_page,
-                    onPressed: () => _sendKey(Key.end),
+                    onPressed: () {
+                      HapticFeedback.selectionClick();
+                      _sendKey(Key.end);
+                    },
                   ),
                 ],
               ),
@@ -160,6 +170,11 @@ class _PadCenter extends StatelessWidget {
   final double size;
   final VoidCallback onPressed;
 
+  void _handleTap() {
+    HapticFeedback.selectionClick();
+    onPressed();
+  }
+
   @override
   Widget build(BuildContext context) {
     return Tooltip(
@@ -168,7 +183,7 @@ class _PadCenter extends StatelessWidget {
         button: true,
         label: 'Zuko menu',
         child: InkWell(
-          onTap: onPressed,
+          onTap: _handleTap,
           borderRadius: BorderRadius.circular(8),
           child: SizedBox(
             width: size,

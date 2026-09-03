@@ -153,6 +153,8 @@ class _TerminalAccessoryState extends State<TerminalAccessory> {
                     width: itemWidth,
                     height: rowHeight,
                     label: 'Shift',
+                    tooltip:
+                        'Shift (latch to select text instead of clicking in mouse mode)',
                     selected: controller.virtualMods.hasShift,
                     onPressed: () => controller.toggleMod(const Mods.shift()),
                   ),
@@ -231,12 +233,14 @@ class _AccessoryKey extends StatelessWidget {
     required this.width,
     this.height,
     required this.label,
+    this.tooltip,
     required this.onPressed,
     this.selected,
   });
   final double width;
   final double? height;
   final String label;
+  final String? tooltip;
   final VoidCallback onPressed;
   final bool? selected;
 
@@ -244,7 +248,7 @@ class _AccessoryKey extends StatelessWidget {
   Widget build(BuildContext context) => _AccessoryButton(
     width: width,
     height: height,
-    tooltip: label,
+    tooltip: tooltip ?? label,
     selected: selected,
     onPressed: onPressed,
     child: FittedBox(

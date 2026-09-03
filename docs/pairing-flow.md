@@ -69,6 +69,16 @@ would fall back to `xterm-256color`.
 
 ![yazi previewing an image through the Kitty graphics protocol](images/yazi-preview.png)
 
+Terminal capability support:
+
+| Capability | Status | Notes |
+| --- | --- | --- |
+| Kitty graphics image previews | Supported | PNG/RGB/RGBA via the Kitty protocol; needs `TERM=xterm-kitty` on the host |
+| Sixel graphics | Not supported | Upstream Ghostty vt core has no Sixel; use Kitty-protocol programs |
+| Mouse clicks, drags, wheel | Supported | SGR reports to mouse-tracking programs (yazi, helix, btop) |
+| Touch tap, drag, long-press select | Supported | Long-press arms local selection; latch Shift in the accessory to select instead of clicking in mouse mode |
+| Pixel-precise mouse (mode 1016) | Not requested | Encoder supports SGR-pixels; no program has needed it yet |
+
 ### Touch layout
 
 Touch devices drop the top bar entirely. A translucent floating pad floats

@@ -81,6 +81,72 @@ void main() {
     expect(find.byTooltip('Copy selected text'), findsOneWidget);
   });
 
+  testWidgets('yazi mouse reports exact cells', (tester) async {
+    final transport = LocalHostTransport(
+      command: const ['/usr/bin/bash', '--norc', '-c', 'yazi'],
+    );
+    final controller = await _controller(transport);
+    addTearDown(controller.close);
+    await openPairedApp(tester, controller);
+
+    // Let yazi draw and enable mouse tracking.
+    for (var attempt = 0; attempt < 40; attempt++) {
+      await tester.pump(const Duration(milliseconds: 250));
+      if (transport.receivedBytes.contains(0x1b)) break;
+    }
+    await tester.pump(const Duration(milliseconds: 400));
+
+    final terminalRect = tester.getRect(find.byType(TerminalView));
+
+    Future<(int, int)> tapCell(Offset at) async {
+      final before = transport.sentBytes.length;
+      await tester.tapAt(at);
+      await tester.pump(const Duration(milliseconds: 300));
+      return parseFirstSgr(transport.sentBytes.sublist(before));
+    }
+
+    // Top-left corner of the grid reports cell 1,1: catches padding, DPR,
+    // and floor-vs-center bias in the pixel-to-cell path.
+    final (col, row) = await tapCell(terminalRect.topLeft + const Offset(1, 1));
+    expect(col, 1);
+    expect(row, 1);
+
+    // Reports are monotonic across the grid.
+    final (leftCol, _) = await tapCell(
+      Offset(
+        terminalRect.left + terminalRect.width * 0.1,
+        terminalRect.top + terminalRect.height * 0.5,
+      ),
+    );
+    final (rightCol, _) = await tapCell(
+      Offset(
+        terminalRect.left + terminalRect.width * 0.9,
+        terminalRect.top + terminalRect.height * 0.5,
+      ),
+    );
+    expect(rightCol, greaterThan(leftCol));
+    final (_, topRow) = await tapCell(
+      Offset(
+        terminalRect.left + terminalRect.width * 0.5,
+        terminalRect.top + terminalRect.height * 0.2,
+      ),
+    );
+    final (_, bottomRow) = await tapCell(
+      Offset(
+        terminalRect.left + terminalRect.width * 0.5,
+        terminalRect.top + terminalRect.height * 0.8,
+      ),
+    );
+    expect(bottomRow, greaterThan(topRow));
+
+    // Same spot twice reports the same cell: catches jitter/rounding noise.
+    final spot = Offset(
+      terminalRect.left + terminalRect.width * 0.4,
+      terminalRect.top + terminalRect.height * 0.6,
+    );
+    expect(await tapCell(spot), await tapCell(spot));
+  });
+
   testWidgets('yazi picks the Kitty graphics adapter', (tester) async {
     final transport = LocalHostTransport(
       command: const ['/usr/bin/bash', '--norc', '-c', 'ya env'],
@@ -128,6 +194,25 @@ final class _MemoryStorage implements SecureStateStorage {
 
   @override
   Future<void> write(String key, String value) async => values[key] = value;
+}
+
+/// Parses the first SGR mouse report (`ESC [ < Cb ; Cx ; Cy M/m`) in [bytes]
+/// into its (column, row). Throws a TestFailure when none is present.
+(int, int) parseFirstSgr(List<int> bytes) {
+  for (var i = 0; i + 5 < bytes.length; i++) {
+    if (bytes[i] != 0x1b || bytes[i + 1] != 0x5b || bytes[i + 2] != 0x3c) {
+      continue;
+    }
+    final end = bytes.indexWhere((b) => b == 0x4d || b == 0x6d, i + 3);
+    if (end < 0) continue;
+    final parts = String.fromCharCodes(bytes.sublist(i + 3, end)).split(';');
+    if (parts.length != 3) continue;
+    final col = int.tryParse(parts[1]);
+    final row = int.tryParse(parts[2]);
+    if (col == null || row == null) continue;
+    return (col, row);
+  }
+  throw TestFailure('no SGR mouse report in $bytes');
 }
 
 Future<AppController> _controller(LocalHostTransport transport) async {
