@@ -211,14 +211,13 @@ jobs:
 
       # Android SDK packages are single-sourced from
       # containers/android-sdk-packages.txt (checked by check-container-pins.py).
+      # Joined to one space-separated line: setup-android passes the value
+      # through as package arguments, so embedded newlines would merge into
+      # a single (nonexistent) package name.
       - name: Read pinned Android SDK packages
         id: android-sdk
         run: |
-          {
-            echo 'packages<<EOF'
-            grep -v '^[[:space:]]*#' containers/android-sdk-packages.txt
-            echo EOF
-          } >> "$GITHUB_OUTPUT"
+          echo "packages=$(grep -v '^[[:space:]]*#' containers/android-sdk-packages.txt | tr '\n' ' ')" >> "$GITHUB_OUTPUT"
 
       - uses: android-actions/setup-android@40fd30fb8d7440372e1316f5d1809ec01dcd3699 # v4.0.1
         with:
