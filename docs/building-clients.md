@@ -29,8 +29,8 @@ distrobox enter flutter-dev
 Inside the box, `mise bootstrap` as above; activation is explicit because
 Distrobox shares the host's shell startup files, so run
 `eval "$(mise activate bash)"` once in each plain shell. When Zuko is checked
-out through the `flutter-dev` workspace, its `just devbox-enter` command starts
-with Mise already active.
+out inside the Distrobox, Mise is already active in shells started after
+bootstrap.
 
 Do not use an unversioned `latest` image. Distrobox shares the host checkout,
 display, GPU, devices, network, and home by default; it is a convenient mutable
