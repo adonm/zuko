@@ -217,15 +217,19 @@ def validate_automation() -> None:
         "libgtk-3-dev",
         "mise install",
         "mise exec -- flutter --version",
-        "'platforms;android-34'",
-        "'platforms;android-35'",
-        "'platforms;android-36'",
-        "'build-tools;36.0.0'",
-        "'cmake;3.22.1'",
-        "'ndk;29.0.14206865'",
+        # Android SDK packages are single-sourced from
+        # containers/android-sdk-packages.txt; versions are pinned by
+        # scripts/check-container-pins.py, referenced here only by file.
+        "containers/android-sdk-packages.txt",
     ]:
         require_text(containerfile, value)
-    for forbidden in ["flatpak-github-actions", "GNOME_SDK", "install_flutter_sdk"]:
+    for forbidden in [
+        "flatpak-github-actions",
+        "GNOME_SDK",
+        "install_flutter_sdk",
+        # No inline SDK package copies next to the file reference.
+        "'platforms;android-",
+    ]:
         forbid_text(containerfile, forbidden)
 
     require_text("Justfile", "setup-flutter:")

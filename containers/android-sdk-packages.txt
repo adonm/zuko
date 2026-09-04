@@ -1,0 +1,13 @@
+# Pinned Android SDK packages: the single source of truth.
+#
+# Consumed by containers/flutter-ci.Containerfile and by the
+# flutter-android CI job (.github/workflows/build.yml reads this file into
+# the setup-android action). scripts/check-container-pins.py asserts both
+# stay wired to this file and that its contents match the pinned set, so
+# edit here — never inline a copy elsewhere.
+platforms;android-34
+platforms;android-35
+platforms;android-36
+build-tools;36.0.0
+cmake;3.22.1
+ndk;29.0.14206865

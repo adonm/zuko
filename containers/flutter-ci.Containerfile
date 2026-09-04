@@ -1,14 +1,18 @@
 FROM docker.io/library/ubuntu@sha256:52df9b1ee71626e0088f7d400d5c6b5f7bb916f8f0c82b474289a4ece6cf3faf
 
-ARG MISE_VERSION=2026.7.5
-ARG MISE_SHA256=5f7ab76afdf0780d12edeaa67e908094e9ccf7924cfe203e415c1cfb87bbf778
+ARG MISE_VERSION=2026.8.12
+ARG MISE_SHA256=f2092b1e67f0abc8803d3be120dd2bc5b656dd99680ba3159f710e149da10d05
 ARG ANDROID_COMMAND_LINE_TOOLS_VERSION=14742923
 ARG ANDROID_COMMAND_LINE_TOOLS_SHA256=04453066b540409d975c676d781da1477479dde3761310f1a7eb92a1dfb15af7
 
 COPY scripts/install-android-platform-tools.sh /app/bin/install-android-platform-tools
+COPY containers/android-sdk-packages.txt /app/android-sdk-packages.txt
 
 RUN set -eux; \
     apt-get update; \
+    # Keep the JDK major in sync with CI setup-java (checked by
+    # check-container-pins.py); the vendors differ deliberately (distro
+    # package here for image hermeticity, cached Temurin on runners).
     DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
       bash binutils build-essential ca-certificates cage clang cmake curl git \
       gzip jq libegl-dev libgl-dev libgtk-3-dev libsecret-1-dev \
@@ -54,13 +58,9 @@ RUN set -eux; \
     touch /root/.android/repositories.cfg; \
     yes | sdkmanager --licenses >/dev/null; \
     /app/bin/install-android-platform-tools /opt/android-sdk; \
-    sdkmanager \
-      'platforms;android-34' \
-      'platforms;android-35' \
-      'platforms;android-36' \
-      'build-tools;36.0.0' \
-      'cmake;3.22.1' \
-      'ndk;29.0.14206865'; \
+    # Android SDK packages are single-sourced from
+    # containers/android-sdk-packages.txt (checked by check-container-pins.py).
+    sdkmanager $(grep -v '^[[:space:]]*#' /app/android-sdk-packages.txt); \
     rm -f "$archive"; \
     rm -rf /root/.android/cache /root/.cache
 

@@ -32,6 +32,7 @@ fmt-check:
 [group('quality')]
 lint-ci:
     actionlint .github/workflows/*.yml
+    python3 scripts/check-container-pins.py
 
 [group('quality')]
 lint-md:

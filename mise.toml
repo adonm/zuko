@@ -25,13 +25,26 @@ macos-arm64 = { url = "https://storage.googleapis.com/flutter_infra_release/rele
 windows-x64 = { url = "https://storage.googleapis.com/flutter_infra_release/releases/stable/windows/flutter_windows_3.47.2-stable.zip", checksum = "sha256:37934f2128a55d77a38baba12fd611157ed23a47bf7d2b7d17e9e84da118409d" }
 
 # System-level dependencies used by Linux builds. `mise bootstrap` installs
-# only entries for package managers available on the current OS.
+# only entries for package managers available on the current OS. This is the
+# canonical dev-machine set: everything the local gates need, including the
+# integration suite (xvfb, btop, kitty-terminfo). CI consumes the same list
+# via `mise bootstrap packages apply`, and the container image extends it
+# with image-build tooling (see containers/flutter-ci.Containerfile).
+# Fedora/Arch equivalents of the newer test-only entries (kitty-terminfo,
+# dbus-daemon, cage) still need verifying before adding them below.
 [bootstrap.packages]
 "apt:gcc-aarch64-linux-gnu" = "latest"
+"apt:build-essential" = "latest"
+"apt:cage" = "latest"
 "apt:clang" = "latest"
 "apt:cmake" = "latest"
+"apt:dbus-daemon" = "latest"
+"apt:kitty-terminfo" = "latest"
+"apt:libegl-dev" = "latest"
+"apt:libgl-dev" = "latest"
 "apt:libgtk-3-dev" = "latest"
 "apt:libsecret-1-dev" = "latest"
+"apt:mesa-vulkan-drivers" = "latest"
 "apt:ninja-build" = "latest"
 "apt:pkg-config" = "latest"
 "apt:xvfb" = "latest"
